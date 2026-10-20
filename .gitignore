@@ -7,3 +7,7 @@ dist/
 .env*
 .claude/settings.local.json
 .impeccable/
+.claude/work/
+stats.html
+web-ext.config.ts
+*.log

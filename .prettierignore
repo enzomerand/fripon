@@ -1,0 +1,4 @@
+.output/
+.wxt/
+docs/mockups/
+package-lock.json
