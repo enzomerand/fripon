@@ -1,0 +1,119 @@
+<h2>La carte intégrée : verdicts et détail</h2>
+<p class="subtitle">À gauche, les trois verdicts possibles en version repliée. À droite, la carte rouge dépliée après un clic sur « Voir les vérifications ».</p>
+
+<style>
+  .w { font-family:-apple-system, Helvetica, Arial, sans-serif; color:#171717; font-size:13px; }
+  .cols { display:flex; gap:28px; align-items:flex-start; flex-wrap:wrap; }
+  .col { display:flex; flex-direction:column; gap:14px; width:300px; }
+  .lbl { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:#555; font-weight:600; }
+  .c { border:2px solid; border-radius:8px; padding:10px 12px; background:#fff; }
+  .c.r { border-color:#d93025; background:#fdecea; }
+  .c.o { border-color:#e37400; background:#fef3e2; }
+  .c.g { border-color:#188038; background:#e6f4ea; }
+  .t { font-weight:700; font-size:14px; display:flex; align-items:center; gap:8px; }
+  .r .t { color:#a50e0e; } .o .t { color:#8a4500; } .g .t { color:#0d652d; }
+  .d { width:11px; height:11px; border-radius:50%; flex-shrink:0; }
+  .r .d { background:#d93025; } .o .d { background:#e37400; } .g .d { background:#188038; }
+  .l { margin-top:4px; font-size:13px; }
+  .k { margin-top:6px; font-size:13px; text-decoration:underline; }
+  .r .k { color:#a50e0e; } .o .k { color:#8a4500; } .g .k { color:#0d652d; }
+  .big { width:380px; }
+  .chk { border-top:1px solid #f1c8c4; padding:9px 0 7px; }
+  .chk:first-of-type { margin-top:8px; }
+  .ch { display:flex; justify-content:space-between; align-items:center; font-weight:600; font-size:13px; }
+  .tag { font-size:12px; font-weight:700; padding:2px 7px; border-radius:10px; }
+  .tag.bad { background:#d93025; color:#fff; } .tag.mid { background:#b45309; color:#fff; } .tag.ok { background:#188038; color:#fff; } .tag.off { background:#e0e0e0; color:#333; }
+  .cd { font-size:13px; color:#3a1a17; margin-top:3px; line-height:1.4; }
+  .src { display:flex; gap:6px; margin-top:5px; flex-wrap:wrap; }
+  .src span { background:#fff; border:1px solid #f1c8c4; border-radius:5px; padding:2px 6px; font-size:12.5px; }
+  .ai { margin-top:8px; background:#fff; border-radius:6px; padding:8px 10px; font-size:13px; line-height:1.45; border:1px solid #f1c8c4; }
+  .ai b { display:block; margin-bottom:2px; }
+  .lock { color:#444; }
+  .btn { display:inline-block; margin-top:5px; font-size:12px; font-weight:600; color:#007782; border:1px solid #007782; padding:3px 8px; border-radius:5px; }
+  .foot { margin-top:8px; font-size:12px; color:#4a4a4a; }
+</style>
+
+<div class="w">
+<div class="cols">
+
+  <div class="col">
+    <div class="lbl">Repliée · 3 verdicts</div>
+    <div class="c r">
+      <div class="t"><span class="d"></span>Dropshipping probable</div>
+      <div class="l">Même photo sur <b>Shein à 8,99 €</b></div>
+      <div class="l">Vendu ici 3,8× plus cher</div>
+      <div class="k">Voir les 5 vérifications</div>
+    </div>
+    <div class="c o">
+      <div class="t"><span class="d"></span>À vérifier</div>
+      <div class="l">Prix 2× au-dessus des annonces similaires</div>
+      <div class="l">Vendeur inscrit il y a 3 semaines</div>
+      <div class="k">Voir les 5 vérifications</div>
+    </div>
+    <div class="c g">
+      <div class="t"><span class="d"></span>Rien de suspect</div>
+      <div class="l">Photo originale, prix cohérent</div>
+      <div class="k">Voir les 5 vérifications</div>
+    </div>
+  </div>
+
+  <div class="col big">
+    <div class="lbl">Dépliée · détail des vérifications</div>
+    <div class="c r">
+      <div class="t"><span class="d"></span>Dropshipping probable</div>
+
+      <div class="chk">
+        <div class="ch">Recherche de l'image <span class="tag bad">Trouvée</span></div>
+        <div class="cd">La même photo apparaît sur 3 boutiques en ligne.</div>
+        <div class="src"><span>Shein · 8,99 €</span><span>Temu · 6,40 €</span><span>AliExpress · 5,10 €</span></div>
+      </div>
+
+      <div class="chk">
+        <div class="ch">Prix <span class="tag bad">3,8× trop cher</span></div>
+        <div class="cd">34 € ici contre environ 9 € ailleurs. Annonces Vinted similaires : 12 € en médiane.</div>
+      </div>
+
+      <div class="chk">
+        <div class="ch">Vendeur <span class="tag mid">À surveiller</span></div>
+        <div class="cd">Inscrit il y a 3 semaines, 3 avis. 41 articles en vente dont 38 « neufs avec étiquette », souvent en plusieurs tailles.</div>
+      </div>
+
+      <div class="chk">
+        <div class="ch">Photos <span class="tag bad">Photo catalogue</span></div>
+        <div class="cd">Fond uni et mannequin, pas de photo portée. La même photo sert sur 2 autres annonces du vendeur.</div>
+      </div>
+
+      <div class="chk">
+        <div class="ch">Description <span class="tag mid">Style boutique</span></div>
+        <div class="cd">Texte qui ressemble à une fiche produit traduite automatiquement.</div>
+      </div>
+
+      <div class="ai"><b>Avis IA</b>Cet article est très probablement revendu depuis Shein avec une forte marge. Tu peux le trouver neuf pour environ 9 € sur le site d'origine.</div>
+
+      <div class="foot">Indices, pas certitudes : un vendeur honnête peut revendre un article Shein qu'il a porté.</div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="lbl">Sans clé configurée</div>
+    <div class="c o">
+      <div class="t"><span class="d"></span>À vérifier</div>
+      <div class="chk" style="border-color:#f3d3a8">
+        <div class="ch lock">Recherche de l'image <span class="tag off">Désactivée</span></div>
+        <div class="cd" style="color:#444">Ajoute une clé Google pour retrouver la photo sur Shein, Temu…</div>
+        <span class="btn">Activer en 2 minutes</span>
+      </div>
+      <div class="chk" style="border-color:#f3d3a8">
+        <div class="ch">Vendeur <span class="tag mid">À surveiller</span></div>
+      </div>
+      <div class="chk" style="border-color:#f3d3a8">
+        <div class="ch">Photos <span class="tag bad">Photo catalogue</span></div>
+      </div>
+      <div class="chk" style="border-color:#f3d3a8">
+        <div class="ch">Description <span class="tag ok">Normale</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>

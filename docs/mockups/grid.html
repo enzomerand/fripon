@@ -1,0 +1,77 @@
+<h2>Fripon dans la liste des résultats</h2>
+<p class="subtitle">Chaque vignette a un petit bouton Fripon. Un clic lance l'analyse de cet article seulement, et le résultat s'affiche sur la vignette. Voici deux emplacements pour le bouton.</p>
+
+<style>
+  .w { font-family:-apple-system, Helvetica, Arial, sans-serif; color:#171717; font-size:13px; }
+  .grid { display:grid; grid-template-columns:repeat(4, 130px); gap:12px; background:#fff; padding:12px; border-radius:8px; }
+  .it { display:flex; flex-direction:column; gap:3px; position:relative; }
+  .ph { height:165px; border-radius:6px; position:relative; }
+  .p1 { background:linear-gradient(160deg,#f6d6dc,#e48aa0); }
+  .p2 { background:linear-gradient(160deg,#d7e3f4,#8fb0de); }
+  .p3 { background:linear-gradient(160deg,#e8e2d4,#bfae86); }
+  .p4 { background:linear-gradient(160deg,#dfeedd,#93c08c); }
+  .pr { font-weight:700; font-size:14px; }
+  .mt { color:#555; font-size:12px; }
+  .heart { position:absolute; right:6px; bottom:6px; background:#fff; border-radius:12px; padding:1px 7px; font-size:12px; color:#333; }
+  /* Variant A : button on photo */
+  .fa { position:absolute; left:6px; top:6px; background:#fff; color:#5b21b6; border-radius:12px; padding:3px 9px; font-size:12px; font-weight:700; box-shadow:0 1px 4px rgba(0,0,0,.2); }
+  .fa.load { color:#444; }
+  .res { position:absolute; left:6px; top:6px; right:6px; border-radius:6px; padding:4px 7px; font-size:12px; font-weight:700; color:#fff; line-height:1.25; }
+  .res.r { background:#c5221f; } .res.o { background:#b45309; } .res.g { background:#137333; }
+  .res span { display:block; font-weight:500; }
+  /* Variant B : button under price */
+  .fb { margin-top:3px; border:1px solid #5b21b6; color:#5b21b6; border-radius:5px; text-align:center; padding:4px 0; font-size:12px; font-weight:700; }
+  .rb { margin-top:3px; border-radius:5px; padding:4px 6px; font-size:12px; font-weight:700; }
+  .rb.r { background:#fdecea; color:#a50e0e; border:1px solid #d93025; }
+  .rb.g { background:#e6f4ea; color:#0d652d; border:1px solid #188038; }
+  .rb.o { background:#fef3e2; color:#7a3d00; border:1px solid #b45309; }
+  .rb span { display:block; font-weight:500; }
+  .bar { display:flex; justify-content:space-between; align-items:center; background:#fff; padding:10px 12px; border-radius:8px 8px 0 0; border-bottom:1px solid #eee; }
+  .bar b { color:#007782; font-size:14px; }
+  .all { background:#5b21b6; color:#fff; border-radius:6px; padding:5px 10px; font-size:12px; font-weight:700; }
+  .note { font-size:12px; color:#4a4a4a; margin-top:6px; }
+</style>
+
+<div class="w">
+<div class="cards">
+
+  <div class="card" data-choice="on-photo" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="grid">
+        <div class="it"><div class="ph p1"><div class="res r">Dropshipping probable<span>Shein · 8,99 €</span></div><div class="heart">♡ 12</div></div><div class="pr">34,00 €</div><div class="mt">M · Sans marque</div></div>
+        <div class="it"><div class="ph p2"><div class="fa">🦊 Fripon</div><div class="heart">♡ 4</div></div><div class="pr">15,00 €</div><div class="mt">S · Zara</div></div>
+        <div class="it"><div class="ph p3"><div class="res g">Rien de suspect<span>Prix cohérent</span></div><div class="heart">♡ 7</div></div><div class="pr">9,00 €</div><div class="mt">L · Levi's</div></div>
+        <div class="it"><div class="ph p4"><div class="fa load">⏳ Analyse…</div><div class="heart">♡ 2</div></div><div class="pr">22,00 €</div><div class="mt">M · H&amp;M</div></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Bouton posé sur la photo</h3>
+      <p>Petit bouton en haut à gauche de la photo. Une fois l'analyse faite, il devient un bandeau de couleur sur la photo. Très visible quand on fait défiler les résultats, mais il cache un bout de l'image.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="under-price" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="grid">
+        <div class="it"><div class="ph p1"><div class="heart">♡ 12</div></div><div class="pr">34,00 €</div><div class="mt">M · Sans marque</div><div class="rb r">Dropshipping probable<span>Shein · 8,99 €</span></div></div>
+        <div class="it"><div class="ph p2"><div class="heart">♡ 4</div></div><div class="pr">15,00 €</div><div class="mt">S · Zara</div><div class="fb">🦊 Analyser</div></div>
+        <div class="it"><div class="ph p3"><div class="heart">♡ 7</div></div><div class="pr">9,00 €</div><div class="mt">L · Levi's</div><div class="rb g">Rien de suspect<span>Prix cohérent</span></div></div>
+        <div class="it"><div class="ph p4"><div class="heart">♡ 2</div></div><div class="pr">22,00 €</div><div class="mt">M · H&amp;M</div><div class="fb" style="color:#444;border-color:#999">⏳ Analyse…</div></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · Bouton sous le prix</h3>
+      <p>Bouton pleine largeur sous la vignette, et le verdict prend sa place. La photo reste intacte, mais les vignettes deviennent un peu plus hautes.</p>
+    </div>
+  </div>
+
+</div>
+
+<div class="section" style="margin-top:22px">
+  <h3>En option, dans les deux cas : « Analyser cette page »</h3>
+  <div style="width:568px">
+    <div class="bar"><b>Résultats : robe longue</b><span class="all">🦊 Analyser les 24 articles visibles</span></div>
+  </div>
+  <p class="note">Un bouton en haut des résultats lance l'analyse de tous les articles visibles d'un coup. C'est pratique, mais 24 articles consomment 24 crédits de recherche d'image. Il afficherait le nombre de crédits avant de lancer.</p>
+</div>
+</div>

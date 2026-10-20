@@ -1,0 +1,112 @@
+<h2>Où le verdict apparaît sur l'annonce ?</h2>
+<p class="subtitle">Même annonce, trois façons de montrer le résultat. Dans tous les cas, l'icône de l'extension dans la barre du navigateur prend aussi la couleur du verdict.</p>
+
+<style>
+  .vt { font-family: -apple-system, Helvetica, Arial, sans-serif; color:#171717; background:#fff; border-radius:8px; overflow:hidden; position:relative; font-size:12px; }
+  .vt-top { background:#fff; border-bottom:1px solid #e5e5e5; padding:8px 12px; font-weight:700; color:#007782; font-size:14px; }
+  .vt-body { display:flex; gap:12px; padding:12px; }
+  .vt-photo { width:150px; height:190px; border-radius:6px; background:linear-gradient(160deg,#f6d6dc,#f3b7c4 55%,#e48aa0); display:flex; align-items:flex-end; justify-content:center; color:#7a2c3e; font-size:10px; padding-bottom:6px; flex-shrink:0; }
+  .vt-side { flex:1; display:flex; flex-direction:column; gap:6px; }
+  .vt-price { font-size:18px; font-weight:700; }
+  .vt-meta { color:#666; font-size:11px; }
+  .vt-btn { background:#007782; color:#fff; text-align:center; padding:7px; border-radius:5px; font-weight:600; }
+  .vt-btn2 { border:1px solid #007782; color:#007782; text-align:center; padding:6px; border-radius:5px; font-weight:600; }
+  .vt-seller { border-top:1px solid #eee; padding-top:6px; color:#444; font-size:11px; }
+  .vc-card { border:2px solid #d93025; background:#fdecea; border-radius:7px; padding:8px; }
+  .vc-title { color:#b3261e; font-weight:700; font-size:12px; display:flex; align-items:center; gap:6px; }
+  .vc-dot { width:10px; height:10px; border-radius:50%; background:#d93025; display:inline-block; }
+  .vc-line { font-size:11px; color:#3a1a17; margin-top:3px; }
+  .vc-link { font-size:11px; color:#b3261e; text-decoration:underline; margin-top:4px; }
+  .vc-banner { background:#d93025; color:#fff; padding:8px 12px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .vc-banner b { font-size:13px; }
+  .vc-fab { position:absolute; right:12px; bottom:12px; width:46px; height:46px; border-radius:50%; background:#d93025; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px; box-shadow:0 4px 12px rgba(0,0,0,.25); }
+  .vc-panel { position:absolute; right:12px; bottom:66px; width:190px; background:#fff; border:1px solid #e0e0e0; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.18); padding:10px; }
+  .stack { display:flex; flex-direction:column; gap:20px; }
+</style>
+
+<div class="cards">
+
+  <div class="card" data-choice="inline" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="vt">
+        <div class="vt-top">vinted</div>
+        <div class="vt-body">
+          <div class="vt-photo">photo de l'annonce</div>
+          <div class="vt-side">
+            <div class="vt-price">34,00 €</div>
+            <div class="vt-meta">Robe longue fleurie · Neuf avec étiquette · M</div>
+            <div class="vc-card">
+              <div class="vc-title"><span class="vc-dot"></span>Dropshipping probable</div>
+              <div class="vc-line">Même photo sur <b>Shein à 8,99 €</b></div>
+              <div class="vc-line">Vendu ici 3,8× plus cher</div>
+              <div class="vc-link">Voir les 5 vérifications</div>
+            </div>
+            <div class="vt-btn">Acheter</div>
+            <div class="vt-btn2">Faire une offre</div>
+            <div class="vt-seller">lea_dressing · 3 avis</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Carte intégrée à la page</h3>
+      <p>Glissée entre le prix et le bouton Acheter : impossible de la rater au moment de décider. Elle dépend de la mise en page de Vinted et peut casser si Vinted la change.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="banner" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="vt">
+        <div class="vt-top">vinted</div>
+        <div class="vc-banner">
+          <span><b>⚠ Dropshipping probable</b> · même photo sur Shein à 8,99 €</span>
+          <span style="text-decoration:underline;font-size:11px;white-space:nowrap">Détails</span>
+        </div>
+        <div class="vt-body">
+          <div class="vt-photo">photo de l'annonce</div>
+          <div class="vt-side">
+            <div class="vt-price">34,00 €</div>
+            <div class="vt-meta">Robe longue fleurie · Neuf avec étiquette · M</div>
+            <div class="vt-btn">Acheter</div>
+            <div class="vt-btn2">Faire une offre</div>
+            <div class="vt-seller">lea_dressing · 3 avis</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · Bandeau en haut de l'annonce</h3>
+      <p>Un bandeau de couleur sur toute la largeur, vert, orange ou rouge. Très visible et simple, mais il prend de la place même quand l'annonce est saine.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="floating" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="vt" style="min-height:250px">
+        <div class="vt-top">vinted</div>
+        <div class="vt-body">
+          <div class="vt-photo">photo de l'annonce</div>
+          <div class="vt-side">
+            <div class="vt-price">34,00 €</div>
+            <div class="vt-meta">Robe longue fleurie · Neuf avec étiquette · M</div>
+            <div class="vt-btn">Acheter</div>
+            <div class="vt-btn2">Faire une offre</div>
+            <div class="vt-seller">lea_dressing · 3 avis</div>
+          </div>
+        </div>
+        <div class="vc-panel">
+          <div class="vc-title"><span class="vc-dot"></span>Dropshipping probable</div>
+          <div class="vc-line">Même photo sur <b>Shein à 8,99 €</b></div>
+          <div class="vc-line">Vendu ici 3,8× plus cher</div>
+          <div class="vc-link">Voir les 5 vérifications</div>
+        </div>
+        <div class="vc-fab">18</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · Pastille flottante</h3>
+      <p>Une pastille ronde dans le coin avec un score sur 100 ; un clic ouvre le détail. Elle ne touche pas à la page de Vinted, donc elle est plus robuste, mais aussi plus discrète.</p>
+    </div>
+  </div>
+
+</div>

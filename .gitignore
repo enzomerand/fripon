@@ -1,0 +1,9 @@
+.superpowers/
+node_modules/
+.output/
+.wxt/
+dist/
+.DS_Store
+.env*
+.claude/settings.local.json
+.impeccable/
