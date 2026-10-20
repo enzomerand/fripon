@@ -1,6 +1,10 @@
 import { createImageAnalyzer, type PixelResult } from '../lib/image/analyzer';
 import { dHash, catalogScore, hashToHex } from '../lib/image/pixels';
-import { isRuntimeMessage } from '../lib/messages';
+import { handleMessage, isAllowedSender, type BackgroundDeps } from '../lib/background/handlers';
+import { loadImageGate } from '../lib/gate';
+import { checkKey } from '../lib/google/key-check';
+import { isRuntimeMessage, type OptionsSection } from '../lib/messages';
+import { loadSettings } from '../lib/settings';
 
 /** Photos are shrunk to this many pixels on their longest side before analysis. */
 const MAX_ANALYSIS_SIDE = 256;
@@ -26,11 +30,36 @@ const analyzeImage = createImageAnalyzer({
   computePixels,
 });
 
+/** The options page is a full tab; its sections are anchors (`#guide`, `#welcome`...). */
+async function openOptionsTab(section?: OptionsSection | 'welcome') {
+  const page = `${browser.runtime.getURL('/')}options.html`;
+  await browser.tabs.create({ url: section ? `${page}#${section}` : page });
+}
+
+const deps: BackgroundDeps = {
+  analyzeImage,
+  loadImageGate: () => loadImageGate(),
+  loadSettings,
+  checkKey: (provider, key) => checkKey(provider, key),
+  openOptions: openOptionsTab,
+};
+
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
-    // Only our own content scripts and pages may use the background's host permissions.
-    if (sender.id !== browser.runtime.id || !isRuntimeMessage(message)) return false;
-    void analyzeImage(message.url).then(sendResponse);
+    if (!isRuntimeMessage(message)) return false;
+    const own = { id: browser.runtime.id, origin: browser.runtime.getURL('/') };
+    if (!isAllowedSender(message, sender, own)) return false;
+    void handleMessage(message, deps).then(sendResponse);
     return true;
+  });
+
+  // Chrome calls it `action`, Firefox MV2 `browserAction`.
+  const toolbarButton = browser.action ?? browser.browserAction;
+  toolbarButton?.onClicked.addListener(() => {
+    void browser.runtime.openOptionsPage();
+  });
+
+  browser.runtime.onInstalled.addListener(({ reason }) => {
+    if (reason === 'install') void openOptionsTab('welcome');
   });
 });
