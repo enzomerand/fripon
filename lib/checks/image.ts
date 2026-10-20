@@ -13,7 +13,7 @@ const OFF_DETAILS: Record<ImageCheckOffReason, string> = {
   no_key: 'Ajoute une clé Google pour retrouver la photo sur Shein, Temu…',
   quota: 'Plafond de recherches atteint, réessaie plus tard ou cherche toi-même avec Google Lens.',
   manual:
-    'Recherche en mode manuel : lance-la quand tu veux, ou cherche toi-même avec Google Lens.',
+    "Tu as choisi l'analyse au clic : le bouton pour lancer la recherche d'image arrive avec la prochaine version de Fripon.",
 };
 
 const OFF_TAGS: Record<ImageCheckOffReason, string> = {

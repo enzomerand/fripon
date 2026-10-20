@@ -7,11 +7,13 @@ export const KEY_CHECK_TIMEOUT_MS = 10_000;
 /**
  * - invalid: Google does not accept this key (typo, deleted, expired, restricted to other APIs...).
  * - disabled: the key is fine but the API is not enabled on its project.
+ * - restricted: the key is limited to other APIs, so it cannot call this one.
  * - billing: the API needs billing, which is not enabled on the project.
  * - quota: the key is fine but its quota is used up right now.
- * - network: Google could not be reached in time.
+ * - network: Google could not be reached in time, or answered with a server error.
  */
-export type KeyCheckFailure = 'invalid' | 'disabled' | 'billing' | 'quota' | 'network';
+export type KeyCheckFailure =
+  'invalid' | 'disabled' | 'restricted' | 'billing' | 'quota' | 'network';
 
 export type KeyCheckResult = { ok: true } | { ok: false; reason: KeyCheckFailure };
 
@@ -24,7 +26,12 @@ interface GoogleErrorInfo {
   reasons: string[];
 }
 
-/** The probe of each provider. Both cost nothing: a model listing, and an annotate with no image. */
+/**
+ * The probe of each provider. Both cost nothing: a model listing, and an annotate with no image.
+ * Verified against Google with a real key: Vision answers `{"requests":[]}` with 200 `{}` and
+ * counts no unit, a bogus key gets 400 API_KEY_INVALID, a project without the API gets 403
+ * SERVICE_DISABLED.
+ */
 const PROBES: Record<Provider, { url: string; init: RequestInit }> = {
   gemini: {
     url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1',
@@ -71,6 +78,8 @@ const has = (info: GoogleErrorInfo, ...reasons: string[]) =>
   reasons.some((reason) => info.reasons.includes(normaliseReason(reason)));
 
 function classify(status: number, info: GoogleErrorInfo): KeyCheckFailure {
+  // The key is restricted to other APIs (403 PERMISSION_DENIED): not a disabled API, a restriction.
+  if (has(info, 'API_KEY_SERVICE_BLOCKED')) return 'restricted';
   if (
     has(info, 'BILLING_DISABLED') ||
     /requires billing|billing (is )?(not enabled|disabled)/i.test(info.message)
@@ -78,8 +87,7 @@ function classify(status: number, info: GoogleErrorInfo): KeyCheckFailure {
     return 'billing';
   }
   if (
-    // API_KEY_SERVICE_BLOCKED: the key is restricted to other APIs, so this one is off for it.
-    has(info, 'SERVICE_DISABLED', 'ACCESS_NOT_CONFIGURED', 'API_KEY_SERVICE_BLOCKED') ||
+    has(info, 'SERVICE_DISABLED', 'ACCESS_NOT_CONFIGURED') ||
     /has not been used in project|is disabled|not been enabled/i.test(info.message)
   ) {
     return 'disabled';
@@ -114,6 +122,8 @@ export async function checkKey(
       signal: controller.signal,
     });
     if (response.ok) return { ok: true };
+    // Google having a bad moment says nothing about the key.
+    if (response.status >= 500) return { ok: false, reason: 'network' };
     return { ok: false, reason: classify(response.status, await readError(response)) };
   } catch {
     return { ok: false, reason: 'network' };

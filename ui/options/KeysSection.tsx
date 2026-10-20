@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { maskKey } from '../../lib/format';
-import type { KeyCheckFailure } from '../../lib/google/key-check';
+import type { KeyCheckFailure, KeyCheckResult } from '../../lib/google/key-check';
 import { sendMessage } from '../../lib/messages';
 import {
   PROVIDERS,
@@ -21,18 +21,25 @@ const PROVIDER_TEXT: Record<Provider, { title: string; help: string }> = {
   },
 };
 
-/** What to tell the user for each way Google can refuse a key. */
-const FAILURE_TEXT: Record<KeyCheckFailure | 'unavailable', string> = {
+type Failure = KeyCheckFailure | 'unavailable' | 'storage';
+
+/** What to tell the user for each way a test or a save can fail. */
+const FAILURE_TEXT: Record<Failure, string> = {
   invalid:
     "Google refuse cette clé. Vérifie qu'elle est copiée en entier et qu'elle n'a pas de restriction de site web.",
   disabled:
     "L'API n'est pas activée sur ce projet. Active-la dans Google Cloud (voir le guide), puis reteste.",
+  restricted:
+    'Cette clé est limitée à une autre API : ajoute « Cloud Vision API » (ou « Generative Language API ») à ses restrictions.',
   billing:
     "La facturation n'est pas activée sur ce projet. Google l'exige pour cette API, même dans la limite gratuite (voir le guide).",
   quota:
     'Google indique que la limite de cette clé est atteinte pour le moment. Réessaie plus tard.',
   network: 'Impossible de joindre Google. Vérifie ta connexion, puis réessaie.',
+  // The test never ran (no answer from the background).
   unavailable: "Fripon n'a pas pu lancer le test. Recharge l'extension, puis réessaie.",
+  // The key could not be written to the browser's storage.
+  storage: "Impossible d'enregistrer la clé. Réessaie dans un instant.",
 };
 
 type Status =
@@ -40,7 +47,7 @@ type Status =
   | { kind: 'busy'; text: string }
   | { kind: 'info'; text: string }
   | { kind: 'ok' }
-  | { kind: 'failed'; reason: KeyCheckFailure | 'unavailable' | 'storage' };
+  | { kind: 'failed'; reason: Failure };
 
 interface KeyBlockProps {
   provider: Provider;
@@ -78,7 +85,7 @@ function KeyBlock({ provider, saved, onSaved }: KeyBlockProps) {
   const typed = draft.trim();
   const showPlausibleWarning = typed !== '' && !isPlausibleGoogleKey(typed);
 
-  /** Writes the typed key if it differs from the saved one. */
+  /** Writes the typed key if it differs from the saved one. Rejects when storage fails. */
   async function persist() {
     if (typed === saved) return;
     const next = await saveSettings({ keys: { [provider]: typed } });
@@ -103,13 +110,27 @@ function KeyBlock({ provider, saved, onSaved }: KeyBlockProps) {
       return;
     }
     setStatus({ kind: 'busy', text: 'Test en cours…' });
+    // The typed candidate is tested as it is: a saved key that works must never be replaced by
+    // one that may not. It is saved only once Google accepts it (or with "Enregistrer").
+    let result: KeyCheckResult | undefined;
+    try {
+      result = await sendMessage({ type: 'testKey', provider, key: typed });
+    } catch {
+      result = undefined;
+    }
+    if (!result) {
+      setStatus({ kind: 'failed', reason: 'unavailable' });
+      return;
+    }
+    if (!result.ok) {
+      setStatus({ kind: 'failed', reason: result.reason });
+      return;
+    }
     try {
       await persist();
-      const result = await sendMessage({ type: 'testKey', provider });
-      if (!result) setStatus({ kind: 'failed', reason: 'unavailable' });
-      else setStatus(result.ok ? { kind: 'ok' } : { kind: 'failed', reason: result.reason });
+      setStatus({ kind: 'ok' });
     } catch {
-      setStatus({ kind: 'failed', reason: 'unavailable' });
+      setStatus({ kind: 'failed', reason: 'storage' });
     }
   }
 
@@ -142,7 +163,7 @@ function KeyBlock({ provider, saved, onSaved }: KeyBlockProps) {
           aria-pressed={reveal}
           onClick={() => setReveal(!reveal)}
         >
-          {reveal ? 'Masquer' : 'Afficher'}
+          Afficher la clé
         </button>
       </div>
       {saved !== '' && (
@@ -200,9 +221,7 @@ function statusText(status: Status): string {
     case 'ok':
       return '✓ Clé valide';
     case 'failed':
-      return status.reason === 'storage'
-        ? "Impossible d'enregistrer la clé. Réessaie dans un instant."
-        : FAILURE_TEXT[status.reason];
+      return FAILURE_TEXT[status.reason];
   }
 }
 

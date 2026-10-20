@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { saveSettings, type AnalysisMode, type Settings } from '../../lib/settings';
 
 const CHOICES: { mode: AnalysisMode; label: string; help: string }[] = [
@@ -15,14 +15,22 @@ const CHOICES: { mode: AnalysisMode; label: string; help: string }[] = [
 ];
 
 export function ModeSection({ settings, onSaved }: { settings: Settings; onSaved: () => void }) {
+  // The choice just made, shown until the stored value catches up (or the save fails).
+  const [chosen, setChosen] = useState<AnalysisMode | null>(null);
   const [error, setError] = useState(false);
+  const shown = chosen ?? settings.mode;
+
+  useEffect(() => setChosen(null), [settings.mode]);
 
   async function choose(mode: AnalysisMode) {
+    setChosen(mode);
     try {
       await saveSettings({ mode });
       setError(false);
       onSaved();
     } catch {
+      // Back to what is really stored: the radio must not claim a choice that was lost.
+      setChosen(null);
       setError(true);
     }
   }
@@ -38,7 +46,7 @@ export function ModeSection({ settings, onSaved }: { settings: Settings; onSaved
               type="radio"
               name="mode"
               value={mode}
-              checked={settings.mode === mode}
+              checked={shown === mode}
               onChange={() => void choose(mode)}
             />
             <span class="choice__text">

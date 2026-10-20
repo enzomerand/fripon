@@ -1,14 +1,17 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useState } from 'preact/hooks';
+import { browser } from 'wxt/browser';
+import { PENDING_SECTION_KEY, takePendingSection } from '../../lib/options-nav';
+import { PROVIDERS } from '../../lib/settings';
+import { saveUiState } from '../../lib/ui-state';
 import { CreditsSection } from './CreditsSection';
 import { GuideSection } from './GuideSection';
 import { KeysSection } from './KeysSection';
 import { ModeSection } from './ModeSection';
 import { WelcomeBanner } from './WelcomeBanner';
 import { useStored } from './useStored';
-import { PROVIDERS } from '../../lib/settings';
 
 const REPO_URL = 'https://github.com/enzomerand/fripon';
-const SECTION_IDS = ['welcome', 'mode', 'keys', 'credits', 'guide'] as const;
+const SECTION_IDS: readonly string[] = ['welcome', 'mode', 'keys', 'credits', 'guide'];
 
 function hashSection(): string {
   return location.hash.replace(/^#/, '');
@@ -21,47 +24,90 @@ function scrollToSection(id: string, smooth: boolean) {
   target.scrollIntoView?.({ behavior: smooth && !reduced ? 'smooth' : 'auto', block: 'start' });
 }
 
+interface Target {
+  section: string;
+  smooth: boolean;
+}
+
 export function OptionsApp() {
   const { stored, failed, reload } = useStored();
   // The page can be opened straight on a section (`options.html#guide`).
-  const [startsAtGuide] = useState(() => hashSection() === 'guide');
-  const [welcomeAsked] = useState(() => hashSection() === 'welcome');
-  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
-  const [geminiOpen, setGeminiOpen] = useState(startsAtGuide);
-  const [visionOpen, setVisionOpen] = useState(startsAtGuide);
+  const [welcomeAsked, setWelcomeAsked] = useState(() => hashSection() === 'welcome');
+  const [welcomeClosed, setWelcomeClosed] = useState(false);
+  const [geminiOpen, setGeminiOpen] = useState(() => hashSection() === 'guide');
+  const [visionOpen, setVisionOpen] = useState(() => hashSection() === 'guide');
+  const [target, setTarget] = useState<Target | null>(() => {
+    const section = hashSection();
+    return section ? { section, smooth: false } : null;
+  });
   const loaded = stored !== null;
 
-  function openGuide() {
-    setGeminiOpen(true);
-    setVisionOpen(true);
-    history.replaceState(null, '', '#guide');
-    scrollToSection('guide', true);
-  }
+  /** Brings a section into view, opening what it needs to show. */
+  const goTo = useCallback((section: string, smooth: boolean) => {
+    if (section === 'welcome') {
+      setWelcomeAsked(true);
+      setWelcomeClosed(false);
+    }
+    if (section === 'guide') {
+      setGeminiOpen(true);
+      setVisionOpen(true);
+    }
+    setTarget({ section, smooth });
+  }, []);
 
-  // Land on the requested section once the content exists, and follow later `#section` links.
+  // The background asks for a section (a card button, a fresh install) through session storage,
+  // which also reaches an options tab that is already open.
   useEffect(() => {
-    if (!loaded) return;
-    const id = hashSection();
-    if (SECTION_IDS.includes(id as (typeof SECTION_IDS)[number])) scrollToSection(id, false);
-  }, [loaded]);
+    let alive = true;
+    const consume = async (smooth: boolean) => {
+      const section = await takePendingSection();
+      if (alive && section) goTo(section, smooth);
+    };
+    void consume(false);
+    const onChanged = (changes: Record<string, unknown>, area: string) => {
+      if (area === 'session' && PENDING_SECTION_KEY in changes) void consume(true);
+    };
+    browser.storage.onChanged.addListener(onChanged);
+    return () => {
+      alive = false;
+      browser.storage.onChanged.removeListener(onChanged);
+    };
+  }, [goTo]);
 
+  // `#section` links followed while the page is open.
   useEffect(() => {
     const onHashChange = () => {
-      const id = hashSection();
-      if (id === 'guide') {
-        setGeminiOpen(true);
-        setVisionOpen(true);
-      }
-      if (SECTION_IDS.includes(id as (typeof SECTION_IDS)[number])) scrollToSection(id, true);
+      const section = hashSection();
+      if (section) goTo(section, true);
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
+  }, [goTo]);
+
+  // Scroll once the content exists.
+  useEffect(() => {
+    if (!loaded || !target) return;
+    if (SECTION_IDS.includes(target.section)) scrollToSection(target.section, target.smooth);
+    setTarget(null);
+  }, [loaded, target]);
+
+  function followGuide() {
+    history.replaceState(null, '', '#guide');
+    goTo('guide', true);
+  }
+
+  function dismissWelcome() {
+    setWelcomeAsked(false);
+    setWelcomeClosed(true);
+    // Remembered so it does not come back; the page is already closed if this fails.
+    void saveUiState({ welcomeDismissed: true }).catch(() => undefined);
+  }
 
   const hasKey = stored
     ? PROVIDERS.some((provider) => stored.settings.keys[provider] !== '')
     : true;
-  const showWelcome = loaded && !welcomeDismissed && (welcomeAsked || !hasKey);
+  const showWelcome =
+    stored !== null && !welcomeClosed && (welcomeAsked || (!hasKey && !stored.ui.welcomeDismissed));
 
   return (
     <div class="page">
@@ -81,10 +127,7 @@ export function OptionsApp() {
         {stored && (
           <>
             {showWelcome && (
-              <WelcomeBanner
-                onFollowGuide={openGuide}
-                onDismiss={() => setWelcomeDismissed(true)}
-              />
+              <WelcomeBanner onFollowGuide={followGuide} onDismiss={dismissWelcome} />
             )}
             <ModeSection settings={stored.settings} onSaved={() => void reload()} />
             <KeysSection settings={stored.settings} onSaved={() => void reload()} />

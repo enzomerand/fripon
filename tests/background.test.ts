@@ -2,15 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import background from '../entrypoints/background';
-import { saveSettings } from '../lib/settings';
+import { PENDING_SECTION_KEY } from '../lib/options-nav';
+import { loadSettings, saveSettings } from '../lib/settings';
 
+type Sender = { id?: string; url?: string };
 type Listener = (
   message: unknown,
-  sender: { id?: string; url?: string },
+  sender: Sender,
   sendResponse: (response: unknown) => void,
 ) => boolean | undefined;
 
 const ORIGIN = browser.runtime.getURL('/');
+const pending = async () =>
+  (await browser.storage.session.get(PENDING_SECTION_KEY))[PENDING_SECTION_KEY];
 
 function start() {
   let listener: Listener | undefined;
@@ -21,7 +25,7 @@ function start() {
   if (!listener) throw new Error('no onMessage listener registered');
   const registered = listener;
   /** Sends a message and resolves with the response, or 'no answer' when it is not handled. */
-  return (message: unknown, sender: { id?: string; url?: string }) =>
+  return (message: unknown, sender: Sender) =>
     new Promise<unknown>((resolve) => {
       const handled = registered(message, sender, resolve);
       if (!handled) resolve('no answer');
@@ -61,53 +65,124 @@ describe('background', () => {
     expect(await send({ type: 'whatever' }, fromPage)).toBe('no answer');
   });
 
-  it('refuses testKey from a content script, accepts it from the options page', async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(new Response('{}', { status: 200 })));
-    vi.stubGlobal('fetch', fetchMock);
-    await saveSettings({ keys: { gemini: 'AIzaGemini' } });
-    const send = start();
+  describe('testKey', () => {
+    function stubGoogle(status = 200) {
+      const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(() =>
+        Promise.resolve(new Response('{}', { status })),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      return fetchMock;
+    }
+    const headerKey = (fetchMock: ReturnType<typeof stubGoogle>, call = 0) =>
+      (fetchMock.mock.calls[call]?.[1].headers as Record<string, string>)['x-goog-api-key'];
 
-    expect(await send({ type: 'testKey', provider: 'gemini' }, fromPage)).toBe('no answer');
-    expect(fetchMock).not.toHaveBeenCalled();
+    it('refuses a content script, with or without a key', async () => {
+      const fetchMock = stubGoogle();
+      await saveSettings({ keys: { gemini: 'AIzaGemini' } });
+      const send = start();
 
-    expect(await send({ type: 'testKey', provider: 'gemini' }, fromOptions)).toEqual({ ok: true });
-    expect(fetchMock).toHaveBeenCalledOnce();
-    vi.unstubAllGlobals();
+      expect(await send({ type: 'testKey', provider: 'gemini' }, fromPage)).toBe('no answer');
+      expect(await send({ type: 'testKey', provider: 'gemini', key: 'AIzaX' }, fromPage)).toBe(
+        'no answer',
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    });
+
+    it('tests the saved key for an extension page', async () => {
+      const fetchMock = stubGoogle();
+      await saveSettings({ keys: { gemini: 'AIzaGemini' } });
+      const send = start();
+
+      expect(await send({ type: 'testKey', provider: 'gemini' }, fromOptions)).toEqual({
+        ok: true,
+      });
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(headerKey(fetchMock)).toBe('AIzaGemini');
+      vi.unstubAllGlobals();
+    });
+
+    it('tests a candidate key for an extension page, and leaves the saved one alone', async () => {
+      const fetchMock = stubGoogle(400);
+      await saveSettings({ keys: { gemini: 'AIzaSaved' } });
+      const send = start();
+
+      const answer = await send(
+        { type: 'testKey', provider: 'gemini', key: 'AIzaCandidate' },
+        fromOptions,
+      );
+      expect(answer).toEqual({ ok: false, reason: 'invalid' });
+      expect(headerKey(fetchMock)).toBe('AIzaCandidate');
+      expect((await loadSettings()).keys.gemini).toBe('AIzaSaved');
+      vi.unstubAllGlobals();
+    });
+
+    it('answers nothing, not a network failure, when the saved key cannot be read', async () => {
+      const fetchMock = stubGoogle();
+      vi.spyOn(browser.storage.local, 'get').mockRejectedValue(new Error('storage'));
+      const send = start();
+      expect(await send({ type: 'testKey', provider: 'gemini' }, fromOptions)).toBeUndefined();
+      expect(fetchMock).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    });
   });
 
-  it('opens the options page in a tab at the requested section', async () => {
-    const create = vi.spyOn(browser.tabs, 'create').mockResolvedValue({} as never);
-    const send = start();
-    await send({ type: 'openOptions', section: 'guide' }, fromPage);
-    expect(create).toHaveBeenCalledWith({ url: `${ORIGIN}options.html#guide` });
-    await send({ type: 'openOptions' }, fromPage);
-    expect(create).toHaveBeenLastCalledWith({ url: `${ORIGIN}options.html` });
-  });
+  describe('options page', () => {
+    it('opens the options page, asking it for the requested section', async () => {
+      const open = vi
+        .spyOn(browser.runtime, 'openOptionsPage')
+        .mockResolvedValue(undefined as never);
+      const create = vi.spyOn(browser.tabs, 'create');
+      const send = start();
 
-  it('opens the options page when the toolbar button is clicked', () => {
-    const open = vi.spyOn(browser.runtime, 'openOptionsPage').mockResolvedValue(undefined as never);
-    let clicked: (() => void) | undefined;
-    vi.spyOn(browser.action.onClicked, 'addListener').mockImplementation(((fn: () => void) => {
-      clicked = fn;
-    }) as never);
-    start();
-    clicked?.();
-    expect(open).toHaveBeenCalledOnce();
-  });
+      await send({ type: 'openOptions', section: 'guide' }, fromPage);
+      expect(open).toHaveBeenCalledOnce();
+      expect(await pending()).toBe('guide');
+      // The existing tab is reused: no new tab is created behind its back.
+      expect(create).not.toHaveBeenCalled();
+    });
 
-  it('welcomes a new install, and only a new install', () => {
-    const create = vi.spyOn(browser.tabs, 'create').mockResolvedValue({} as never);
-    let installed: ((details: { reason: string }) => void) | undefined;
-    vi.spyOn(browser.runtime.onInstalled, 'addListener').mockImplementation(((
-      fn: (details: { reason: string }) => void,
-    ) => {
-      installed = fn;
-    }) as never);
-    start();
-    installed?.({ reason: 'update' });
-    installed?.({ reason: 'browser_update' });
-    expect(create).not.toHaveBeenCalled();
-    installed?.({ reason: 'install' });
-    expect(create).toHaveBeenCalledWith({ url: `${ORIGIN}options.html#welcome` });
+    it('replaces a stale request when none is made', async () => {
+      vi.spyOn(browser.runtime, 'openOptionsPage').mockResolvedValue(undefined as never);
+      await browser.storage.session.set({ [PENDING_SECTION_KEY]: 'credits' });
+      const send = start();
+      await send({ type: 'openOptions' }, fromPage);
+      expect(await pending()).toBeUndefined();
+    });
+
+    it('opens the options page when the toolbar button is clicked', async () => {
+      const open = vi
+        .spyOn(browser.runtime, 'openOptionsPage')
+        .mockResolvedValue(undefined as never);
+      let clicked: (() => void) | undefined;
+      vi.spyOn(browser.action.onClicked, 'addListener').mockImplementation(((fn: () => void) => {
+        clicked = fn;
+      }) as never);
+      start();
+      clicked?.();
+      await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
+      expect(await pending()).toBeUndefined();
+    });
+
+    it('welcomes a new install, and only a new install', async () => {
+      const open = vi
+        .spyOn(browser.runtime, 'openOptionsPage')
+        .mockResolvedValue(undefined as never);
+      let installed: ((details: { reason: string }) => void) | undefined;
+      vi.spyOn(browser.runtime.onInstalled, 'addListener').mockImplementation(((
+        fn: (details: { reason: string }) => void,
+      ) => {
+        installed = fn;
+      }) as never);
+      start();
+      installed?.({ reason: 'update' });
+      installed?.({ reason: 'browser_update' });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(open).not.toHaveBeenCalled();
+
+      installed?.({ reason: 'install' });
+      await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
+      expect(await pending()).toBe('welcome');
+    });
   });
 });

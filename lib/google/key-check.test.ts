@@ -102,7 +102,7 @@ describe('checkKey classification', () => {
     });
   });
 
-  it('flags a key restricted to another API as disabled', async () => {
+  it('flags a key restricted to another API as restricted, not disabled', async () => {
     const body = googleError(
       403,
       'PERMISSION_DENIED',
@@ -111,7 +111,7 @@ describe('checkKey classification', () => {
     );
     expect(await checkKey('gemini', KEY, fakeFetch(json(403, body)))).toEqual({
       ok: false,
-      reason: 'disabled',
+      reason: 'restricted',
     });
   });
 
@@ -164,6 +164,25 @@ describe('checkKey classification', () => {
     });
   });
 
+  it.each([500, 502, 503, 504])(
+    'reads a %s as Google being down, not as a bad key',
+    async (status) => {
+      for (const provider of ['gemini', 'vision'] as const) {
+        expect(await checkKey(provider, KEY, fakeFetch(new Response('oops', { status })))).toEqual({
+          ok: false,
+          reason: 'network',
+        });
+        expect(
+          await checkKey(
+            provider,
+            KEY,
+            fakeFetch(json(status, googleError(status, 'UNAVAILABLE', 'API_KEY_INVALID'))),
+          ),
+        ).toEqual({ ok: false, reason: 'network' });
+      }
+    },
+  );
+
   it('calls any other refusal invalid, even without a readable body', async () => {
     expect(
       await checkKey('gemini', KEY, fakeFetch(new Response('<html>', { status: 403 }))),
@@ -171,7 +190,7 @@ describe('checkKey classification', () => {
       ok: false,
       reason: 'invalid',
     });
-    expect(await checkKey('vision', KEY, fakeFetch(new Response('', { status: 500 })))).toEqual({
+    expect(await checkKey('vision', KEY, fakeFetch(new Response('', { status: 401 })))).toEqual({
       ok: false,
       reason: 'invalid',
     });

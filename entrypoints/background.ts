@@ -3,7 +3,8 @@ import { dHash, catalogScore, hashToHex } from '../lib/image/pixels';
 import { handleMessage, isAllowedSender, type BackgroundDeps } from '../lib/background/handlers';
 import { loadImageGate } from '../lib/gate';
 import { checkKey } from '../lib/google/key-check';
-import { isRuntimeMessage, type OptionsSection } from '../lib/messages';
+import { isRuntimeMessage } from '../lib/messages';
+import { openOptionsAt } from '../lib/options-nav';
 import { loadSettings } from '../lib/settings';
 
 /** Photos are shrunk to this many pixels on their longest side before analysis. */
@@ -30,18 +31,12 @@ const analyzeImage = createImageAnalyzer({
   computePixels,
 });
 
-/** The options page is a full tab; its sections are anchors (`#guide`, `#welcome`...). */
-async function openOptionsTab(section?: OptionsSection | 'welcome') {
-  const page = `${browser.runtime.getURL('/')}options.html`;
-  await browser.tabs.create({ url: section ? `${page}#${section}` : page });
-}
-
 const deps: BackgroundDeps = {
   analyzeImage,
   loadImageGate: () => loadImageGate(),
   loadSettings,
   checkKey: (provider, key) => checkKey(provider, key),
-  openOptions: openOptionsTab,
+  openOptions: openOptionsAt,
 };
 
 export default defineBackground(() => {
@@ -49,17 +44,18 @@ export default defineBackground(() => {
     if (!isRuntimeMessage(message)) return false;
     const own = { id: browser.runtime.id, origin: browser.runtime.getURL('/') };
     if (!isAllowedSender(message, sender, own)) return false;
-    void handleMessage(message, deps).then(sendResponse);
+    // An empty answer tells the caller the background could not do it, instead of leaving it hanging.
+    void handleMessage(message, deps).then(sendResponse, () => sendResponse(undefined));
     return true;
   });
 
   // Chrome calls it `action`, Firefox MV2 `browserAction`.
   const toolbarButton = browser.action ?? browser.browserAction;
   toolbarButton?.onClicked.addListener(() => {
-    void browser.runtime.openOptionsPage();
+    void openOptionsAt().catch(() => undefined);
   });
 
   browser.runtime.onInstalled.addListener(({ reason }) => {
-    if (reason === 'install') void openOptionsTab('welcome');
+    if (reason === 'install') void openOptionsAt('welcome').catch(() => undefined);
   });
 });

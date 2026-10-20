@@ -1,11 +1,7 @@
 import type { ImageGate } from '../gate';
 import type { KeyCheckResult } from '../google/key-check';
-import {
-  type AnalyzeImageResponse,
-  type OptionsSection,
-  type ResponseFor,
-  type RuntimeMessage,
-} from '../messages';
+import type { PendingSection } from '../options-nav';
+import type { AnalyzeImageResponse, ResponseFor, RuntimeMessage } from '../messages';
 import type { Provider, Settings } from '../settings';
 
 /** Everything the background does with the outside world, injected so it can be tested. */
@@ -14,7 +10,7 @@ export interface BackgroundDeps {
   loadImageGate(): Promise<ImageGate>;
   loadSettings(): Promise<Settings>;
   checkKey(provider: Provider, key: string): Promise<KeyCheckResult>;
-  openOptions(section?: OptionsSection): Promise<void>;
+  openOptions(section?: PendingSection): Promise<void>;
 }
 
 export interface MessageSender {
@@ -44,7 +40,11 @@ export function isAllowedSender(
   return true;
 }
 
-/** Runs one message. Never rejects: a content script must always get an answer. */
+/**
+ * Runs one message. Only a `testKey` that cannot read the saved key rejects (the caller then
+ * answers with nothing, which the options page shows as "could not run the test"): inventing a
+ * "network" failure for a storage problem would send the user looking in the wrong place.
+ */
 export async function handleMessage<M extends RuntimeMessage>(
   message: M,
   deps: BackgroundDeps,
@@ -66,12 +66,8 @@ async function respond(message: RuntimeMessage, deps: BackgroundDeps) {
       await deps.openOptions(message.section).catch(() => undefined);
       return undefined;
     case 'testKey': {
-      try {
-        const key = (await deps.loadSettings()).keys[message.provider];
-        return await deps.checkKey(message.provider, key);
-      } catch {
-        return { ok: false, reason: 'network' } satisfies KeyCheckResult;
-      }
+      const key = message.key ?? (await deps.loadSettings()).keys[message.provider];
+      return deps.checkKey(message.provider, key.trim());
     }
   }
 }

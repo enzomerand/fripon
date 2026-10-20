@@ -42,7 +42,7 @@ describe('sendMessage (settings messages)', () => {
     expect(spy).toHaveBeenCalledWith({ type: 'getImageGate' });
   });
 
-  it('sends the provider only, never a key, to test a key', async () => {
+  it('tests the saved key when only the provider is sent', async () => {
     const spy = vi
       .spyOn(browser.runtime, 'sendMessage')
       .mockResolvedValue({ ok: false, reason: 'billing' } as never);
@@ -51,6 +51,12 @@ describe('sendMessage (settings messages)', () => {
       reason: 'billing',
     });
     expect(spy).toHaveBeenCalledWith({ type: 'testKey', provider: 'vision' });
+  });
+
+  it('can carry a candidate key to test before saving it', async () => {
+    const spy = vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue({ ok: true } as never);
+    await sendMessage({ type: 'testKey', provider: 'gemini', key: 'AIzaCandidate' });
+    expect(spy).toHaveBeenCalledWith({ type: 'testKey', provider: 'gemini', key: 'AIzaCandidate' });
   });
 
   it('asks to open the options page at a section', async () => {
@@ -80,6 +86,14 @@ describe('isRuntimeMessage', () => {
     expect(isRuntimeMessage({ type: 'testKey', provider: 'gemini' })).toBe(true);
     expect(isRuntimeMessage({ type: 'testKey' })).toBe(false);
     expect(isRuntimeMessage({ type: 'testKey', provider: 'openai' })).toBe(false);
+  });
+
+  it('accepts a testKey candidate key only as a string', () => {
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: 'AIzaX' })).toBe(true);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: '' })).toBe(true);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: 12 })).toBe(false);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: null })).toBe(false);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: { a: 1 } })).toBe(false);
   });
 
   it('accepts a well-formed analyzeImage request only', () => {

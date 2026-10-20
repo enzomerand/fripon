@@ -21,7 +21,7 @@ WXT 0.21 + Preact 11 + TypeScript strict (`noUncheckedIndexedAccess`), Manifest 
 - `entrypoints/options/` + `ui/options/`: full-tab settings page (mode, keys, credits, guide). `ui/ListingCard.*`: the card.
 - `lib/vinted/`: `listing-reader.ts` (JSON-LD + DOM), `selectors.ts` (every selector, one place), `anchor.ts`, `api.ts` (seller fetch: shared request queue spaced 1.5 s across tabs, 24 h cache, cooldown after 403/429).
 - `lib/checks/` (image, price, seller, photos, description) -> `lib/verdict.ts`; `lib/analysis.ts` orchestrates; `lib/image/` pixel hashing, run in the background.
-- `lib/settings.ts` (`fripon:settings:v1`), `lib/credits.ts` (counters `fripon:credits:v1:<provider>:<period>`, local time, caps from `CREDIT_POLICY`), `lib/gate.ts` (`ready|no_key|quota|manual`), `lib/google/key-check.ts` (free key test).
+- `lib/settings.ts` (`fripon:settings:v1`), `lib/credits.ts` (counters `fripon:credits:v1:<provider>:<period>`, periods and resets on Pacific time like Google, caps from `CREDIT_POLICY`, atomic `reserve`/`refund`), `lib/lock.ts` (`navigator.locks` with an in-module fallback), `lib/gate.ts` (`ready|no_key|quota|manual`), `lib/google/key-check.ts` (free key test), `lib/options-nav.ts` (which options section to show, via `storage.session`).
 
 ## Conventions
 
@@ -37,5 +37,6 @@ WXT 0.21 + Preact 11 + TypeScript strict (`noUncheckedIndexedAccess`), Manifest 
 - API keys are only read in the background (and shown on the options page). Content scripts get a gate word, never a key; `testKey` is accepted from extension pages only. Keys go in the `x-goog-api-key` header, never in a URL.
 - A Gemini key must come from a Google Cloud project without billing: billing switches Gemini to the paid tier. Vision needs billing, so the two keys need two projects.
 - Vinted is not a single-page app (pages reload), but bfcache restores (`pageshow`) and `wxt:locationchange` are handled anyway.
+- Paid Google calls (lots 3-4): `reserve` a credit in the background right before each call and `refund` it if the call cost nothing. The gate sent to pages is only a display hint.
 - Do not touch existing storage keys (`fripon:seller:v2:*`, `fripon:lastRequestAt:*`, `fripon:cooldownUntil:*`).
 - Typed `browser.runtime.getURL('/options.html')` only exists after `wxt prepare`: build the URL from `getURL('/')`.

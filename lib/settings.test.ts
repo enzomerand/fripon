@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import {
@@ -139,6 +139,31 @@ describe('loadSettings / saveSettings', () => {
     });
     expect(saved.mode).toBe('click');
     expect(saved.caps).toEqual({ vision: 300, gemini: 20 });
+  });
+
+  it('never loses a save to a racing one', async () => {
+    const saved = await Promise.all([
+      saveSettings({ mode: 'click' }),
+      saveSettings({ keys: { vision: 'AIzaVision' } }),
+      saveSettings({ keys: { gemini: 'AIzaGemini' } }),
+      saveSettings({ caps: { vision: 42 } }),
+      saveSettings({ caps: { gemini: null } }),
+    ]);
+    const expected = {
+      mode: 'click',
+      keys: { vision: 'AIzaVision', gemini: 'AIzaGemini' },
+      caps: { vision: 42, gemini: null },
+    };
+    expect(await loadSettings()).toEqual(expected);
+    expect(saved.at(-1)).toEqual(expected);
+  });
+
+  it('takes the settings lock, so it holds across contexts too', async () => {
+    const request = vi.fn(<T>(_name: string, callback: () => Promise<T>) => callback());
+    vi.stubGlobal('navigator', { locks: { request } });
+    await saveSettings({ mode: 'click' });
+    vi.unstubAllGlobals();
+    expect(request.mock.calls.map(([name]) => name)).toEqual(['fripon:settings']);
   });
 
   it('leaves the other storage keys alone', async () => {

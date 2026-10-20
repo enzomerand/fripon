@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { CREDIT_POLICY, WARN_RATIO, type Usage } from '../../lib/credits';
-import { formatCount, formatResetDate } from '../../lib/format';
+import { formatCount, formatReset } from '../../lib/format';
 import { PROVIDERS, saveSettings, type Provider } from '../../lib/settings';
 
 const CREDIT_TEXT: Record<
@@ -37,11 +37,15 @@ function CreditRow({ provider, usage, now, onSaved }: CreditRowProps) {
   const [draft, setDraft] = useState(cap === null ? '' : String(cap));
   const [capError, setCapError] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  // The "Sans plafond" choice just made, shown until the stored cap catches up (or the save fails).
+  const [noCapChosen, setNoCapChosen] = useState<boolean | null>(null);
+  const noCap = noCapChosen ?? cap === null;
 
   // Follows the stored cap (changed in another tab, or just saved).
   useEffect(() => {
     setDraft(cap === null ? '' : String(cap));
     setCapError(false);
+    setNoCapChosen(null);
   }, [cap]);
 
   async function saveCap(next: number | null) {
@@ -50,6 +54,9 @@ function CreditRow({ provider, usage, now, onSaved }: CreditRowProps) {
       setSaveError(false);
       onSaved();
     } catch {
+      // Back to what is really stored: the page must not show a cap that was lost.
+      setDraft(cap === null ? '' : String(cap));
+      setNoCapChosen(null);
       setSaveError(true);
     }
   }
@@ -89,7 +96,7 @@ function CreditRow({ provider, usage, now, onSaved }: CreditRowProps) {
       )}
       {state === 'warning' && (
         <p class="status status--warn">
-          Tu as utilisé plus de {Math.round(WARN_RATIO * 100)} % de ton plafond.
+          Tu as utilisé au moins {Math.round(WARN_RATIO * 100)} % de ton plafond.
         </p>
       )}
       {state === 'reached' && (
@@ -97,7 +104,7 @@ function CreditRow({ provider, usage, now, onSaved }: CreditRowProps) {
           Plafond atteint : Fripon se limite aux vérifications gratuites et au lien Google Lens.
         </p>
       )}
-      <p class="muted">Remis à zéro {formatResetDate(usage.resetsAt, now)}.</p>
+      <p class="muted">Remis à zéro {formatReset(usage.resetsAt, now)}.</p>
 
       <div class="cap">
         <label for={inputId}>Plafond</label>
@@ -109,7 +116,7 @@ function CreditRow({ provider, usage, now, onSaved }: CreditRowProps) {
           min={1}
           step={1}
           value={draft}
-          disabled={cap === null}
+          disabled={noCap}
           aria-invalid={capError}
           onInput={(event) => setDraft(event.currentTarget.value)}
           onChange={(event) => commitDraft(event.currentTarget.value)}
@@ -117,8 +124,12 @@ function CreditRow({ provider, usage, now, onSaved }: CreditRowProps) {
         <label class="check">
           <input
             type="checkbox"
-            checked={cap === null}
-            onChange={(event) => void saveCap(event.currentTarget.checked ? null : defaultCap)}
+            checked={noCap}
+            onChange={(event) => {
+              const wantsNoCap = event.currentTarget.checked;
+              setNoCapChosen(wantsNoCap);
+              void saveCap(wantsNoCap ? null : defaultCap);
+            }}
           />
           Sans plafond
         </label>
@@ -158,8 +169,9 @@ export function CreditsSection({
     <section class="card" id="credits" aria-labelledby="credits-title">
       <h2 id="credits-title">Crédits</h2>
       <p class="muted">
-        Un crédit, c'est un appel payant à Google. Fripon les compte ici et s'arrête au plafond. Le
-        compteur est local : il ne voit pas ce que la même clé consomme ailleurs.
+        Un crédit, c'est un appel payant à Google. Fripon les compte ici et s'arrête au plafond. Les
+        compteurs repartent de zéro à minuit, heure de Californie, comme chez Google. Le compteur
+        est local : il ne voit pas ce que la même clé consomme ailleurs.
       </p>
       {PROVIDERS.map((provider) => (
         <CreditRow

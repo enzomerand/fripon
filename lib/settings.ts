@@ -1,6 +1,7 @@
 import { browser } from 'wxt/browser';
 import { CREDIT_POLICY } from './credits';
 import { isRecord } from './json';
+import { withLock } from './lock';
 
 /** auto: every check runs on page open. click: paid checks wait for a click (free ones still run). */
 export type AnalysisMode = 'auto' | 'click';
@@ -26,6 +27,9 @@ export interface SettingsPatch {
 
 /** `storage.local` key of the whole settings object. */
 export const SETTINGS_KEY = 'fripon:settings:v1';
+
+/** Name of the lock that serialises every settings write. */
+export const SETTINGS_LOCK = 'fripon:settings';
 
 export const DEFAULT_SETTINGS: Settings = {
   mode: 'auto',
@@ -80,18 +84,21 @@ export async function loadSettings(): Promise<Settings> {
 /**
  * Merges `patch` into the stored settings and returns what was saved. Patch fields that are
  * invalid are ignored (the stored value stays), they never reset a field to its default.
+ * Saves are serialised, so two saves racing (two tabs, two clicks) both end up in the result.
  */
-export async function saveSettings(patch: SettingsPatch): Promise<Settings> {
-  const current = await loadSettings();
-  const next: Settings = {
-    mode: orDefault(parseMode(patch.mode), current.mode),
-    keys: { ...current.keys },
-    caps: { ...current.caps },
-  };
-  for (const provider of PROVIDERS) {
-    next.keys[provider] = orDefault(parseKey(patch.keys?.[provider]), current.keys[provider]);
-    next.caps[provider] = orDefault(parseCap(patch.caps?.[provider]), current.caps[provider]);
-  }
-  await browser.storage.local.set({ [SETTINGS_KEY]: next });
-  return next;
+export function saveSettings(patch: SettingsPatch): Promise<Settings> {
+  return withLock(SETTINGS_LOCK, async () => {
+    const current = await loadSettings();
+    const next: Settings = {
+      mode: orDefault(parseMode(patch.mode), current.mode),
+      keys: { ...current.keys },
+      caps: { ...current.caps },
+    };
+    for (const provider of PROVIDERS) {
+      next.keys[provider] = orDefault(parseKey(patch.keys?.[provider]), current.keys[provider]);
+      next.caps[provider] = orDefault(parseCap(patch.caps?.[provider]), current.caps[provider]);
+    }
+    await browser.storage.local.set({ [SETTINGS_KEY]: next });
+    return next;
+  });
 }

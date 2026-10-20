@@ -36,6 +36,12 @@ describe('imageCheckOff', () => {
     );
   });
 
+  it('does not promise a click button before it exists', () => {
+    expect(imageCheckOff('manual').detail).toBe(
+      "Tu as choisi l'analyse au clic : le bouton pour lancer la recherche d'image arrive avec la prochaine version de Fripon.",
+    );
+  });
+
   it('gives a different explanation per reason', () => {
     const details = new Set(
       (['no_key', 'quota', 'manual'] as const).map((r) => imageCheckOff(r).detail),

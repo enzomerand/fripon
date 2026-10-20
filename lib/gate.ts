@@ -3,7 +3,8 @@ import { loadSettings, type Settings } from './settings';
 
 /**
  * Whether the reverse image search may run. This is all a content script ever learns about the
- * keys:
+ * keys, and it is only a snapshot taken when the page opened, good for choosing what to show:
+ * the background must still `reserve` a credit before each paid call, and never trusts a gate.
  * - no_key: no Vision key saved.
  * - quota: the Vision cap is reached for this period.
  * - manual: key and credits are fine, but the user chose "Au clic".

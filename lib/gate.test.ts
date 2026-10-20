@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import { recordSpend } from './credits';
+import { reserve } from './credits';
 import { imageGate, loadImageGate } from './gate';
 import { DEFAULT_SETTINGS, saveSettings, type Settings } from './settings';
 
@@ -38,7 +38,7 @@ describe('imageGate', () => {
 });
 
 describe('loadImageGate', () => {
-  const now = new Date(2026, 9, 20, 12);
+  const now = new Date('2026-10-20T21:30:00Z');
 
   beforeEach(() => {
     fakeBrowser.reset();
@@ -55,14 +55,14 @@ describe('loadImageGate', () => {
 
   it('turns into quota when the stored counter hits the stored cap, and back next month', async () => {
     await saveSettings({ keys: { vision: 'AIzaVision' }, caps: { vision: 3 } });
-    await recordSpend('vision', 3, now);
+    await reserve('vision', 3, null, now);
     expect(await loadImageGate(now)).toBe('quota');
-    expect(await loadImageGate(new Date(2026, 10, 1, 0, 0))).toBe('ready');
+    expect(await loadImageGate(new Date('2026-11-01T07:00:00Z'))).toBe('ready');
   });
 
   it('lifts the quota when the cap is removed', async () => {
     await saveSettings({ keys: { vision: 'AIzaVision' }, caps: { vision: 3 } });
-    await recordSpend('vision', 3, now);
+    await reserve('vision', 3, null, now);
     await saveSettings({ caps: { vision: null } });
     expect(await loadImageGate(now)).toBe('ready');
   });

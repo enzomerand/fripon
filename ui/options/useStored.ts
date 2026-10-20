@@ -2,18 +2,21 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { browser } from 'wxt/browser';
 import { CREDITS_KEY_PREFIX, getUsage, type Usage } from '../../lib/credits';
 import { SETTINGS_KEY, loadSettings, type Provider, type Settings } from '../../lib/settings';
+import { UI_STATE_KEY, loadUiState, type UiState } from '../../lib/ui-state';
 
 /** Everything the options page shows, read together so the numbers always agree. */
 export interface Stored {
   settings: Settings;
   usage: Record<Provider, Usage>;
-  /** When it was read: the reference for "demain", "le 1er novembre"... */
+  ui: UiState;
+  /** When it was read: the reference for "à 9 h", "le 1er novembre"... */
   now: Date;
 }
 
 /**
  * The stored settings and credit counters, kept up to date: it re-reads whenever either changes
- * (this page, another options tab, or the background spending a credit).
+ * (this page, another options tab, or the background spending a credit). The page only reads the
+ * counters; the background is the one that writes them.
  */
 export function useStored() {
   const [stored, setStored] = useState<Stored | null>(null);
@@ -25,13 +28,13 @@ export function useStored() {
     const mine = ++latest.current;
     try {
       const now = new Date();
-      const settings = await loadSettings();
+      const [settings, ui] = await Promise.all([loadSettings(), loadUiState()]);
       const [vision, gemini] = await Promise.all([
         getUsage('vision', settings.caps.vision, now),
         getUsage('gemini', settings.caps.gemini, now),
       ]);
       if (mine !== latest.current) return;
-      setStored({ settings, usage: { vision, gemini }, now });
+      setStored({ settings, usage: { vision, gemini }, ui, now });
       setFailed(false);
     } catch {
       if (mine === latest.current) setFailed(true);
@@ -42,11 +45,10 @@ export function useStored() {
     void reload();
     const onChanged = (changes: Record<string, unknown>, area: string) => {
       if (area !== 'local') return;
-      if (
-        Object.keys(changes).some((k) => k === SETTINGS_KEY || k.startsWith(CREDITS_KEY_PREFIX))
-      ) {
-        void reload();
-      }
+      const relevant = Object.keys(changes).some(
+        (k) => k === SETTINGS_KEY || k === UI_STATE_KEY || k.startsWith(CREDITS_KEY_PREFIX),
+      );
+      if (relevant) void reload();
     };
     // A page left open overnight must not keep yesterday's counters.
     const onVisible = () => {

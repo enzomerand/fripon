@@ -31,19 +31,22 @@ export interface GetImageGateRequest {
 export const OPTIONS_SECTIONS = ['guide', 'keys', 'credits'] as const;
 export type OptionsSection = (typeof OPTIONS_SECTIONS)[number];
 
-/** Open the options page in a tab, at `section` when given. */
+/** Open the options page (or bring the open one to the front), at `section` when given. */
 export interface OpenOptionsRequest {
   type: 'openOptions';
   section?: OptionsSection;
 }
 
 /**
- * Check the key saved for `provider`, for free. The message carries no key: the background reads
- * the stored one. Only accepted from the extension's own pages.
+ * Check a key for `provider`, for free: `key` when given (a candidate the user typed, not saved
+ * yet), else the one saved. Only accepted from the extension's own pages, never from a content
+ * script: a key must not travel through a web page's context. The answer is empty when the
+ * background could not read the saved key.
  */
 export interface TestKeyRequest {
   type: 'testKey';
   provider: Provider;
+  key?: string;
 }
 
 /** Every message the background understands. Add new requests here. */
@@ -63,7 +66,13 @@ export type ResponseFor<M extends RuntimeMessage> = RuntimeResponses[M['type']];
 /** Narrowing guard for the background's `onMessage` listener. */
 export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   if (typeof value !== 'object' || value === null) return false;
-  const message = value as { type?: unknown; url?: unknown; section?: unknown; provider?: unknown };
+  const message = value as {
+    type?: unknown;
+    url?: unknown;
+    section?: unknown;
+    provider?: unknown;
+    key?: unknown;
+  };
   switch (message.type) {
     case 'analyzeImage':
       return typeof message.url === 'string';
@@ -75,7 +84,10 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
         OPTIONS_SECTIONS.includes(message.section as OptionsSection)
       );
     case 'testKey':
-      return message.provider === 'vision' || message.provider === 'gemini';
+      return (
+        (message.provider === 'vision' || message.provider === 'gemini') &&
+        (message.key === undefined || typeof message.key === 'string')
+      );
     default:
       return false;
   }

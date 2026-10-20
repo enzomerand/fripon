@@ -27,18 +27,26 @@ export function maskKey(key: string): string {
   return `${key.slice(0, 4)}••••••${key.slice(-4)}`;
 }
 
-/** "demain" / "le 1er novembre" / "le 1er janvier 2027": when a counter starts again from zero. */
-export function formatResetDate(resetsAt: Date, now: Date): string {
-  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-  if (
-    resetsAt.getFullYear() === tomorrow.getFullYear() &&
-    resetsAt.getMonth() === tomorrow.getMonth() &&
-    resetsAt.getDate() === tomorrow.getDate()
-  ) {
-    return 'demain';
-  }
+/** "9 h" / "13 h 30": a local clock time, the French way. */
+function formatClock(date: Date): string {
+  const minutes = date.getMinutes();
+  return minutes === 0
+    ? `${date.getHours()} h`
+    : `${date.getHours()} h ${String(minutes).padStart(2, '0')}`;
+}
+
+/** A day with a daylight saving change lasts 25 h. */
+const WITHIN_A_DAY_MS = 25 * 60 * 60 * 1_000;
+
+/**
+ * When a counter starts again from zero, in the user's own time: "à 9 h" when that is within a
+ * day, else "le 1er novembre à 9 h" ("le 1er janvier 2027 à 9 h" when it is next year).
+ */
+export function formatReset(resetsAt: Date, now: Date): string {
+  const time = formatClock(resetsAt);
+  if (resetsAt.getTime() - now.getTime() <= WITHIN_A_DAY_MS) return `à ${time}`;
   const day = resetsAt.getDate();
   const month = new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(resetsAt);
   const year = resetsAt.getFullYear() === now.getFullYear() ? '' : ` ${resetsAt.getFullYear()}`;
-  return `le ${day === 1 ? '1er' : day} ${month}${year}`;
+  return `le ${day === 1 ? '1er' : day} ${month}${year} à ${time}`;
 }

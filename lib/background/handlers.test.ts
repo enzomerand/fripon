@@ -89,7 +89,7 @@ describe('handleMessage', () => {
     await expect(handleMessage({ type: 'openOptions' }, deps)).resolves.toBeUndefined();
   });
 
-  it('tests the STORED key of the provider', async () => {
+  it('tests the STORED key of the provider when no key is sent', async () => {
     const deps = makeDeps({
       checkKey: vi.fn(() => Promise.resolve({ ok: false as const, reason: 'billing' as const })),
     });
@@ -102,12 +102,27 @@ describe('handleMessage', () => {
     expect(deps.checkKey).toHaveBeenLastCalledWith('vision', 'AIzaV');
   });
 
-  it('reports a network failure when the settings cannot be read', async () => {
+  it('tests a candidate key as sent, without touching the saved one', async () => {
+    const deps = makeDeps();
+    await handleMessage({ type: 'testKey', provider: 'vision', key: '  AIzaCandidate ' }, deps);
+    expect(deps.checkKey).toHaveBeenCalledWith('vision', 'AIzaCandidate');
+    expect(deps.loadSettings).not.toHaveBeenCalled();
+  });
+
+  it('rejects, rather than inventing a network failure, when the saved key cannot be read', async () => {
     const deps = makeDeps({ loadSettings: vi.fn(() => Promise.reject(new Error('storage'))) });
-    expect(await handleMessage({ type: 'testKey', provider: 'vision' }, deps)).toEqual({
-      ok: false,
-      reason: 'network',
-    });
+    await expect(handleMessage({ type: 'testKey', provider: 'vision' }, deps)).rejects.toThrow(
+      'storage',
+    );
     expect(deps.checkKey).not.toHaveBeenCalled();
+  });
+
+  it('still tests a candidate key when the saved settings are unreadable', async () => {
+    const deps = makeDeps({ loadSettings: vi.fn(() => Promise.reject(new Error('storage'))) });
+    expect(
+      await handleMessage({ type: 'testKey', provider: 'vision', key: 'AIzaX' }, deps),
+    ).toEqual({
+      ok: true,
+    });
   });
 });
