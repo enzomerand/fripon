@@ -1,7 +1,8 @@
 import { render } from 'preact';
 import type { ContentScriptContext } from 'wxt/utils/content-script-context';
 import { AnalysisCancelledError, analyzeListing, type AnalysisDeps } from '../lib/analysis';
-import { sendMessage } from '../lib/messages';
+import type { ImageGate } from '../lib/gate';
+import { sendMessage, type OptionsSection } from '../lib/messages';
 import { waitFor } from '../lib/wait';
 import { fetchSeller } from '../lib/vinted/api';
 import { findAnchor } from '../lib/vinted/anchor';
@@ -23,6 +24,25 @@ const analysisDeps: AnalysisDeps = {
   analyzeImage: (url) => sendMessage({ type: 'analyzeImage', url }),
 };
 
+const IMAGE_GATES: readonly ImageGate[] = ['ready', 'no_key', 'quota', 'manual'];
+
+/**
+ * What the background says about the image search. The keys never leave it: this is all we learn.
+ * Any failure counts as "no key", the safe state in which nothing paid is attempted.
+ */
+async function askImageGate(): Promise<ImageGate> {
+  try {
+    const gate = await sendMessage({ type: 'getImageGate' });
+    return IMAGE_GATES.includes(gate) ? gate : 'no_key';
+  } catch {
+    return 'no_key';
+  }
+}
+
+function openOptions(section: OptionsSection) {
+  void sendMessage({ type: 'openOptions', section }).catch(() => undefined);
+}
+
 type Ui = Awaited<ReturnType<typeof createShadowRootUi<HTMLElement>>>;
 
 /** Owns the card of this page: mounts it, updates it, and replaces it on a new run. */
@@ -35,7 +55,10 @@ function createCardController(ctx: ContentScriptContext) {
 
   function show(state: CardState) {
     if (!container) return;
-    render(<ListingCard state={state} onRetry={() => void start()} />, container);
+    render(
+      <ListingCard state={state} onRetry={() => void start()} onOpenOptions={openOptions} />,
+      container,
+    );
   }
 
   function dispose() {
@@ -82,6 +105,8 @@ function createCardController(ctx: ContentScriptContext) {
     if (!(await mount(id, anchor.element, anchor.position))) return;
     show({ status: 'loading' });
 
+    // Asked while the page is still being read; it never rejects.
+    const imageGate = askImageGate();
     const listing = await waitFor(() => readListing(document, location.href), {
       timeoutMs: LISTING_TIMEOUT_MS,
     });
@@ -96,6 +121,7 @@ function createCardController(ctx: ContentScriptContext) {
     }
 
     const { verdict, checks } = await analyzeListing(listing, analysisDeps, {
+      imageGate: await imageGate,
       // A superseded run must not spend API calls or downloads.
       isCancelled: () => id !== runId || ctx.isInvalid,
     });

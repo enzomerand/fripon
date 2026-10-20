@@ -75,7 +75,12 @@ export interface CheckResult {
   /** One French sentence explaining the result. */
   detail: string;
   signals: Signal[];
+  /** A button the card shows under the detail, when there is something the user can do about it. */
+  action?: CheckAction;
 }
+
+/** open_guide: the setup guide. open_settings: the credits section of the options page. */
+export type CheckAction = 'open_guide' | 'open_settings';
 
 /** Result of the reverse image search (filled from lot 3 on). */
 export interface ImageMatch {

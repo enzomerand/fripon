@@ -233,6 +233,40 @@ describe('analyzeListing', () => {
   });
 });
 
+describe('analyzeListing image gate', () => {
+  const imageRow = async (imageGate?: Parameters<typeof analyzeListing>[2]) =>
+    (await analyzeListing(listing, deps(), imageGate)).checks[0];
+
+  it('is "no key" when the gate is not given', async () => {
+    expect(await imageRow()).toMatchObject({ tag: 'Désactivée', action: 'open_guide' });
+    expect(await imageRow({})).toMatchObject({ tag: 'Désactivée', action: 'open_guide' });
+  });
+
+  it('shows the row of each gate', async () => {
+    expect(await imageRow({ imageGate: 'no_key' })).toMatchObject({ action: 'open_guide' });
+    expect(await imageRow({ imageGate: 'quota' })).toMatchObject({
+      tag: 'Plafond atteint',
+      action: 'open_settings',
+    });
+    expect(await imageRow({ imageGate: 'manual' })).toMatchObject({ tag: 'Désactivée' });
+    expect(await imageRow({ imageGate: 'ready' })).toMatchObject({ tag: 'Clé prête' });
+  });
+
+  it('keeps the other checks and the "without image search" verdict whatever the gate', async () => {
+    for (const imageGate of ['no_key', 'quota', 'manual', 'ready'] as const) {
+      const { checks, verdict } = await analyzeListing(listing, deps(), { imageGate });
+      expect(checks.map((c) => c.id)).toEqual([
+        'image',
+        'price',
+        'seller',
+        'photos',
+        'description',
+      ]);
+      expect(verdict.withoutImageSearch).toBe(true);
+    }
+  });
+});
+
 describe('analyzeListing cancellation', () => {
   it('makes no request at all when already cancelled', async () => {
     const d = deps();

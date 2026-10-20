@@ -1,6 +1,8 @@
 import { useState } from 'preact/hooks';
 import { googleLensUrl } from '../lib/checks/image';
+import type { OptionsSection } from '../lib/messages';
 import type {
+  CheckAction,
   CheckId,
   CheckResult,
   CheckStatus,
@@ -18,7 +20,18 @@ export interface ListingCardProps {
   state: CardState;
   /** Shown as a "Réessayer" button in the error state when provided. */
   onRetry?: () => void;
+  /**
+   * Called by the button of a check that has an `action` ("Activer en 2 minutes"...). Without it,
+   * such a check shows no button.
+   */
+  onOpenOptions?: (section: OptionsSection) => void;
 }
+
+/** Where each check action leads, and what its button says. */
+const ACTIONS: Record<CheckAction, { section: OptionsSection; label: string }> = {
+  open_guide: { section: 'guide', label: 'Activer en 2 minutes' },
+  open_settings: { section: 'credits', label: 'Voir mes réglages' },
+};
 
 export const CHECK_LABELS: Record<CheckId, string> = {
   image: "Recherche de l'image",
@@ -51,8 +64,16 @@ function Tag({ check }: { check: CheckResult }) {
   return <span class={`fripon__tag fripon__tag--${TAG_COLOUR[check.status]}`}>{check.tag}</span>;
 }
 
-function CheckRow({ check, listing }: { check: CheckResult; listing: Listing }) {
+interface CheckRowProps {
+  check: CheckResult;
+  listing: Listing;
+  onOpenOptions?: (section: OptionsSection) => void;
+}
+
+function CheckRow({ check, listing, onOpenOptions }: CheckRowProps) {
   const photoUrl = listing.photoUrls[0];
+  const action = check.action && onOpenOptions ? ACTIONS[check.action] : null;
+  const showLens = check.id === 'image' && photoUrl;
   return (
     <li class="fripon__check">
       <div class="fripon__check-head">
@@ -60,21 +81,36 @@ function CheckRow({ check, listing }: { check: CheckResult; listing: Listing }) 
         <Tag check={check} />
       </div>
       <p class="fripon__detail">{check.detail}</p>
-      {check.id === 'image' && photoUrl && (
-        <a
-          class="fripon__link"
-          href={googleLensUrl(photoUrl)}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Chercher moi-même sur Google Lens
-        </a>
+      {(action || showLens) && (
+        <div class="fripon__actions">
+          {action && (
+            <button
+              type="button"
+              class="fripon__action"
+              onClick={() => onOpenOptions?.(action.section)}
+            >
+              {action.label}
+            </button>
+          )}
+          {showLens && (
+            <a
+              class="fripon__link"
+              href={googleLensUrl(photoUrl)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Chercher moi-même sur Google Lens
+            </a>
+          )}
+        </div>
       )}
     </li>
   );
 }
 
-function Result({ listing, verdict, checks }: Extract<CardState, { status: 'done' }>) {
+type ResultProps = Extract<CardState, { status: 'done' }> & Pick<ListingCardProps, 'onOpenOptions'>;
+
+function Result({ listing, verdict, checks, onOpenOptions }: ResultProps) {
   const [expanded, setExpanded] = useState(false);
   return (
     <section
@@ -103,7 +139,12 @@ function Result({ listing, verdict, checks }: Extract<CardState, { status: 'done
         <div id={CHECKS_ID}>
           <ul class="fripon__checks">
             {checks.map((check) => (
-              <CheckRow key={check.id} check={check} listing={listing} />
+              <CheckRow
+                key={check.id}
+                check={check}
+                listing={listing}
+                onOpenOptions={onOpenOptions}
+              />
             ))}
           </ul>
           <p class="fripon__foot">{PRUDENCE_NOTE}</p>
@@ -113,7 +154,7 @@ function Result({ listing, verdict, checks }: Extract<CardState, { status: 'done
   );
 }
 
-export function ListingCard({ state, onRetry }: ListingCardProps) {
+export function ListingCard({ state, onRetry, onOpenOptions }: ListingCardProps) {
   if (state.status === 'loading') {
     return (
       <section class="fripon fripon--neutral" role="status">
@@ -134,5 +175,5 @@ export function ListingCard({ state, onRetry }: ListingCardProps) {
       </section>
     );
   }
-  return <Result {...state} />;
+  return <Result {...state} onOpenOptions={onOpenOptions} />;
 }
