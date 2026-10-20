@@ -11,7 +11,7 @@ export const SELLER_CACHE_MAX_ENTRIES = 50;
 /** Wardrobe page size: the largest the endpoint accepts, so one call covers most sellers. */
 export const WARDROBE_PER_PAGE = 96;
 /** Prefix of the `storage.local` keys holding cached sellers (`<prefix><hostname>:<id>`). */
-export const SELLER_CACHE_KEY_PREFIX = 'fripon:seller:v1:';
+export const SELLER_CACHE_KEY_PREFIX = 'fripon:seller:v2:';
 /** A request (headers and body) that takes longer than this is abandoned, so the queue never hangs. */
 export const REQUEST_TIMEOUT_MS = 15_000;
 /** Pause after Vinted answers 403 / 429 without a usable `Retry-After`. */
@@ -258,7 +258,7 @@ function parseWardrobeItem(raw: unknown): SellerItem | null {
     title,
     condition: parseCondition({ statusId: asNumber(raw.status_id), label: asString(raw.status) }),
     size: asString(raw.size),
-    brand: parseBrand(raw.brand),
+    brand: parseBrand(raw.brand ?? raw.brand_title),
     price,
     photoUrl: mainPhoto ? asString(mainPhoto.url) : null,
   };

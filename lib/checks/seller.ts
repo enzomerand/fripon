@@ -82,8 +82,8 @@ function meaningfulWords(normalizedTitle: string): number {
     .filter((word) => word.length >= 3 && !/^\d+$/.test(word) && !TITLE_STOPWORDS.has(word)).length;
 }
 
-function normalizeBrand(brand: string | null): string | null {
-  if (brand === null || isNoBrand(brand)) return null;
+function normalizeBrand(brand: string | null | undefined): string | null {
+  if (typeof brand !== 'string' || isNoBrand(brand)) return null;
   return stripAccents(brand.toLowerCase()).replace(/\s+/g, ' ').trim() || null;
 }
 

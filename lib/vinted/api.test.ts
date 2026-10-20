@@ -495,9 +495,9 @@ describe('fetchSeller cache key', () => {
     await fetchSeller('7000001', { ...deps, hostname: 'www.vinted.fr' });
 
     const keys = Object.keys(await browser.storage.local.get(null));
-    expect(keys).toContain('fripon:seller:v1:www.vinted.fr:7000001');
+    expect(keys).toContain('fripon:seller:v2:www.vinted.fr:7000001');
     expect(sellerCacheKey('7000001', 'www.vinted.de')).toBe(
-      'fripon:seller:v1:www.vinted.de:7000001',
+      'fripon:seller:v2:www.vinted.de:7000001',
     );
   });
 
