@@ -282,7 +282,7 @@ export function checkDescription(listing: Listing): CheckResult {
     ? `Le texte ressemble à une fiche produit de boutique en ligne (${reasons
         .map((r) => REASON_LABELS[r])
         .join(', ')}).`
-    : "Le texte a l'air d'une vraie annonce de particulier.";
+    : 'Pas de signe de fiche produit copiée.';
   if (noBrand) detail += ' Aucune marque indiquée.';
 
   return {

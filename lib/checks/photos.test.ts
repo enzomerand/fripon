@@ -28,7 +28,7 @@ describe('checkPhotos', () => {
       main: { hash: HASH, catalogScore: 0.2 },
       others: [{ itemId: 'a', hash: ~HASH & ((1n << 64n) - 1n) }],
     });
-    expect(result).toMatchObject({ status: 'ok', tag: 'Photo réelle', signals: [] });
+    expect(result).toMatchObject({ status: 'ok', tag: 'Rien de notable', signals: [] });
   });
 
   it('is warn, never bad, for a catalogue-looking photo (weak)', () => {

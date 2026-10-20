@@ -63,12 +63,12 @@ export function checkPhotos(input: PhotosInput): CheckResult {
     );
   }
   if (sentences.length === 0)
-    sentences.push("Photo qui a l'air prise par le vendeur, pas de catalogue.");
+    sentences.push('Pas de signe de photo catalogue ni de photo réutilisée.');
 
   return {
     id: 'photos',
     status: catalog || reusedOn > 0 ? 'warn' : 'ok',
-    tag: catalog ? 'Photo type catalogue' : reusedOn > 0 ? 'Photo réutilisée' : 'Photo réelle',
+    tag: catalog ? 'Photo type catalogue' : reusedOn > 0 ? 'Photo réutilisée' : 'Rien de notable',
     detail: sentences.join(' '),
     signals,
   };

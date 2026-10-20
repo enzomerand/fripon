@@ -70,7 +70,7 @@ describe('checkDescription', () => {
   it('finds a genuine French description normal', () => {
     const result = checkDescription(GENUINE_FR);
     expect(result).toMatchObject({ id: 'description', status: 'ok', tag: 'Normale', signals: [] });
-    expect(result.detail).toBe("Le texte a l'air d'une vraie annonce de particulier.");
+    expect(result.detail).toBe('Pas de signe de fiche produit copiée.');
   });
 
   it('finds a genuine English description normal', () => {
@@ -103,15 +103,13 @@ describe('checkDescription', () => {
     expect(result.status).toBe('ok');
     expect(result.tag).toBe('Normale');
     expect(result.signals).toEqual([{ id: 'no_brand', strength: 'weak' }]);
-    expect(result.detail).toBe(
-      "Le texte a l'air d'une vraie annonce de particulier. Aucune marque indiquée.",
-    );
+    expect(result.detail).toBe('Pas de signe de fiche produit copiée. Aucune marque indiquée.');
   });
 
   it('does not claim "no brand" when the brand could not be read', () => {
     const result = checkDescription({ ...GENUINE_FR, brand: undefined });
     expect(result).toMatchObject({ status: 'ok', tag: 'Normale', signals: [] });
-    expect(result.detail).toBe("Le texte a l'air d'une vraie annonce de particulier.");
+    expect(result.detail).toBe('Pas de signe de fiche produit copiée.');
   });
 
   it('is off for languages it does not handle', () => {
