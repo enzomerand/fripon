@@ -29,3 +29,6 @@ export const VINTED_HOSTS = [
 ] as const;
 
 export const VINTED_MATCHES = VINTED_HOSTS.map((host) => `https://www.${host}/*`);
+
+/** The content script only runs on item pages: `https://www.<host>/items/*`. */
+export const VINTED_ITEM_MATCHES = VINTED_MATCHES.map((match) => match.replace(/\*$/, 'items/*'));

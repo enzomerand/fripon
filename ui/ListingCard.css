@@ -1,0 +1,188 @@
+/* Styles of the listing card, injected into its shadow root. Sizes are in px on purpose: the
+   host page sets its own root font size, which must not leak into the card. */
+
+.fripon {
+  --accent: #5f6368;
+  --bg: #f4f4f5;
+  --title: #202124;
+  --ink: #202124;
+  --rule: #d4d4d8;
+
+  box-sizing: border-box;
+  width: 100%;
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 10px 12px;
+  color: var(--ink);
+  font:
+    13px/1.4 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Helvetica,
+    Arial,
+    sans-serif;
+  text-align: left;
+}
+
+.fripon *,
+.fripon *::before,
+.fripon *::after {
+  box-sizing: border-box;
+}
+
+.fripon--red {
+  --accent: #d93025;
+  --bg: #fdecea;
+  --title: #a50e0e;
+  --ink: #3a1a17;
+  --rule: #f1c8c4;
+}
+
+.fripon--orange {
+  --accent: #b45309;
+  --bg: #fef3e2;
+  --title: #8a4500;
+  --ink: #3d2a10;
+  --rule: #f3d3a8;
+}
+
+.fripon--green {
+  --accent: #188038;
+  --bg: #e6f4ea;
+  --title: #0d652d;
+  --ink: #17301f;
+  --rule: #b9dcc4;
+}
+
+.fripon__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--title);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.fripon__dot {
+  flex-shrink: 0;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.fripon__line {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.fripon__toggle {
+  display: inline-block;
+  margin: 6px 0 0;
+  border: 0;
+  background: none;
+  padding: 2px 0;
+  color: var(--title);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.fripon__toggle:focus-visible,
+.fripon__link:focus-visible {
+  outline: 2px solid var(--title);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.fripon__checks {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.fripon__check {
+  border-top: 1px solid var(--rule);
+  padding: 9px 0 7px;
+}
+
+.fripon__check-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.fripon__tag {
+  flex-shrink: 0;
+  border-radius: 10px;
+  padding: 2px 7px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.fripon__tag--bad {
+  background: #d93025;
+  color: #fff;
+}
+
+.fripon__tag--mid {
+  background: #b45309;
+  color: #fff;
+}
+
+.fripon__tag--ok {
+  background: #188038;
+  color: #fff;
+}
+
+.fripon__tag--off {
+  background: #e0e0e0;
+  color: #333;
+}
+
+.fripon__detail {
+  margin: 3px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.fripon__link {
+  display: inline-block;
+  margin-top: 5px;
+  border: 1px solid #006670;
+  border-radius: 5px;
+  background: #fff;
+  padding: 3px 8px;
+  color: #006670;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.fripon__link:hover {
+  text-decoration: underline;
+}
+
+.fripon__foot {
+  margin: 8px 0 0;
+  color: #4a4a4a;
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fripon__pulse {
+    animation: fripon-pulse 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes fripon-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
