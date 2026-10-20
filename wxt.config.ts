@@ -9,7 +9,8 @@ export default defineConfig({
     description:
       'Repère le dropshipping (Shein, Temu, AliExpress) et les prix incohérents sur Vinted.',
     permissions: ['storage'],
-    host_permissions: VINTED_MATCHES,
+    // vinted.net serves the listing photos, which the background fetches to analyse them.
+    host_permissions: [...VINTED_MATCHES, 'https://*.vinted.net/*'],
   },
   vite: () => ({ plugins: [preact()] }),
 });
