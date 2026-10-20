@@ -4,10 +4,12 @@ import { fakeBrowser } from 'wxt/testing/fake-browser';
 import {
   DEFAULT_COOLDOWN_MS,
   MAX_COOLDOWN_MS,
+  MAX_QUEUE_WAIT_MS,
   MIN_REQUEST_SPACING_MS,
   RequestQueue,
   SELLER_CACHE_KEY_PREFIX,
   SELLER_CACHE_MAX_ENTRIES,
+  SLOT_JITTER_MAX_MS,
   SELLER_CACHE_TTL_MS,
   VintedApiError,
   fetchSeller,
@@ -377,10 +379,113 @@ describe('shared request spacing', () => {
       { get: () => Promise.reject(new Error('x')), set: () => Promise.reject(new Error('x')) },
       () => spacingKey,
     );
-    const queue = new RequestQueue(1_500, clock, broken);
+    const queue = new RequestQueue(1_500, clock, broken, { random: () => 0 });
     await queue.run(() => Promise.resolve());
     await queue.run(() => Promise.resolve());
     expect(clock.waits).toEqual([1_500]);
+  });
+});
+
+describe('shared slot', () => {
+  const key = 'fripon:lastRequestAt:test';
+  const store = () =>
+    storageSpacingStore(
+      {
+        get: (k) => browser.storage.local.get(k),
+        set: (items) => browser.storage.local.set(items),
+      },
+      () => key,
+    );
+
+  it('adds a random jitter below 300 ms to reserved slots', async () => {
+    const clock = fakeClock();
+    const start = clock.time;
+    const queue = new RequestQueue(1_500, clock, store(), { random: () => 0.5 });
+    await queue.run(() => Promise.resolve());
+    expect(clock.time - start).toBe(SLOT_JITTER_MAX_MS / 2);
+
+    await browser.storage.local.clear();
+    const high = new RequestQueue(1_500, fakeClock(), store(), { random: () => 0.999 });
+    await high.run(() => Promise.resolve());
+    const stored = (await browser.storage.local.get(key))[key] as number;
+    expect(stored - 1_000_000).toBeLessThan(SLOT_JITTER_MAX_MS);
+  });
+
+  it('adds no jitter when the queue is not shared', async () => {
+    const clock = fakeClock();
+    const start = clock.time;
+    await new RequestQueue(1_500, clock, undefined, { random: () => 0.9 }).run(() =>
+      Promise.resolve(),
+    );
+    expect(clock.time).toBe(start);
+  });
+
+  it('never waits longer than MAX_QUEUE_WAIT_MS, even with a stored time far in the future', async () => {
+    const clock = fakeClock();
+    await browser.storage.local.set({ [key]: clock.time + 3_600_000 });
+    await new RequestQueue(1_500, clock, store(), { random: () => 0 }).run(() => Promise.resolve());
+    expect(clock.waits).toEqual([MAX_QUEUE_WAIT_MS]);
+  });
+
+  it('does not reserve a slot when the guard refuses the task', async () => {
+    const clock = fakeClock();
+    const queue = new RequestQueue(1_500, clock, store(), { random: () => 0 });
+    const task = vi.fn(() => Promise.resolve('done'));
+    await expect(queue.run(task, () => Promise.reject(new Error('cooling down')))).rejects.toThrow(
+      'cooling down',
+    );
+    expect(task).not.toHaveBeenCalled();
+    expect(await browser.storage.local.get(key)).toEqual({});
+    // The queue is not stuck.
+    await expect(queue.run(task)).resolves.toBe('done');
+  });
+
+  it('checks the cooldown before taking a slot in fetchSeller', async () => {
+    const clock = fakeClock();
+    const queue = new RequestQueue(1_500, clock, store(), { random: () => 0 });
+    const { deps, fetchMock } = harness(okResponder);
+    await browser.storage.local.set({
+      'fripon:cooldownUntil:www.vinted.fr': clock.time + 60_000,
+    });
+    await expect(
+      fetchSeller('7000001', { ...deps, queue, now: clock.now, hostname: 'www.vinted.fr' }),
+    ).rejects.toMatchObject({ code: 'rate_limited' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await browser.storage.local.get(key)).toEqual({});
+  });
+});
+
+describe('fetchSeller in-flight dedupe', () => {
+  it('shares one fetch between concurrent calls for the same seller and site', async () => {
+    const { deps, fetchMock } = harness(okResponder);
+    const on = (hostname: string) => ({ ...deps, hostname });
+    const [a, b] = await Promise.all([
+      fetchSeller('7000001', on('www.vinted.fr')),
+      fetchSeller('7000001', on('www.vinted.fr')),
+    ]);
+    expect(a).toBe(b);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not share between sites or sellers', async () => {
+    const { deps, fetchMock } = harness(okResponder);
+    await Promise.all([
+      fetchSeller('7000001', { ...deps, hostname: 'www.vinted.fr' }),
+      fetchSeller('7000001', { ...deps, hostname: 'www.vinted.de' }),
+      fetchSeller('7000002', { ...deps, hostname: 'www.vinted.fr' }),
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it('forgets a failed fetch, so the next call tries again', async () => {
+    let healthy = false;
+    const { deps, fetchMock } = harness((url) =>
+      healthy ? okResponder(url) : new Response('', { status: 500 }),
+    );
+    await expect(fetchSeller('7000001', deps)).rejects.toMatchObject({ code: 'http' });
+    healthy = true;
+    await expect(fetchSeller('7000001', deps)).resolves.toMatchObject({ login: 'vendeuse_test' });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
 

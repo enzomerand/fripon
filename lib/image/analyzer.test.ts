@@ -26,6 +26,8 @@ describe('isAllowedImageUrl', () => {
   it('accepts https URLs on the Vinted CDN', () => {
     expect(isAllowedImageUrl(URL_OK)).toBe(true);
     expect(isAllowedImageUrl('https://images2.vinted.net/tc/1/abc.jpeg')).toBe(true);
+    // The default https port is the same as no port.
+    expect(isAllowedImageUrl('https://images1.vinted.net:443/a.jpg')).toBe(true);
   });
 
   it.each([
@@ -35,6 +37,8 @@ describe('isAllowedImageUrl', () => {
     ['lookalike subdomain', 'https://images1.vinted.net.evil.example/a.jpg'],
     ['bare domain', 'https://vinted.net/a.jpg'],
     ['credentials', 'https://user:pass@images1.vinted.net/a.jpg'],
+    ['custom port', 'https://images1.vinted.net:8443/a.jpg'],
+    ['default port spelled out as http port', 'https://images1.vinted.net:80/a.jpg'],
     ['other scheme', 'data:image/png;base64,AAAA'],
     ['not a URL', 'nope'],
   ])('refuses %s', (_label, url) => {

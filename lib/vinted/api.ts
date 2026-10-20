@@ -18,6 +18,10 @@ export const REQUEST_TIMEOUT_MS = 15_000;
 export const DEFAULT_COOLDOWN_MS = 10 * 60 * 1_000;
 /** A `Retry-After` longer than this is capped, so one odd header cannot silence the extension. */
 export const MAX_COOLDOWN_MS = 24 * 60 * 60 * 1_000;
+/** The shared queue never makes a request wait longer than this, whatever storage says. */
+export const MAX_QUEUE_WAIT_MS = 30_000;
+/** Random delay (0..this) added to each reserved slot, so tabs reading storage together diverge. */
+export const SLOT_JITTER_MAX_MS = 300;
 /** `storage.local` key (per hostname) of the last reserved request slot, shared by all tabs. */
 export const LAST_REQUEST_KEY_PREFIX = 'fripon:lastRequestAt:';
 /** `storage.local` key (per hostname) of the end of the current cooldown. */
@@ -96,25 +100,48 @@ export function storageSpacingStore(storage: StorageLike, key: () => string): Sp
   };
 }
 
+export interface QueueOptions {
+  /** 0..1, used for the jitter of shared slots. Defaults to `Math.random`. */
+  random?: () => number;
+  /** Longest wait a request may be given. Defaults to `MAX_QUEUE_WAIT_MS`. */
+  maxWaitMs?: number;
+}
+
 /**
  * Runs tasks one at a time, starting each at least `spacingMs` after the previous one started.
  * With a `store`, the slot is also reserved in shared storage, so other pages and tabs of the same
- * site keep their distance too (best effort: there is no lock between tabs).
+ * site keep their distance too (best effort: there is no lock between tabs). Reserved slots get a
+ * small random jitter so that tabs which read the storage at the same moment do not pick the same
+ * one, and a slot is never further away than `maxWaitMs`, so a wrong stored time cannot freeze it.
  */
 export class RequestQueue {
   private tail: Promise<unknown> = Promise.resolve();
   private lastStart = Number.NEGATIVE_INFINITY;
+  private readonly random: () => number;
+  private readonly maxWaitMs: number;
 
   constructor(
     private readonly spacingMs: number,
     private readonly clock: Clock = realClock,
     private readonly store?: SpacingStore,
-  ) {}
+    options: QueueOptions = {},
+  ) {
+    this.random = options.random ?? Math.random;
+    this.maxWaitMs = options.maxWaitMs ?? MAX_QUEUE_WAIT_MS;
+  }
 
-  run<T>(task: () => Promise<T>): Promise<T> {
+  /**
+   * @param guard runs once it is this task's turn, BEFORE a slot is reserved: if it throws, the
+   *   task is rejected and no slot is taken (a refused request must not push the others back).
+   */
+  run<T>(task: () => Promise<T>, guard?: () => Promise<void>): Promise<T> {
     const result = this.tail.then(async () => {
+      await guard?.();
+      const now = this.clock.now();
       const shared = (await this.store?.load()) ?? Number.NEGATIVE_INFINITY;
-      const slot = Math.max(this.clock.now(), Math.max(this.lastStart, shared) + this.spacingMs);
+      let slot = Math.max(now, Math.max(this.lastStart, shared) + this.spacingMs);
+      if (this.store) slot += Math.floor(this.random() * SLOT_JITTER_MAX_MS);
+      slot = Math.min(slot, now + this.maxWaitMs);
       this.lastStart = slot;
       // Reserve the slot before waiting for it, so another tab reading now queues behind us.
       await this.store?.save(slot);
@@ -336,39 +363,42 @@ async function assertNoCooldown(deps: ResolvedDeps): Promise<void> {
  * Cloudflare answers with a challenge page instead of JSON.
  */
 function getJson(path: string, deps: ResolvedDeps): Promise<unknown> {
-  return deps.queue.run(async () => {
-    // Checked inside the queue too: another tab may have been refused while this one waited.
-    await assertNoCooldown(deps);
-    let response: Response;
-    try {
-      response = await deps.fetch(path, {
-        credentials: 'include',
-        headers: { accept: 'application/json' },
-        signal: AbortSignal.timeout(deps.timeoutMs),
-      });
-    } catch (cause) {
-      throw new VintedApiError(
-        isTimeout(cause) ? 'timeout' : 'network',
-        `Request to ${path} failed`,
-        undefined,
-        cause,
-      );
-    }
-    if (!response.ok) {
-      if (response.status === 403 || response.status === 429) await startCooldown(response, deps);
-      throw errorForStatus(response.status, path);
-    }
-    try {
-      return (await response.json()) as unknown;
-    } catch (cause) {
-      throw new VintedApiError(
-        isTimeout(cause) ? 'timeout' : 'invalid_response',
-        `${path} did not return JSON in time`,
-        undefined,
-        cause,
-      );
-    }
-  });
+  return deps.queue.run(
+    async () => {
+      // Checked again after the wait: another tab may have been refused in the meantime.
+      await assertNoCooldown(deps);
+      let response: Response;
+      try {
+        response = await deps.fetch(path, {
+          credentials: 'include',
+          headers: { accept: 'application/json' },
+          signal: AbortSignal.timeout(deps.timeoutMs),
+        });
+      } catch (cause) {
+        throw new VintedApiError(
+          isTimeout(cause) ? 'timeout' : 'network',
+          `Request to ${path} failed`,
+          undefined,
+          cause,
+        );
+      }
+      if (!response.ok) {
+        if (response.status === 403 || response.status === 429) await startCooldown(response, deps);
+        throw errorForStatus(response.status, path);
+      }
+      try {
+        return (await response.json()) as unknown;
+      } catch (cause) {
+        throw new VintedApiError(
+          isTimeout(cause) ? 'timeout' : 'invalid_response',
+          `${path} did not return JSON in time`,
+          undefined,
+          cause,
+        );
+      }
+    },
+    () => assertNoCooldown(deps),
+  );
 }
 
 // ---- Cache -----------------------------------------------------------------------------------
@@ -432,20 +462,10 @@ async function writeCache(sellerId: string, seller: Seller, deps: ResolvedDeps):
 
 // ---- Public API ------------------------------------------------------------------------------
 
-/**
- * The seller's profile and the first page of their wardrobe, cached for 24 hours.
- * Account creation date is not exposed by Vinted, so `createdAt` is always null.
- *
- * While Vinted has asked us to back off (403 / 429), nothing is sent and `rate_limited` is thrown.
- *
- * @throws {VintedApiError} when either request fails or returns something unexpected.
- */
-export async function fetchSeller(sellerId: string, overrides: ApiOverrides = {}): Promise<Seller> {
-  if (!/^\d+$/.test(sellerId)) {
-    throw new VintedApiError('invalid_request', `Not a Vinted user id: ${sellerId}`);
-  }
-  const deps = resolveDeps(overrides);
+/** Sellers being fetched right now, by `hostname:sellerId`, so concurrent callers share one fetch. */
+const inFlight = new Map<string, Promise<Seller>>();
 
+async function loadSeller(sellerId: string, deps: ResolvedDeps): Promise<Seller> {
   const cached = await readCache(sellerId, deps);
   if (cached) return cached;
   await assertNoCooldown(deps);
@@ -466,4 +486,26 @@ export async function fetchSeller(sellerId: string, overrides: ApiOverrides = {}
   };
   await writeCache(sellerId, seller, deps);
   return seller;
+}
+
+/**
+ * The seller's profile and the first page of their wardrobe, cached for 24 hours.
+ * Account creation date is not exposed by Vinted, so `createdAt` is always null.
+ * While Vinted has asked us to back off (403 / 429), nothing is sent and `rate_limited` is thrown.
+ * Concurrent calls for the same seller on the same site share one fetch.
+ *
+ * @throws {VintedApiError} when either request fails or returns something unexpected.
+ */
+export async function fetchSeller(sellerId: string, overrides: ApiOverrides = {}): Promise<Seller> {
+  if (!/^\d+$/.test(sellerId)) {
+    throw new VintedApiError('invalid_request', `Not a Vinted user id: ${sellerId}`);
+  }
+  const deps = resolveDeps(overrides);
+  const key = `${deps.hostname}:${sellerId}`;
+
+  const running = inFlight.get(key);
+  if (running) return running;
+  const promise = loadSeller(sellerId, deps).finally(() => inFlight.delete(key));
+  inFlight.set(key, promise);
+  return promise;
 }

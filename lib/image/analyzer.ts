@@ -21,12 +21,16 @@ export interface ImageAnalyzerDeps {
   computePixels(blob: Blob): Promise<PixelResult>;
 }
 
-/** https and a `*.vinted.net` host: the background must not become a fetch proxy for the page. */
+/**
+ * https, the default port and a `*.vinted.net` host: the background must not become a fetch
+ * proxy for the page.
+ */
 export function isAllowedImageUrl(raw: string): boolean {
   try {
     const url = new URL(raw);
     return (
       url.protocol === 'https:' &&
+      url.port === '' &&
       url.username === '' &&
       url.password === '' &&
       url.hostname.toLowerCase().endsWith(ALLOWED_IMAGE_HOST_SUFFIX)
