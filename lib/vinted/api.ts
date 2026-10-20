@@ -10,21 +10,33 @@ export const SELLER_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 export const SELLER_CACHE_MAX_ENTRIES = 50;
 /** Wardrobe page size: the largest the endpoint accepts, so one call covers most sellers. */
 export const WARDROBE_PER_PAGE = 96;
-/** Prefix of the `storage.local` keys holding cached sellers. */
-export const SELLER_CACHE_KEY_PREFIX = 'fripon:seller:';
+/** Prefix of the `storage.local` keys holding cached sellers (`<prefix><hostname>:<id>`). */
+export const SELLER_CACHE_KEY_PREFIX = 'fripon:seller:v1:';
+/** A request (headers and body) that takes longer than this is abandoned, so the queue never hangs. */
+export const REQUEST_TIMEOUT_MS = 15_000;
+/** Pause after Vinted answers 403 / 429 without a usable `Retry-After`. */
+export const DEFAULT_COOLDOWN_MS = 10 * 60 * 1_000;
+/** A `Retry-After` longer than this is capped, so one odd header cannot silence the extension. */
+export const MAX_COOLDOWN_MS = 24 * 60 * 60 * 1_000;
+/** `storage.local` key (per hostname) of the last reserved request slot, shared by all tabs. */
+export const LAST_REQUEST_KEY_PREFIX = 'fripon:lastRequestAt:';
+/** `storage.local` key (per hostname) of the end of the current cooldown. */
+export const COOLDOWN_KEY_PREFIX = 'fripon:cooldownUntil:';
 
 export type VintedApiErrorCode =
   /** The id is not a numeric Vinted user id; nothing was sent. */
   | 'invalid_request'
   /** 403: Cloudflare / DataDome challenge. */
   | 'blocked'
-  /** 429: too many requests. */
+  /** 429, or a cooldown after a 403 / 429: nothing was sent while it lasts. */
   | 'rate_limited'
   | 'not_found'
   /** Any other non-2xx status. */
   | 'http'
   /** The request itself failed (offline, extension context gone...). */
   | 'network'
+  /** No answer within `REQUEST_TIMEOUT_MS`. */
+  | 'timeout'
   /** 2xx, but the body is not the JSON shape we expect. */
   | 'invalid_response';
 
@@ -52,7 +64,43 @@ const realClock: Clock = {
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
-/** Runs tasks one at a time, starting each at least `spacingMs` after the previous one started. */
+/** Where the time of the last reserved request slot is kept, to share it between pages. */
+export interface SpacingStore {
+  load(): Promise<number | null>;
+  save(at: number): Promise<void>;
+}
+
+interface StorageLike {
+  get(key: string): Promise<Record<string, unknown>>;
+  set(items: Record<string, unknown>): Promise<void>;
+}
+
+/** Keeps the last slot in `storage.local` under `key()`. Failures are ignored: best effort. */
+export function storageSpacingStore(storage: StorageLike, key: () => string): SpacingStore {
+  return {
+    async load() {
+      try {
+        const value = (await storage.get(key()))[key()];
+        return typeof value === 'number' && Number.isFinite(value) ? value : null;
+      } catch {
+        return null;
+      }
+    },
+    async save(at) {
+      try {
+        await storage.set({ [key()]: at });
+      } catch {
+        // Spacing then only holds within this page.
+      }
+    },
+  };
+}
+
+/**
+ * Runs tasks one at a time, starting each at least `spacingMs` after the previous one started.
+ * With a `store`, the slot is also reserved in shared storage, so other pages and tabs of the same
+ * site keep their distance too (best effort: there is no lock between tabs).
+ */
 export class RequestQueue {
   private tail: Promise<unknown> = Promise.resolve();
   private lastStart = Number.NEGATIVE_INFINITY;
@@ -60,13 +108,18 @@ export class RequestQueue {
   constructor(
     private readonly spacingMs: number,
     private readonly clock: Clock = realClock,
+    private readonly store?: SpacingStore,
   ) {}
 
   run<T>(task: () => Promise<T>): Promise<T> {
     const result = this.tail.then(async () => {
-      const wait = this.lastStart + this.spacingMs - this.clock.now();
+      const shared = (await this.store?.load()) ?? Number.NEGATIVE_INFINITY;
+      const slot = Math.max(this.clock.now(), Math.max(this.lastStart, shared) + this.spacingMs);
+      this.lastStart = slot;
+      // Reserve the slot before waiting for it, so another tab reading now queues behind us.
+      await this.store?.save(slot);
+      const wait = slot - this.clock.now();
       if (wait > 0) await this.clock.sleep(wait);
-      this.lastStart = this.clock.now();
       return task();
     });
     // A failed task must not block the ones behind it.
@@ -75,8 +128,22 @@ export class RequestQueue {
   }
 }
 
-/** The one queue shared by every Vinted API call of this page. */
-const sharedQueue = new RequestQueue(MIN_REQUEST_SPACING_MS);
+function currentHostname(): string {
+  return globalThis.location?.hostname ?? '';
+}
+
+/** The one queue shared by every Vinted API call of this page (and, via storage, of its tabs). */
+const sharedQueue = new RequestQueue(
+  MIN_REQUEST_SPACING_MS,
+  realClock,
+  storageSpacingStore(
+    {
+      get: (key) => browser.storage.local.get(key),
+      set: (items) => browser.storage.local.set(items),
+    },
+    () => `${LAST_REQUEST_KEY_PREFIX}${currentHostname()}`,
+  ),
+);
 
 // ---- Dependencies ----------------------------------------------------------------------------
 
@@ -87,12 +154,24 @@ export interface ApiDeps {
   storage: Pick<Browser.storage.StorageArea, 'get' | 'set' | 'remove'>;
 }
 
-function defaultDeps(): ApiDeps {
+/** Everything `fetchSeller` can be given; each field defaults to the real thing. */
+export interface ApiOverrides extends Partial<ApiDeps> {
+  /** Site the requests go to (the cache and cooldown are per site). */
+  hostname?: string;
+  timeoutMs?: number;
+}
+
+type ResolvedDeps = ApiDeps & { hostname: string; timeoutMs: number };
+
+function resolveDeps(overrides: ApiOverrides): ResolvedDeps {
   return {
     fetch: (input, init) => globalThis.fetch(input, init),
     queue: sharedQueue,
     now: () => Date.now(),
     storage: browser.storage.local,
+    hostname: currentHostname(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    ...overrides,
   };
 }
 
@@ -198,26 +277,88 @@ function errorForStatus(status: number, path: string): VintedApiError {
   return new VintedApiError('http', message, status);
 }
 
+function isTimeout(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && 'name' in error && error.name === 'TimeoutError'
+  );
+}
+
+// ---- Cooldown --------------------------------------------------------------------------------
+
+function cooldownKey(deps: ResolvedDeps): string {
+  return `${COOLDOWN_KEY_PREFIX}${deps.hostname}`;
+}
+
+/** Milliseconds to wait according to a `Retry-After` header (seconds or HTTP date), if usable. */
+function retryAfterMs(header: string | null, now: number): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  const ms = Number.isFinite(seconds) ? seconds * 1_000 : Date.parse(header) - now;
+  return Number.isFinite(ms) && ms > 0 ? Math.min(ms, MAX_COOLDOWN_MS) : null;
+}
+
+/** Remembers, for every tab of this site, that Vinted asked us to back off. */
+async function startCooldown(response: Response, deps: ResolvedDeps): Promise<void> {
+  const wait = retryAfterMs(response.headers.get('retry-after'), deps.now()) ?? DEFAULT_COOLDOWN_MS;
+  try {
+    await deps.storage.set({ [cooldownKey(deps)]: deps.now() + wait });
+  } catch {
+    // Without storage the cooldown only lasts as long as this error.
+  }
+}
+
+/** @throws {VintedApiError} `rate_limited`, without any request, while a cooldown is running. */
+async function assertNoCooldown(deps: ResolvedDeps): Promise<void> {
+  let until: unknown;
+  try {
+    until = (await deps.storage.get(cooldownKey(deps)))[cooldownKey(deps)];
+  } catch {
+    return;
+  }
+  if (typeof until === 'number' && until > deps.now()) {
+    throw new VintedApiError(
+      'rate_limited',
+      `Vinted asked us to back off, no request until ${new Date(until).toISOString()}`,
+    );
+  }
+}
+
 /**
  * Same-origin GET with the page's cookies. The `accept` header is mandatory: without it
  * Cloudflare answers with a challenge page instead of JSON.
  */
-function getJson(path: string, deps: ApiDeps): Promise<unknown> {
+function getJson(path: string, deps: ResolvedDeps): Promise<unknown> {
   return deps.queue.run(async () => {
+    // Checked inside the queue too: another tab may have been refused while this one waited.
+    await assertNoCooldown(deps);
     let response: Response;
     try {
       response = await deps.fetch(path, {
         credentials: 'include',
         headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(deps.timeoutMs),
       });
     } catch (cause) {
-      throw new VintedApiError('network', `Request to ${path} failed`, undefined, cause);
+      throw new VintedApiError(
+        isTimeout(cause) ? 'timeout' : 'network',
+        `Request to ${path} failed`,
+        undefined,
+        cause,
+      );
     }
-    if (!response.ok) throw errorForStatus(response.status, path);
+    if (!response.ok) {
+      if (response.status === 403 || response.status === 429) await startCooldown(response, deps);
+      throw errorForStatus(response.status, path);
+    }
     try {
       return (await response.json()) as unknown;
     } catch (cause) {
-      throw new VintedApiError('invalid_response', `${path} did not return JSON`, undefined, cause);
+      throw new VintedApiError(
+        isTimeout(cause) ? 'timeout' : 'invalid_response',
+        `${path} did not return JSON in time`,
+        undefined,
+        cause,
+      );
     }
   });
 }
@@ -229,8 +370,8 @@ interface CacheEntry {
   seller: Seller;
 }
 
-export function sellerCacheKey(sellerId: string): string {
-  return `${SELLER_CACHE_KEY_PREFIX}${sellerId}`;
+export function sellerCacheKey(sellerId: string, hostname = currentHostname()): string {
+  return `${SELLER_CACHE_KEY_PREFIX}${hostname}:${sellerId}`;
 }
 
 function isCacheEntry(value: unknown): value is CacheEntry {
@@ -242,9 +383,9 @@ function isCacheEntry(value: unknown): value is CacheEntry {
   );
 }
 
-async function readCache(sellerId: string, deps: ApiDeps): Promise<Seller | null> {
+async function readCache(sellerId: string, deps: ResolvedDeps): Promise<Seller | null> {
   try {
-    const key = sellerCacheKey(sellerId);
+    const key = sellerCacheKey(sellerId, deps.hostname);
     const entry = (await deps.storage.get(key))[key];
     if (!isCacheEntry(entry)) return null;
     const age = deps.now() - entry.fetchedAt;
@@ -255,7 +396,7 @@ async function readCache(sellerId: string, deps: ApiDeps): Promise<Seller | null
 }
 
 /** Drops expired entries, then the oldest ones beyond the cap. */
-async function pruneCache(deps: ApiDeps): Promise<void> {
+async function pruneCache(deps: ResolvedDeps): Promise<void> {
   const all = await deps.storage.get(null);
   const entries = Object.entries(all)
     .filter(([key]) => key.startsWith(SELLER_CACHE_KEY_PREFIX))
@@ -271,10 +412,10 @@ async function pruneCache(deps: ApiDeps): Promise<void> {
   if (doomed.length > 0) await deps.storage.remove(doomed);
 }
 
-async function writeCache(sellerId: string, seller: Seller, deps: ApiDeps): Promise<void> {
+async function writeCache(sellerId: string, seller: Seller, deps: ResolvedDeps): Promise<void> {
   try {
     const entry: CacheEntry = { fetchedAt: deps.now(), seller };
-    await deps.storage.set({ [sellerCacheKey(sellerId)]: entry });
+    await deps.storage.set({ [sellerCacheKey(sellerId, deps.hostname)]: entry });
     await pruneCache(deps);
   } catch {
     // The cache is an optimisation: a full or unavailable storage must not fail the analysis.
@@ -287,19 +428,19 @@ async function writeCache(sellerId: string, seller: Seller, deps: ApiDeps): Prom
  * The seller's profile and the first page of their wardrobe, cached for 24 hours.
  * Account creation date is not exposed by Vinted, so `createdAt` is always null.
  *
+ * While Vinted has asked us to back off (403 / 429), nothing is sent and `rate_limited` is thrown.
+ *
  * @throws {VintedApiError} when either request fails or returns something unexpected.
  */
-export async function fetchSeller(
-  sellerId: string,
-  overrides: Partial<ApiDeps> = {},
-): Promise<Seller> {
+export async function fetchSeller(sellerId: string, overrides: ApiOverrides = {}): Promise<Seller> {
   if (!/^\d+$/.test(sellerId)) {
     throw new VintedApiError('invalid_request', `Not a Vinted user id: ${sellerId}`);
   }
-  const deps = { ...defaultDeps(), ...overrides };
+  const deps = resolveDeps(overrides);
 
   const cached = await readCache(sellerId, deps);
   if (cached) return cached;
+  await assertNoCooldown(deps);
 
   const user = parseUser(await getJson(`/api/v2/users/${sellerId}`, deps));
   const wardrobe = parseWardrobe(

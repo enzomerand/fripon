@@ -11,6 +11,8 @@ import {
 type JsonObject = Record<string, unknown>;
 
 const RSC_PUSH_PREFIX = 'self.__next_f.push(';
+/** Closed sibling objects skipped while looking for the object around an item id. */
+const MAX_ENCLOSING_ATTEMPTS = 50;
 
 /** Currency symbols seen in Vinted price texts, used only when JSON-LD has no currency. */
 const CURRENCY_BY_SYMBOL: ReadonlyArray<readonly [string, string]> = [
@@ -71,14 +73,23 @@ export function itemIdFromUrl(url: string): string | null {
   }
 }
 
-function absoluteHttpUrl(raw: string | null | undefined, base: string): string | null {
+/**
+ * Absolute https URL, or null. Vinted's image CDN is rewritten from http to https; any other
+ * non-https URL (and any other scheme) is dropped.
+ */
+function absoluteHttpsUrl(raw: string | null | undefined, base: string): string | null {
   if (!raw) return null;
   try {
     const parsed = new URL(raw, base);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : null;
+    if (parsed.protocol === 'http:' && isVintedCdnHost(parsed.hostname)) parsed.protocol = 'https:';
+    return parsed.protocol === 'https:' ? parsed.href : null;
   } catch {
     return null;
   }
+}
+
+function isVintedCdnHost(hostname: string): boolean {
+  return hostname === 'vinted.net' || hostname.endsWith('.vinted.net');
 }
 
 // ---- JSON-LD ---------------------------------------------------------------------------------
@@ -160,7 +171,7 @@ function domPhotos(doc: Document, base: string): string[] {
     const match = PHOTO_IMG_TESTID_PATTERN.exec(element.getAttribute('data-testid') ?? '');
     if (!match) continue;
     const img = element.tagName === 'IMG' ? element : element.querySelector('img');
-    const url = absoluteHttpUrl(img?.getAttribute('src') || img?.getAttribute('data-src'), base);
+    const url = absoluteHttpsUrl(img?.getAttribute('src') || img?.getAttribute('data-src'), base);
     if (url) photos.push({ order: Number(match[1]), url });
   }
   photos.sort((a, b) => a.order - b.order);
@@ -288,9 +299,47 @@ function rscAttributes(text: string): Map<string, RscAttribute> {
   return new Map();
 }
 
+/** The smallest JSON object around `at`, null when there is none or it does not parse. */
+function enclosingObject(text: string, at: number): JsonObject | null {
+  let before = at;
+  for (let attempts = 0; attempts < MAX_ENCLOSING_ATTEMPTS; attempts++) {
+    const start = text.lastIndexOf('{', before - 1);
+    if (start < 0) return null;
+    const end = endOfJsonValue(text, start);
+    if (end > at) {
+      try {
+        const parsed: unknown = JSON.parse(text.slice(start, end));
+        return isRecord(parsed) ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+    // A closed sibling object that ends before `at`: keep looking further back.
+    before = start;
+  }
+  return null;
+}
+
+/**
+ * The seller of THIS item. The page props (`"itemId":<id>,"sellerId":<id>`) are matched on the
+ * item id, and `seller_id` is only accepted from an object that also carries this item's id, so
+ * another listing's seller (similar items, closet promotions) can never be picked up.
+ */
 function rscSellerId(text: string, itemId: string): string | null {
   const props = new RegExp(`"itemId":"?${itemId}"?,"sellerId":"?(\\d+)`).exec(text);
-  return props?.[1] ?? /"seller_id":"?(\d+)"?/.exec(text)?.[1] ?? null;
+  if (props?.[1]) return props[1];
+
+  const marker = new RegExp(`"item_id":"?${itemId}"?(?![\\d])`, 'g');
+  for (const match of text.matchAll(marker)) {
+    const sellerId = asSellerId(enclosingObject(text, match.index)?.seller_id);
+    if (sellerId) return sellerId;
+  }
+  return null;
+}
+
+function asSellerId(value: unknown): string | null {
+  const id = typeof value === 'number' ? String(value) : value;
+  return typeof id === 'string' && /^\d+$/.test(id) ? id : null;
 }
 
 function readRsc(doc: Document, itemId: string): RscData {
@@ -349,7 +398,7 @@ export function readListing(doc: Document, url: string): Listing | null {
   let photoUrls = domPhotos(doc, url);
   if (photoUrls.length === 0) photoUrls = rsc().photos;
   if (photoUrls.length === 0 && product) photoUrls = jsonLdImages(product);
-  photoUrls = photoUrls.flatMap((photo) => absoluteHttpUrl(photo, url) ?? []);
+  photoUrls = photoUrls.flatMap((photo) => absoluteHttpsUrl(photo, url) ?? []);
 
   return {
     id,

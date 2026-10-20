@@ -201,6 +201,32 @@ describe('readListing from JSON-LD and the DOM', () => {
   });
 });
 
+describe('readListing photo URLs', () => {
+  it('rewrites http to https on the Vinted CDN and drops everything else', () => {
+    const doc = page({
+      photos: [
+        'http://images1.vinted.net/t/a/f800/a.webp?s=1',
+        'http://images.example.com/b.webp',
+        'data:image/png;base64,AAAA',
+        'https://images1.vinted.net/t/c/f800/c.webp?s=3',
+      ],
+    });
+    expect(readListing(doc, URL_OK)?.photoUrls).toEqual([
+      'https://images1.vinted.net/t/a/f800/a.webp?s=1',
+      'https://images1.vinted.net/t/c/f800/c.webp?s=3',
+    ]);
+  });
+
+  it('applies the same rule to the JSON-LD image', () => {
+    const http = { ...PRODUCT, image: 'http://images1.vinted.net/t/a/f800/a.webp?s=1' };
+    expect(readListing(page({ photos: [], jsonLd: http }), URL_OK)?.photoUrls).toEqual([
+      'https://images1.vinted.net/t/a/f800/a.webp?s=1',
+    ]);
+    const foreign = { ...PRODUCT, image: 'http://images.example.com/a.webp' };
+    expect(readListing(page({ photos: [], jsonLd: foreign }), URL_OK)?.photoUrls).toEqual([]);
+  });
+});
+
 describe('readListing RSC fallback', () => {
   const photos = [
     { id: 2, is_main: false, url: 'https://images1.vinted.net/t/02/f800/two.webp?s=2' },
@@ -248,13 +274,39 @@ describe('readListing RSC fallback', () => {
   it('falls back on seller_id when the page props are not there', () => {
     const doc = page({
       sellerHref: null,
-      rsc: ['x:{"seller_id":"7000009","name":"vendeuse_test"}\n'],
+      rsc: [
+        'x:{"item_id":"9000001","name":"vendeuse_test","photo":{"url":"https://images1.vinted.net/p"},"seller_id":"7000009"}\n',
+      ],
+    });
+    expect(readListing(doc, URL_OK)?.sellerId).toBe('7000009');
+  });
+
+  it('never takes the seller of another listing', () => {
+    const doc = page({
+      sellerHref: null,
+      rsc: [
+        'z:{"item_id":"9000002","seller_id":"7000099"}\nw:{"item_id":"90000011","seller_id":"7000098"}\n',
+      ],
+    });
+    expect(readListing(doc, URL_OK)).toBeNull();
+  });
+
+  it('picks the seller of this item among several listings', () => {
+    const doc = page({
+      sellerHref: null,
+      rsc: [
+        'a:{"item_id":"9000002","seller_id":"7000099"}\n',
+        'b:{"similar":{"item_id":"9000003","seller_id":"7000097"},"item_id":"9000001","seller_id":"7000009"}\n',
+      ],
     });
     expect(readListing(doc, URL_OK)?.sellerId).toBe('7000009');
   });
 
   it('survives malformed scripts', () => {
-    const doc = page({ sellerHref: null, rsc: ['not json at all', 'y:{"seller_id":"7000009"}\n'] });
+    const doc = page({
+      sellerHref: null,
+      rsc: ['not json at all', 'y:{"item_id":"9000001","seller_id":"7000009"}\n'],
+    });
     doc.body.insertAdjacentHTML('beforeend', '<script>self.__next_f.push(oops)</script>');
     expect(readListing(doc, URL_OK)?.sellerId).toBe('7000009');
   });

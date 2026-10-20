@@ -191,4 +191,19 @@ describe('listing content script', () => {
     expect(shadowText()).toContain("Fripon n'a pas pu analyser cette annonce.");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('[Fripon]'));
   });
+
+  it('keeps a single card, and spends no request, when a run starts while another is mounting', async () => {
+    const calls = stubFetch();
+    await script.main(ctx);
+    // The first run is still waiting for the shadow root UI: restart it right away.
+    window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+    window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+
+    await until(() => shadowText().includes('Voir les 5 vérifications'));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(document.querySelectorAll('fripon-listing-card')).toHaveLength(1);
+    expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(2);
+    expect(browser.runtime.sendMessage).toHaveBeenCalledTimes(2);
+  }, 15_000);
 });

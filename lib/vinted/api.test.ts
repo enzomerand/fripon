@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import {
+  DEFAULT_COOLDOWN_MS,
+  MAX_COOLDOWN_MS,
   MIN_REQUEST_SPACING_MS,
   RequestQueue,
   SELLER_CACHE_KEY_PREFIX,
@@ -10,6 +12,7 @@ import {
   VintedApiError,
   fetchSeller,
   sellerCacheKey,
+  storageSpacingStore,
   type ApiDeps,
   type Clock,
 } from './api';
@@ -305,5 +308,191 @@ describe('fetchSeller errors', () => {
     const { deps, fetchMock } = harness(okResponder);
     await expect(fetchSeller('../admin', deps)).rejects.toMatchObject({ code: 'invalid_request' });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('shared request spacing', () => {
+  const spacingKey = 'fripon:lastRequestAt:test';
+  const store = () =>
+    storageSpacingStore(
+      {
+        get: (key) => browser.storage.local.get(key),
+        set: (items) => browser.storage.local.set(items),
+      },
+      () => spacingKey,
+    );
+
+  it('keeps pages and tabs apart through storage', async () => {
+    const clock = fakeClock();
+    const pageA = new RequestQueue(1_500, clock, store());
+    const pageB = new RequestQueue(1_500, clock, store());
+    const starts: number[] = [];
+    const task = () => {
+      starts.push(clock.now());
+      return Promise.resolve();
+    };
+
+    await pageA.run(task);
+    await pageB.run(task);
+    await pageA.run(task);
+
+    expect(starts[1]! - starts[0]!).toBeGreaterThanOrEqual(1_500);
+    expect(starts[2]! - starts[1]!).toBeGreaterThanOrEqual(1_500);
+  });
+
+  it('reserves its slot in storage before it starts', async () => {
+    const clock = fakeClock();
+    await new RequestQueue(1_500, clock, store()).run(() => Promise.resolve());
+    expect((await browser.storage.local.get(spacingKey))[spacingKey]).toBe(clock.time);
+  });
+
+  it('still spaces requests within the page when the storage fails', async () => {
+    const clock = fakeClock();
+    const broken = storageSpacingStore(
+      { get: () => Promise.reject(new Error('x')), set: () => Promise.reject(new Error('x')) },
+      () => spacingKey,
+    );
+    const queue = new RequestQueue(1_500, clock, broken);
+    await queue.run(() => Promise.resolve());
+    await queue.run(() => Promise.resolve());
+    expect(clock.waits).toEqual([1_500]);
+  });
+});
+
+describe('fetchSeller cache key', () => {
+  it('is versioned and scoped to the site', async () => {
+    const { deps } = harness(okResponder);
+    await fetchSeller('7000001', { ...deps, hostname: 'www.vinted.fr' });
+
+    const keys = Object.keys(await browser.storage.local.get(null));
+    expect(keys).toContain('fripon:seller:v1:www.vinted.fr:7000001');
+    expect(sellerCacheKey('7000001', 'www.vinted.de')).toBe(
+      'fripon:seller:v1:www.vinted.de:7000001',
+    );
+  });
+
+  it('does not serve a seller cached on another site', async () => {
+    const first = harness(okResponder);
+    await fetchSeller('7000001', { ...first.deps, hostname: 'www.vinted.fr' });
+
+    const second = harness(okResponder);
+    await fetchSeller('7000001', { ...second.deps, hostname: 'www.vinted.de' });
+    expect(second.fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('fetchSeller timeout', () => {
+  const hangUntilAborted = (_url: string, init: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+    });
+
+  it('gives every request an abort signal', async () => {
+    const { deps, fetchMock } = harness(okResponder);
+    await fetchSeller('7000001', deps);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it('gives up on a request that never answers, without blocking the queue', async () => {
+    const { deps } = harness(okResponder);
+    const hanging = { ...deps, fetch: hangUntilAborted as ApiDeps['fetch'], timeoutMs: 20 };
+    await expect(fetchSeller('7000001', hanging)).rejects.toMatchObject({ code: 'timeout' });
+
+    // The same queue still serves the next request.
+    await expect(fetchSeller('7000001', { ...deps })).resolves.toMatchObject({
+      login: 'vendeuse_test',
+    });
+  });
+});
+
+describe('fetchSeller cooldown', () => {
+  const refuse =
+    (status: number, headers: Record<string, string> = {}) =>
+    () =>
+      new Response('', { status, headers });
+  const cooldownKey = 'fripon:cooldownUntil:www.vinted.fr';
+  const onFr = (deps: ApiDeps) => ({ ...deps, hostname: 'www.vinted.fr' });
+
+  it.each([403, 429])(
+    'starts a default cooldown after a %i, shared through storage',
+    async (status) => {
+      const first = harness(refuse(status));
+      await expect(fetchSeller('7000001', onFr(first.deps))).rejects.toMatchObject({ status });
+      expect((await browser.storage.local.get(cooldownKey))[cooldownKey]).toBe(
+        first.clock.time + DEFAULT_COOLDOWN_MS,
+      );
+
+      // Another page of the same site: nothing is sent while the cooldown lasts.
+      const second = harness(okResponder);
+      second.clock.time = first.clock.time + DEFAULT_COOLDOWN_MS - 1;
+      await expect(fetchSeller('7000001', onFr(second.deps))).rejects.toMatchObject({
+        code: 'rate_limited',
+      });
+      expect(second.fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('resumes once the cooldown is over', async () => {
+    const first = harness(refuse(403));
+    await fetchSeller('7000001', onFr(first.deps)).catch(() => undefined);
+
+    const second = harness(okResponder);
+    second.clock.time = first.clock.time + DEFAULT_COOLDOWN_MS;
+    await expect(fetchSeller('7000001', onFr(second.deps))).resolves.toMatchObject({
+      login: 'vendeuse_test',
+    });
+  });
+
+  it('honours Retry-After in seconds and in HTTP date form, capped', async () => {
+    const seconds = harness(refuse(429, { 'retry-after': '120' }));
+    await fetchSeller('7000001', onFr(seconds.deps)).catch(() => undefined);
+    expect((await browser.storage.local.get(cooldownKey))[cooldownKey]).toBe(
+      seconds.clock.time + 120_000,
+    );
+
+    await fakeBrowser.reset();
+    const date = harness(
+      refuse(429, { 'retry-after': new Date(1_000_000 + 90_000).toUTCString() }),
+    );
+    await fetchSeller('7000001', onFr(date.deps)).catch(() => undefined);
+    expect((await browser.storage.local.get(cooldownKey))[cooldownKey]).toBe(1_000_000 + 90_000);
+
+    await fakeBrowser.reset();
+    const huge = harness(refuse(429, { 'retry-after': String(10 * 365 * 24 * 3_600) }));
+    await fetchSeller('7000001', onFr(huge.deps)).catch(() => undefined);
+    expect((await browser.storage.local.get(cooldownKey))[cooldownKey]).toBe(
+      huge.clock.time + MAX_COOLDOWN_MS,
+    );
+  });
+
+  it('does not block a seller that is already cached', async () => {
+    const warm = harness(okResponder);
+    await fetchSeller('7000001', onFr(warm.deps));
+    await browser.storage.local.set({ [cooldownKey]: warm.clock.time + 60_000 });
+
+    const later = harness(okResponder);
+    later.clock.time = warm.clock.time + 1_000;
+    await expect(fetchSeller('7000001', onFr(later.deps))).resolves.toMatchObject({
+      login: 'vendeuse_test',
+    });
+    expect(later.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('is per site', async () => {
+    const fr = harness(refuse(403));
+    await fetchSeller('7000001', onFr(fr.deps)).catch(() => undefined);
+
+    const de = harness(okResponder);
+    await expect(
+      fetchSeller('7000001', { ...de.deps, hostname: 'www.vinted.de' }),
+    ).resolves.toMatchObject({ login: 'vendeuse_test' });
+  });
+
+  it('does not start a cooldown for other errors', async () => {
+    const { deps } = harness(refuse(500));
+    await fetchSeller('7000001', onFr(deps)).catch(() => undefined);
+    expect(await browser.storage.local.get(cooldownKey)).toEqual({});
   });
 });

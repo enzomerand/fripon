@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { IMAGE_CONCURRENCY, MAX_OTHER_PHOTOS, analyzeListing, type AnalysisDeps } from './analysis';
+import {
+  AnalysisCancelledError,
+  IMAGE_CONCURRENCY,
+  MAX_OTHER_PHOTOS,
+  analyzeListing,
+  type AnalysisDeps,
+} from './analysis';
 import { hashToHex } from './image/pixels';
 import type { Listing, Seller, SellerItem } from './model';
 
@@ -197,5 +203,44 @@ describe('analyzeListing', () => {
       expect(checks[3]).toMatchObject({ id: 'photos', status: 'off' });
       expect(checks).toHaveLength(5);
     });
+  });
+});
+
+describe('analyzeListing cancellation', () => {
+  it('makes no request at all when already cancelled', async () => {
+    const d = deps();
+    await expect(analyzeListing(listing, d, { isCancelled: () => true })).rejects.toBeInstanceOf(
+      AnalysisCancelledError,
+    );
+    expect(d.fetchSeller).not.toHaveBeenCalled();
+    expect(d.analyzeImage).not.toHaveBeenCalled();
+  });
+
+  it('analyses no photo when cancelled during the seller fetch', async () => {
+    let cancelled = false;
+    const d = deps({
+      fetchSeller: () => {
+        cancelled = true;
+        return Promise.resolve(seller([item(1), item(2)]));
+      },
+    });
+    await expect(
+      analyzeListing(listing, d, { isCancelled: () => cancelled }),
+    ).rejects.toBeInstanceOf(AnalysisCancelledError);
+    expect(d.analyzeImage).not.toHaveBeenCalled();
+  });
+
+  it('stops downloading photos once cancelled', async () => {
+    const items = Array.from({ length: 30 }, (_, i) => item(i + 1));
+    const d = deps({ fetchSeller: () => Promise.resolve(seller(items)) });
+    const analyze = vi.mocked(d.analyzeImage);
+    const isCancelled = () => analyze.mock.calls.length >= 3;
+
+    await expect(analyzeListing(listing, d, { isCancelled })).rejects.toBeInstanceOf(
+      AnalysisCancelledError,
+    );
+    // Photos already in flight finish; none starts after the cancellation.
+    expect(analyze.mock.calls.length).toBeLessThanOrEqual(3 + IMAGE_CONCURRENCY);
+    expect(analyze.mock.calls.length).toBeLessThan(1 + MAX_OTHER_PHOTOS);
   });
 });

@@ -1,6 +1,6 @@
 import { render } from 'preact';
 import type { ContentScriptContext } from 'wxt/utils/content-script-context';
-import { analyzeListing, type AnalysisDeps } from '../lib/analysis';
+import { AnalysisCancelledError, analyzeListing, type AnalysisDeps } from '../lib/analysis';
 import { sendMessage } from '../lib/messages';
 import { waitFor } from '../lib/wait';
 import { fetchSeller } from '../lib/vinted/api';
@@ -45,8 +45,9 @@ function createCardController(ctx: ContentScriptContext) {
     for (const stale of document.querySelectorAll(HOST_TAG)) stale.remove();
   }
 
-  async function mount(anchorElement: Element, position: 'after' | 'before') {
-    ui = await createShadowRootUi(ctx, {
+  /** False when a newer run took over while the shadow root UI was being created. */
+  async function mount(id: number, anchorElement: Element, position: 'after' | 'before') {
+    const created = await createShadowRootUi(ctx, {
       name: HOST_TAG,
       position: 'inline',
       anchor: anchorElement,
@@ -60,7 +61,13 @@ function createCardController(ctx: ContentScriptContext) {
         if (mounted) render(null, mounted);
       },
     });
-    ui.mount();
+    if (id !== runId) {
+      created.remove();
+      return false;
+    }
+    ui = created;
+    created.mount();
+    return true;
   }
 
   async function run(id: number) {
@@ -71,8 +78,7 @@ function createCardController(ctx: ContentScriptContext) {
       return;
     }
 
-    await mount(anchor.element, anchor.position);
-    if (id !== runId) return;
+    if (!(await mount(id, anchor.element, anchor.position))) return;
     show({ status: 'loading' });
 
     const listing = await waitFor(() => readListing(document, location.href), {
@@ -88,24 +94,31 @@ function createCardController(ctx: ContentScriptContext) {
       return;
     }
 
-    const { verdict, checks } = await analyzeListing(listing, analysisDeps);
+    const { verdict, checks } = await analyzeListing(listing, analysisDeps, {
+      // A superseded run must not spend API calls or downloads.
+      isCancelled: () => id !== runId || ctx.isInvalid,
+    });
     if (id !== runId) return;
     show({ status: 'done', listing, verdict, checks });
   }
 
-  /** (Re)starts the whole run. Never throws: the page must not be affected by a failure here. */
+  /** (Re)starts the whole run. Never rejects: the page must not be affected by a failure here. */
   async function start() {
     const id = ++runId;
-    dispose();
     try {
+      dispose();
       await run(id);
     } catch (error) {
+      if (error instanceof AnalysisCancelledError) return;
       console.warn('[Fripon] Analysis failed.', error);
-      if (id === runId) {
+      if (id !== runId) return;
+      try {
         show({
           status: 'error',
           message: 'Une erreur est survenue pendant l’analyse, réessaie dans un instant.',
         });
+      } catch {
+        // Nothing more can be done for the page.
       }
     }
   }

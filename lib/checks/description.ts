@@ -87,7 +87,7 @@ const SPEC_LINE_KEYS: Array<[key: string, pattern: RegExp]> = [
   ['closure', /^(?:fermeture|closure|type de fermeture)\s*:\s*\S/i],
   ['fit', /^(?:coupe|fit|fit type|silhouette)\s*:\s*\S/i],
   ['gender', /^(?:genre|gender|departement|department)\s*:\s*\S/i],
-  ['decoration', /^(?:decoration|decoration|details?|details?)\s*:\s*\S/i],
+  ['decoration', /^(?:decoration|details?)\s*:\s*\S/i],
 ];
 const SPEC_LINE_BULLET = /^[\s\-–•*▪✔✅➤►·]+/u;
 

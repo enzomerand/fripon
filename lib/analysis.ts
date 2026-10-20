@@ -20,6 +20,19 @@ export interface AnalysisDeps {
   now(): Date;
 }
 
+export interface AnalysisOptions {
+  /** Polled between steps: once true, no further request is made and the analysis is abandoned. */
+  isCancelled?: () => boolean;
+}
+
+/** Thrown by `analyzeListing` when `isCancelled` turned true; callers just drop the run. */
+export class AnalysisCancelledError extends Error {
+  constructor() {
+    super('Analysis cancelled');
+    this.name = 'AnalysisCancelledError';
+  }
+}
+
 export interface AnalysisResult {
   verdict: Verdict;
   /** In display order: image, price, seller, photos, description. */
@@ -100,11 +113,20 @@ function guarded(id: CheckId, run: () => CheckResult): CheckResult {
  *
  * The image search and the price comparison are not wired yet: they are reported as off, and the
  * verdict says so when it would otherwise be green.
+ *
+ * @throws {AnalysisCancelledError} when `options.isCancelled` turns true before the end.
  */
 export async function analyzeListing(
   listing: Listing,
   deps: AnalysisDeps,
+  options: AnalysisOptions = {},
 ): Promise<AnalysisResult> {
+  const cancelled = options.isCancelled ?? (() => false);
+  const ensureActive = () => {
+    if (cancelled()) throw new AnalysisCancelledError();
+  };
+
+  ensureActive();
   let seller: Seller | null = null;
   let sellerError: unknown;
   try {
@@ -112,6 +134,7 @@ export async function analyzeListing(
   } catch (error) {
     sellerError = error;
   }
+  ensureActive();
 
   const mainUrl = listing.photoUrls[0];
   const otherItems: SellerItem[] = (seller?.items ?? [])
@@ -122,9 +145,11 @@ export async function analyzeListing(
     ...(mainUrl ? [mainUrl] : []),
     ...otherItems.map((item) => item.photoUrl as string),
   ];
+  // Once cancelled, the photos still queued are skipped instead of being downloaded.
   const analyses = await mapWithConcurrency(urls, IMAGE_CONCURRENCY, (url) =>
-    analyzePhoto(url, deps),
+    cancelled() ? Promise.resolve(null) : analyzePhoto(url, deps),
   );
+  ensureActive();
   const offset = mainUrl ? 1 : 0;
   const main = mainUrl ? (analyses[0] ?? null) : null;
   const others = otherItems.flatMap((item, index) => {
