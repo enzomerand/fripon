@@ -122,11 +122,13 @@ Le **verdict final** combine les signaux selon des règles explicites et documen
 **Règles du verdict** _(choix de Claude, guidé par l'anti-objectif « ne pas accuser à tort »)_ :
 
 - **Correspondance avérée** : Google Vision renvoie la même image (correspondance complète, pas seulement « visuellement similaire ») sur une page produit d'une plateforme de dropshipping de la liste. Les correspondances partielles ou seulement similaires ne sont jamais avérées.
-- **Rouge « Dropshipping probable »** : correspondance avérée, plus soit un prix Vinted au moins 2× le prix d'origine, soit (si le prix d'origine est inconnu) au moins un autre signal fort (photo catalogue, stock en plusieurs tailles, majorité d'articles neufs avec étiquette).
+- **Rouge « Dropshipping probable »** : correspondance avérée, plus soit un prix Vinted au moins 2× le prix d'origine, soit (si le prix d'origine est inconnu) au moins un autre signal fort (stock en plusieurs tailles, majorité d'articles neufs avec étiquette ; la photo catalogue ne devient forte que confirmée par l'IA).
 - **Orange « Article Shein revendu »** (ou Temu, AliExpress…) : correspondance avérée mais prix raisonnable et aucun autre signal fort. C'est le cas du particulier qui revend un article porté.
-- **Orange « À vérifier »** : correspondance partielle ou similaire, ou prix anormal par rapport aux annonces Vinted similaires, ou plusieurs signaux faibles.
+- **Orange « À vérifier »** : correspondance partielle ou similaire, ou prix anormal par rapport aux annonces Vinted similaires, ou un signal fort, ou des signaux faibles venant d'au moins deux familles différentes (profil du vendeur, texte, photo). Deux signaux de la même famille ne comptent qu'une fois.
 - **Vert « Rien de suspect »** : aucune correspondance et aucun signal notable. Si la recherche d'image n'a pas tourné (pas de clé, plafond atteint), le vert le précise : « Rien de suspect (sans recherche d'image) ».
 - Les pages de Vinted lui-même et des autres sites de seconde main sont exclues des correspondances.
+- Sans correspondance avérée, aucune vérification locale (vendeur, photos, description) ne s'affiche en rouge : elles plafonnent à l'orange. La photo catalogue détectée localement est un signal faible, formulé « Ressemble à une photo catalogue ».
+- Une donnée que Fripon n'a pas pu lire (nombre d'avis, marque, description, état des articles) ne produit jamais de signal : elle est signalée comme non lue.
 - Les seuils (2×, nombre de signaux) sont des constantes nommées et regroupées.
 
 **Repli gratuit pour la recherche d'image** _(choix de Claude)_ : sans clé Google Vision, la ligne « Recherche de l'image » propose aussi un lien « Chercher moi-même sur Google Lens », qui ouvre Lens dans un nouvel onglet avec la photo de l'annonce. C'est manuel, mais sans clé et sans coût.
