@@ -1,0 +1,167 @@
+import { describe, expect, it } from 'vitest';
+import type { Condition, Seller, SellerItem } from '../model';
+import { checkSeller, hasStockPattern, normalizeTitle } from './seller';
+
+const now = new Date('2026-10-20T12:00:00Z');
+const daysAgo = (n: number) => new Date(now.getTime() - n * 86_400_000).toISOString();
+
+function item(
+  n: number,
+  overrides: Partial<SellerItem> = {},
+  condition: Condition = 'good',
+): SellerItem {
+  return {
+    id: String(n),
+    title: `Article numéro ${n} très particulier`,
+    condition,
+    size: 'M',
+    price: { amount: 10, currency: 'EUR' },
+    photoUrl: null,
+    ...overrides,
+  };
+}
+
+function seller(overrides: Partial<Seller> = {}): Seller {
+  return {
+    id: 's1',
+    login: 'marie',
+    createdAt: daysAgo(900),
+    feedbackCount: 120,
+    rating: 4.9,
+    itemCount: 3,
+    items: [item(1), item(2), item(3)],
+    ...overrides,
+  };
+}
+
+const ids = (s: Seller) => checkSeller(s, now).signals.map((x) => x.id);
+
+describe('normalizeTitle', () => {
+  it('removes accents, punctuation and size mentions', () => {
+    expect(normalizeTitle('Robe Fleurie - Taille M', 'M')).toBe('robe fleurie');
+    expect(normalizeTitle('Robe fleurie T.38', '38')).toBe('robe fleurie');
+    expect(normalizeTitle('Robe fleurie (XL)', 'XL')).toBe('robe fleurie');
+    expect(normalizeTitle('Top été size S', null)).toBe('top ete');
+  });
+
+  it('keeps model numbers', () => {
+    expect(normalizeTitle('Nike Air Max 90', '42')).toBe('nike air max 90');
+  });
+});
+
+describe('checkSeller signals', () => {
+  it('is reassuring for an old, well-reviewed, varied wardrobe', () => {
+    const result = checkSeller(seller(), now);
+    expect(result.id).toBe('seller');
+    expect(result.status).toBe('ok');
+    expect(result.tag).toBe('Rassurant');
+    expect(result.signals).toEqual([]);
+  });
+
+  it('flags a new account (weak) only below 60 days', () => {
+    expect(ids(seller({ createdAt: daysAgo(59) }))).toEqual(['new_account']);
+    expect(ids(seller({ createdAt: daysAgo(60) }))).toEqual([]);
+    expect(ids(seller({ createdAt: null }))).toEqual([]);
+  });
+
+  it('flags few reviews (weak) only below 5', () => {
+    expect(ids(seller({ feedbackCount: 4 }))).toEqual(['few_reviews']);
+    expect(ids(seller({ feedbackCount: 5 }))).toEqual([]);
+  });
+
+  it('flags mostly new with tags (strong) from 10 items and 60 %', () => {
+    const make = (nwt: number, total: number) =>
+      seller({
+        itemCount: total,
+        items: Array.from({ length: total }, (_, i) =>
+          item(i, {}, i < nwt ? 'new_with_tags' : 'good'),
+        ),
+      });
+    expect(ids(make(6, 10))).toEqual(['mostly_new_with_tags']);
+    expect(ids(make(5, 10))).toEqual([]);
+    // Too small a sample to mean anything.
+    expect(ids(make(5, 5))).toEqual([]);
+  });
+
+  it('flags the same article in two sizes (strong)', () => {
+    const items = [
+      item(1, { title: 'Robe fleurie Taille S', size: 'S' }),
+      item(2, { title: 'Robe fleurie taille M', size: 'M' }),
+    ];
+    expect(ids(seller({ items, itemCount: 2 }))).toEqual(['stock_multiple_sizes']);
+  });
+
+  it('flags the same article listed three times (strong)', () => {
+    const items = [1, 2, 3].map((n) => item(n, { title: 'Robe fleurie été', size: 'M' }));
+    expect(ids(seller({ items, itemCount: 3 }))).toEqual(['stock_multiple_sizes']);
+  });
+
+  it('does not flag two copies in the same size, nor generic one-word titles', () => {
+    const twins = [1, 2].map((n) => item(n, { title: 'Robe fleurie été', size: 'M' }));
+    expect(ids(seller({ items: twins, itemCount: 2 }))).toEqual([]);
+    const generic = [1, 2, 3].map((n) => item(n, { title: 'Robe', size: ['S', 'M', 'L'][n - 1]! }));
+    expect(hasStockPattern(generic)).toBe(false);
+  });
+
+  it('does not mix different articles of the same sizes', () => {
+    const items = [
+      item(1, { title: 'Robe fleurie', size: 'S' }),
+      item(2, { title: 'Robe unie', size: 'M' }),
+      item(3, { title: 'Jean slim', size: 'L' }),
+    ];
+    expect(hasStockPattern(items)).toBe(false);
+  });
+});
+
+describe('checkSeller status and wording', () => {
+  it('is warn with only weak signals', () => {
+    const result = checkSeller(seller({ createdAt: daysAgo(21), feedbackCount: 3 }), now);
+    expect(result.status).toBe('warn');
+    expect(result.tag).toBe('À surveiller');
+    expect(result.detail).toBe('Inscrit il y a 3 semaines, 3 avis. 3 articles en vente.');
+  });
+
+  it('is bad with one strong signal and builds the detail from the data', () => {
+    const items = Array.from({ length: 41 }, (_, i) =>
+      item(
+        i,
+        { title: `Robe modèle ${i % 8}`, size: i % 2 ? 'S' : 'M' },
+        i < 38 ? 'new_with_tags' : 'good',
+      ),
+    );
+    const result = checkSeller(
+      seller({ createdAt: daysAgo(21), feedbackCount: 3, itemCount: 41, items }),
+      now,
+    );
+    expect(result.status).toBe('bad');
+    expect(result.tag).toBe('À surveiller');
+    expect(result.detail).toBe(
+      'Inscrit il y a 3 semaines, 3 avis. 41 articles en vente dont 38 « neufs avec étiquette », souvent en plusieurs tailles.',
+    );
+  });
+
+  it('gives a share when the sample is smaller than the wardrobe', () => {
+    const items = Array.from({ length: 20 }, (_, i) =>
+      item(i, {}, i < 18 ? 'new_with_tags' : 'good'),
+    );
+    const result = checkSeller(seller({ itemCount: 200, items }), now);
+    expect(result.detail).toContain(
+      '200 articles en vente dont environ 90 % « neufs avec étiquette »',
+    );
+  });
+
+  it('omits unknown parts and handles singular and zero', () => {
+    const result = checkSeller(
+      seller({
+        createdAt: null,
+        feedbackCount: 0,
+        itemCount: 1,
+        items: [item(1, {}, 'new_with_tags')],
+      }),
+      now,
+    );
+    expect(result.detail).toBe('Aucun avis. 1 article en vente dont 1 « neuf avec étiquette ».');
+    const empty = checkSeller(seller({ itemCount: 0, items: [], feedbackCount: 1 }), now);
+    expect(empty.detail).toBe('Inscrit il y a 2 ans, 1 avis. Aucun article en vente.');
+  });
+});
