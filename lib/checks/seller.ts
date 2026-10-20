@@ -23,7 +23,7 @@ export const STOCK_MIN_COPIES = 3;
 export const STOCK_MIN_TITLE_WORDS = 3;
 /** Main photos of two copies whose hashes differ by at most this many bits are the same picture. */
 export const STOCK_PHOTO_MAX_DISTANCE = 3;
-/** Above this share of items with an unknown condition, the condition signals are not trusted. */
+/** Above this share of items with an unknown condition, the wardrobe analysis is flagged as partial. */
 export const UNKNOWN_CONDITION_MAX_SHARE = 0.5;
 
 /** Function words that do not make a title specific. */
@@ -146,13 +146,20 @@ function buildDetail(
   articleCount: number,
   sampleSize: number,
   stock: boolean,
+  conditionsUnknown: boolean,
 ): string {
   const parts: string[] = [];
 
   const registered = formatAccountAge(seller.createdAt, now);
-  const reviews = seller.feedbackCount === 0 ? 'aucun avis' : `${seller.feedbackCount} avis`;
+  // A missing review count is not "no review": say nothing rather than something wrong.
+  const reviews =
+    seller.feedbackCount === null
+      ? ''
+      : seller.feedbackCount === 0
+        ? 'aucun avis'
+        : `${seller.feedbackCount} avis`;
   const profile = [registered && `Inscrit ${registered}`, reviews].filter(Boolean).join(', ');
-  parts.push(`${profile.charAt(0).toUpperCase()}${profile.slice(1)}.`);
+  if (profile) parts.push(`${profile.charAt(0).toUpperCase()}${profile.slice(1)}.`);
 
   if (articleCount === 0) {
     parts.push('Aucun article en vente.');
@@ -169,6 +176,7 @@ function buildDetail(
     if (stock) line += ', souvent en plusieurs tailles';
     parts.push(`${line}.`);
   }
+  if (conditionsUnknown) parts.push('État des articles non analysé.');
 
   return parts.join(' ');
 }
@@ -188,11 +196,15 @@ export function checkSeller(
   if (ageDays !== null && ageDays < NEW_ACCOUNT_DAYS) {
     signals.push({ id: 'new_account', strength: 'weak' });
   }
-  if (seller.feedbackCount < FEW_REVIEWS) {
+  if (seller.feedbackCount !== null && seller.feedbackCount < FEW_REVIEWS) {
     signals.push({ id: 'few_reviews', strength: 'weak' });
   }
 
   const sampleSize = seller.items.length;
+  // If Vinted changed how conditions are labelled, "not many new items" means nothing.
+  const unknownConditions = seller.items.filter((i) => i.condition === 'unknown').length;
+  const conditionsUnknown =
+    sampleSize > 0 && unknownConditions / sampleSize > UNKNOWN_CONDITION_MAX_SHARE;
   const newWithTags = seller.items.filter((i) => i.condition === 'new_with_tags').length;
   if (sampleSize >= MIN_SAMPLE_FOR_NEW_SHARE && newWithTags / sampleSize >= NEW_WITH_TAGS_SHARE) {
     signals.push({ id: 'mostly_new_with_tags', strength: 'strong' });
@@ -210,7 +222,7 @@ export function checkSeller(
   return {
     id: 'seller',
     status,
-    tag: status === 'ok' ? 'Rassurant' : 'À surveiller',
+    tag: status !== 'ok' ? 'À surveiller' : conditionsUnknown ? "Peu d'infos" : 'Rassurant',
     detail: buildDetail(
       seller,
       now,
@@ -218,6 +230,7 @@ export function checkSeller(
       Math.max(seller.itemCount, sampleSize),
       sampleSize,
       stock,
+      conditionsUnknown,
     ),
     signals,
   };

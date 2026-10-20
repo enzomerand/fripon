@@ -391,9 +391,14 @@ export function readListing(doc: Document, url: string): Listing | null {
     attributeValue(doc.querySelector(SELECTORS.attributeSize)) ??
     rsc().attributes.get(ATTRIBUTE_CODES.size)?.value ??
     null;
-  const brand = product
-    ? jsonLdBrand(product)
-    : (rsc().attributes.get(ATTRIBUTE_CODES.brand)?.value ?? null);
+  // null = read and empty, undefined = could not be read (never "no brand" by default).
+  const brand = ((): string | null | undefined => {
+    const fromJsonLd = product ? jsonLdBrand(product) : null;
+    if (fromJsonLd) return fromJsonLd;
+    const attributes = rsc().attributes;
+    if (attributes.size > 0) return attributes.get(ATTRIBUTE_CODES.brand)?.value ?? null;
+    return product && 'brand' in product ? null : undefined;
+  })();
 
   let photoUrls = domPhotos(doc, url);
   if (photoUrls.length === 0) photoUrls = rsc().photos;

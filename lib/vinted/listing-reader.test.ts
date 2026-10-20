@@ -129,12 +129,41 @@ describe('readListing from JSON-LD and the DOM', () => {
     expect(listing?.brand).toBe('Sans marque');
   });
 
-  it('accepts a plain string brand, and a missing one as null', () => {
+  it('accepts a plain string brand', () => {
     expect(readListing(page({ jsonLd: { ...PRODUCT, brand: 'Autre' } }), URL_OK)?.brand).toBe(
       'Autre',
     );
-    const noBrand = without(PRODUCT, 'brand');
-    expect(readListing(page({ jsonLd: noBrand }), URL_OK)?.brand).toBeNull();
+  });
+
+  it('distinguishes "no brand" (null) from "brand not read" (undefined)', () => {
+    // A brand explicitly empty in the JSON-LD was read: there is none.
+    expect(
+      readListing(page({ jsonLd: { ...PRODUCT, brand: { name: '' } } }), URL_OK)?.brand,
+    ).toBeNull();
+    // No brand key and nothing else to confirm it: not read, so not "no brand".
+    expect(readListing(page({ jsonLd: without(PRODUCT, 'brand') }), URL_OK)?.brand).toBeUndefined();
+    // No JSON-LD at all and no payload: not read either.
+    expect(readListing(page({ jsonLd: null }), URL_OK)?.brand).toBeUndefined();
+  });
+
+  it('takes "no brand" from the page payload when its attributes list none', () => {
+    const attributes =
+      '2:{"item_id":"9000001","attributes":[{"code":"size_familiar","data":{"value":"M"}},{"code":"status","data":{"value":"Bon état"}}]}\n';
+    const listing = readListing(
+      page({ jsonLd: without(PRODUCT, 'brand'), rsc: [attributes] }),
+      URL_OK,
+    );
+    expect(listing?.brand).toBeNull();
+  });
+
+  it('takes the brand from the page payload when the JSON-LD has none', () => {
+    const attributes =
+      '2:{"item_id":"9000001","attributes":[{"code":"brand","data":{"value":"Marque RSC"}}]}\n';
+    const listing = readListing(
+      page({ jsonLd: without(PRODUCT, 'brand'), rsc: [attributes] }),
+      URL_OK,
+    );
+    expect(listing?.brand).toBe('Marque RSC');
   });
 
   it('finds the Product inside an @graph array and an offers array', () => {

@@ -6,7 +6,7 @@ import { waitFor } from '../lib/wait';
 import { fetchSeller } from '../lib/vinted/api';
 import { findAnchor } from '../lib/vinted/anchor';
 import { VINTED_ITEM_MATCHES } from '../lib/vinted/domains';
-import { readListing } from '../lib/vinted/listing-reader';
+import { itemIdFromUrl, readListing } from '../lib/vinted/listing-reader';
 import { ListingCard, type CardState } from '../ui/ListingCard';
 import '../ui/ListingCard.css';
 
@@ -29,6 +29,8 @@ type Ui = Awaited<ReturnType<typeof createShadowRootUi<HTMLElement>>>;
 /** Owns the card of this page: mounts it, updates it, and replaces it on a new run. */
 function createCardController(ctx: ContentScriptContext) {
   let runId = 0;
+  /** Item the current card belongs to, null when this page is not an item page. */
+  let currentItemId: string | null = null;
   let ui: Ui | null = null;
   let container: HTMLElement | null = null;
 
@@ -107,6 +109,7 @@ function createCardController(ctx: ContentScriptContext) {
     const id = ++runId;
     try {
       dispose();
+      currentItemId = itemIdFromUrl(location.href);
       await run(id);
     } catch (error) {
       if (error instanceof AnalysisCancelledError) return;
@@ -123,7 +126,27 @@ function createCardController(ctx: ContentScriptContext) {
     }
   }
 
-  return { start };
+  /**
+   * Vinted reloads its pages today, but if it ever navigates in place the card must follow:
+   * a new item gets a new analysis, any other page loses the card.
+   */
+  function handleLocationChange(newUrl: URL) {
+    try {
+      const nextId = itemIdFromUrl(newUrl.href);
+      if (nextId === currentItemId) return;
+      if (nextId === null) {
+        runId++; // abandon any run still going
+        currentItemId = null;
+        dispose();
+        return;
+      }
+      void start();
+    } catch (error) {
+      console.warn('[Fripon] Could not follow the navigation.', error);
+    }
+  }
+
+  return { start, handleLocationChange };
 }
 
 export default defineContentScript({
@@ -136,6 +159,9 @@ export default defineContentScript({
     // run again so the card reflects the restored page.
     ctx.addEventListener(window, 'pageshow', (event) => {
       if (event.persisted) void card.start();
+    });
+    ctx.addEventListener(window, 'wxt:locationchange', (event) => {
+      card.handleLocationChange(event.newUrl);
     });
   },
 });

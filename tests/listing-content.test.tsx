@@ -206,4 +206,80 @@ describe('listing content script', () => {
     expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(2);
     expect(browser.runtime.sendMessage).toHaveBeenCalledTimes(2);
   }, 15_000);
+
+  describe('navigation without a page load', () => {
+    // WXT's own watcher polls once a second: capture the handler the script registers and call
+    // it directly, which is exactly what the watcher's event would do.
+    type LocationHandler = (event: { newUrl: URL }) => void;
+    let handlers: LocationHandler[] = [];
+
+    beforeEach(() => {
+      handlers = [];
+      const original = window.addEventListener.bind(window);
+      vi.spyOn(window, 'addEventListener').mockImplementation(((
+        type: string,
+        handler: EventListenerOrEventListenerObject,
+        options?: boolean | AddEventListenerOptions,
+      ) => {
+        if (type.endsWith('wxt:locationchange'))
+          handlers.push(handler as unknown as LocationHandler);
+        original(type, handler, options);
+      }) as typeof window.addEventListener);
+    });
+
+    function navigate(to: string) {
+      (window as unknown as HappyWindow).happyDOM.setURL(to);
+      for (const handler of handlers) handler({ newUrl: new URL(to) });
+    }
+
+    it('analyses the new item when the item id changes', async () => {
+      const calls = stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      const first = hostCard();
+
+      navigate('https://www.vinted.fr/items/9000002-autre-robe');
+      await until(() => hostCard() !== null && hostCard() !== first);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+
+      expect(document.querySelectorAll('fripon-listing-card')).toHaveLength(1);
+      // The seller comes from the cache, only the photos are analysed again.
+      expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(2);
+    }, 15_000);
+
+    it('keeps the card when only the query string changes', async () => {
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      const first = hostCard();
+
+      navigate('https://www.vinted.fr/items/9000001-robe-test?referrer=catalog');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(hostCard()).toBe(first);
+    }, 15_000);
+
+    it('removes the card when leaving the item page, and stops any run in progress', async () => {
+      const calls = stubFetch();
+      await script.main(ctx);
+      // Leave while the first run is still starting.
+      navigate('https://www.vinted.fr/catalog?search_text=robe');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(hostCard()).toBeNull();
+      expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(0);
+    }, 15_000);
+
+    it('removes a finished card when leaving, and brings it back on a new item', async () => {
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+
+      navigate('https://www.vinted.fr/catalog');
+      expect(hostCard()).toBeNull();
+
+      navigate('https://www.vinted.fr/items/9000003-encore');
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      expect(document.querySelectorAll('fripon-listing-card')).toHaveLength(1);
+    }, 15_000);
+  });
 });

@@ -108,6 +108,12 @@ describe('checkDescription', () => {
     );
   });
 
+  it('does not claim "no brand" when the brand could not be read', () => {
+    const result = checkDescription({ ...GENUINE_FR, brand: undefined });
+    expect(result).toMatchObject({ status: 'ok', tag: 'Normale', signals: [] });
+    expect(result.detail).toBe("Le texte a l'air d'une vraie annonce de particulier.");
+  });
+
   it('is off for languages it does not handle', () => {
     const german = listing({
       title: 'Kleid Zara Größe M',

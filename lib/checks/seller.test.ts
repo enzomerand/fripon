@@ -185,6 +185,47 @@ describe('stock pattern needs a second clue', () => {
   });
 });
 
+describe('checkSeller when Vinted data is missing', () => {
+  it('has no review signal and no review sentence without a review count', () => {
+    const result = checkSeller(seller({ feedbackCount: null, createdAt: daysAgo(900) }), now);
+    expect(result.signals).toEqual([]);
+    expect(result.status).toBe('ok');
+    expect(result.detail).toBe('Inscrit il y a 2 ans. 3 articles en vente.');
+    // Zero is a real count, null is not.
+    expect(ids(seller({ feedbackCount: 0 }))).toEqual(['few_reviews']);
+  });
+
+  it('starts the detail with the articles when nothing is known about the profile', () => {
+    const result = checkSeller(seller({ feedbackCount: null, createdAt: null }), now);
+    expect(result.detail).toBe('3 articles en vente.');
+  });
+
+  it('flags the analysis as partial when most conditions are unknown, and never says Rassurant', () => {
+    const items = Array.from({ length: 6 }, (_, i) => item(i, {}, i < 4 ? 'unknown' : 'good'));
+    const result = checkSeller(seller({ items, itemCount: 6 }), now);
+    expect(result.status).toBe('ok');
+    expect(result.tag).toBe("Peu d'infos");
+    expect(result.detail).toBe(
+      'Inscrit il y a 2 ans, 120 avis. 6 articles en vente. État des articles non analysé.',
+    );
+  });
+
+  it('does not flag exactly half unknown', () => {
+    const items = Array.from({ length: 6 }, (_, i) => item(i, {}, i < 3 ? 'unknown' : 'good'));
+    const result = checkSeller(seller({ items, itemCount: 6 }), now);
+    expect(result.tag).toBe('Rassurant');
+    expect(result.detail).not.toContain('non analysé');
+  });
+
+  it('keeps À surveiller, and the note, when signals exist', () => {
+    const items = Array.from({ length: 6 }, () => item(1, {}, 'unknown'));
+    const result = checkSeller(seller({ items, itemCount: 6, feedbackCount: 2 }), now);
+    expect(result.status).toBe('warn');
+    expect(result.tag).toBe('À surveiller');
+    expect(result.detail).toContain('État des articles non analysé.');
+  });
+});
+
 describe('checkSeller status and wording', () => {
   it('is warn with only weak signals', () => {
     const result = checkSeller(seller({ createdAt: daysAgo(21), feedbackCount: 3 }), now);

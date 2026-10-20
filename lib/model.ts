@@ -43,7 +43,8 @@ export interface Seller {
   login: string;
   /** ISO date of account creation, null when Vinted does not expose it. */
   createdAt: string | null;
-  feedbackCount: number;
+  /** Number of reviews, null when Vinted did not give it (then no review-based signal). */
+  feedbackCount: number | null;
   /** 0..5, null when unknown. */
   rating: number | null;
   /** Total active listings of the seller. */

@@ -240,7 +240,7 @@ function parseWardrobeItem(raw: unknown): SellerItem | null {
 interface UserInfo {
   id: string;
   login: string;
-  feedbackCount: number;
+  feedbackCount: number | null;
   rating: number | null;
   itemCount: number | null;
 }
@@ -252,7 +252,8 @@ function parseUser(body: unknown): UserInfo {
   const login = asString(user.login);
   if (!id || !login) throw invalid('user without id or login');
 
-  const feedbackCount = asNumber(user.feedback_count) ?? 0;
+  // A missing count stays null: it must not read as "no reviews at all".
+  const feedbackCount = asNumber(user.feedback_count);
   const reputation = asNumber(user.feedback_reputation);
   return {
     id,
@@ -260,7 +261,7 @@ function parseUser(body: unknown): UserInfo {
     feedbackCount,
     // `feedback_reputation` is 0..1; with no feedback at all it carries no information.
     rating:
-      reputation !== null && feedbackCount > 0 ? Math.round(reputation * 5 * 100) / 100 : null,
+      reputation !== null && feedbackCount !== 0 ? Math.round(reputation * 5 * 100) / 100 : null,
     itemCount: asNumber(user.item_count),
   };
 }

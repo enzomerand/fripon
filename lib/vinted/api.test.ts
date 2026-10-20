@@ -189,6 +189,17 @@ describe('fetchSeller', () => {
     });
   });
 
+  it('keeps a missing review count as null instead of zero', async () => {
+    const user = { ...USER_BODY.user } as Record<string, unknown>;
+    delete user.feedback_count;
+    const { deps } = harness((url) =>
+      url.includes('/wardrobe/') ? json(WARDROBE_BODY) : json({ user }),
+    );
+    const seller = await fetchSeller('7000001', deps);
+    expect(seller.feedbackCount).toBeNull();
+    expect(seller.rating).toBe(4.5);
+  });
+
   it('reads the wardrobe brand as a string or as an object with a title', async () => {
     const body = {
       items: [
