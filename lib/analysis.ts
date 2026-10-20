@@ -25,7 +25,6 @@ export const IMAGE_CONCURRENCY = 4;
 export interface AnalysisDeps {
   fetchSeller(sellerId: string): Promise<Seller>;
   analyzeImage(url: string): Promise<AnalyzeImageResponse>;
-  now(): Date;
 }
 
 export interface AnalysisOptions {
@@ -190,9 +189,7 @@ export async function analyzeListing(
     [
       imageCheckOff('no_key'),
       priceCheckOff(),
-      seller
-        ? guarded('seller', () => checkSeller(seller, deps.now(), others))
-        : sellerCheckOff(sellerError),
+      seller ? guarded('seller', () => checkSeller(seller, others)) : sellerCheckOff(sellerError),
       guarded('photos', () => checkPhotos({ main, others })),
       guarded('description', () => checkDescription(listing)),
     ],

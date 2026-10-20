@@ -1,8 +1,6 @@
 export interface WaitOptions {
   /** Gives up (resolving null) after this long. */
   timeoutMs: number;
-  /** Subtree to observe, the document by default. */
-  root?: Node;
   /** Probes are coalesced: at most one per this delay while the DOM keeps changing. */
   checkDelayMs?: number;
 }
@@ -19,7 +17,7 @@ export function waitFor<T>(
   probe: () => T | null | undefined | false,
   options: WaitOptions,
 ): Promise<T | null> {
-  const { timeoutMs, root = document, checkDelayMs = DEFAULT_CHECK_DELAY_MS } = options;
+  const { timeoutMs, checkDelayMs = DEFAULT_CHECK_DELAY_MS } = options;
 
   return new Promise((resolve) => {
     let settled = false;
@@ -51,7 +49,7 @@ export function waitFor<T>(
     check();
     if (settled) return;
 
-    observer.observe(root, {
+    observer.observe(document, {
       childList: true,
       subtree: true,
       attributes: true,

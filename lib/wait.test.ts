@@ -9,12 +9,10 @@ describe('waitFor', () => {
   });
 
   it('resolves once an element is added later', async () => {
-    const root = document.createElement('div');
-    document.body.append(root);
-    setTimeout(() => root.insertAdjacentHTML('beforeend', '<p id="late">hi</p>'), 20);
-    const found = await waitFor(() => root.querySelector('#late'), { ...options, root });
+    setTimeout(() => document.body.insertAdjacentHTML('beforeend', '<p id="late">hi</p>'), 20);
+    const found = await waitFor(() => document.querySelector('#late'), options);
     expect(found?.textContent).toBe('hi');
-    root.remove();
+    found?.remove();
   });
 
   it('resolves null on timeout', async () => {
@@ -22,18 +20,17 @@ describe('waitFor', () => {
   });
 
   it('keeps waiting while the probe throws', async () => {
-    const root = document.createElement('div');
-    document.body.append(root);
     let ready = false;
     const probe = () => {
       if (!ready) throw new Error('not yet');
       return 'ok';
     };
+    const marker = document.createElement('span');
     setTimeout(() => {
       ready = true;
-      root.append(document.createElement('span'));
+      document.body.append(marker);
     }, 20);
-    await expect(waitFor(probe, { ...options, root })).resolves.toBe('ok');
-    root.remove();
+    await expect(waitFor(probe, options)).resolves.toBe('ok');
+    marker.remove();
   });
 });

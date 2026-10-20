@@ -51,8 +51,8 @@ const WARDROBE_BODY = {
     wardrobeItem(1),
     wardrobeItem(2, { status: 'Très bon état', size: '', photos: [] }),
     wardrobeItem(3, { is_closed: true }),
-    wardrobeItem(4, { price: 8, currency: 'PLN', status_id: 3, status: 'whatever' }),
-    { id: 5, title: 'sans prix' },
+    wardrobeItem(4, { status: 'Bon état' }),
+    { id: 5 },
   ],
   pagination: { total_entries: 117 },
 };
@@ -167,10 +167,7 @@ describe('fetchSeller', () => {
 
     expect(seller).toMatchObject({
       id: '7000001',
-      login: 'vendeuse_test',
-      createdAt: null,
       feedbackCount: 40,
-      rating: 4.5,
       itemCount: 29,
     });
     // Closed and malformed entries are dropped.
@@ -181,14 +178,10 @@ describe('fetchSeller', () => {
       condition: 'new_with_tags',
       size: 'M',
       brand: null,
-      price: { amount: 12.5, currency: 'EUR' },
       photoUrl: 'https://images1.vinted.net/t/1a/f800/a.webp?s=a',
     });
     expect(seller.items[1]).toMatchObject({ condition: 'very_good', size: null, photoUrl: null });
-    expect(seller.items[2]).toMatchObject({
-      condition: 'good',
-      price: { amount: 8, currency: 'PLN' },
-    });
+    expect(seller.items[2]).toMatchObject({ condition: 'good' });
   });
 
   it('keeps a missing review count as null instead of zero', async () => {
@@ -199,7 +192,6 @@ describe('fetchSeller', () => {
     );
     const seller = await fetchSeller('7000001', deps);
     expect(seller.feedbackCount).toBeNull();
-    expect(seller.rating).toBe(4.5);
   });
 
   it('reads the wardrobe brand as a string or as an object with a title', async () => {
@@ -215,7 +207,7 @@ describe('fetchSeller', () => {
     expect(seller.items.map((item) => item.brand)).toEqual(['Zara', 'Mango', null]);
   });
 
-  it('has no rating without any feedback, and falls back on the wardrobe total', async () => {
+  it('keeps a review count of zero, and falls back on the wardrobe total', async () => {
     const user = { ...USER_BODY.user, feedback_count: 0, feedback_reputation: 0 } as Record<
       string,
       unknown
@@ -225,7 +217,6 @@ describe('fetchSeller', () => {
       url.includes('/wardrobe/') ? json(WARDROBE_BODY) : json({ user }),
     );
     const seller = await fetchSeller('7000001', deps);
-    expect(seller.rating).toBeNull();
     expect(seller.feedbackCount).toBe(0);
     expect(seller.itemCount).toBe(117);
   });
@@ -282,7 +273,7 @@ describe('fetchSeller', () => {
       remove: () => Promise.reject(new Error('no storage')),
     };
     const seller = await fetchSeller('7000001', { ...deps, storage: broken as ApiDeps['storage'] });
-    expect(seller.login).toBe('vendeuse_test');
+    expect(seller.id).toBe('7000001');
   });
 });
 
@@ -484,7 +475,7 @@ describe('fetchSeller in-flight dedupe', () => {
     );
     await expect(fetchSeller('7000001', deps)).rejects.toMatchObject({ code: 'http' });
     healthy = true;
-    await expect(fetchSeller('7000001', deps)).resolves.toMatchObject({ login: 'vendeuse_test' });
+    await expect(fetchSeller('7000001', deps)).resolves.toMatchObject({ id: '7000001' });
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
@@ -532,7 +523,7 @@ describe('fetchSeller timeout', () => {
 
     // The same queue still serves the next request.
     await expect(fetchSeller('7000001', { ...deps })).resolves.toMatchObject({
-      login: 'vendeuse_test',
+      id: '7000001',
     });
   });
 });
@@ -571,7 +562,7 @@ describe('fetchSeller cooldown', () => {
     const second = harness(okResponder);
     second.clock.time = first.clock.time + DEFAULT_COOLDOWN_MS;
     await expect(fetchSeller('7000001', onFr(second.deps))).resolves.toMatchObject({
-      login: 'vendeuse_test',
+      id: '7000001',
     });
   });
 
@@ -605,7 +596,7 @@ describe('fetchSeller cooldown', () => {
     const later = harness(okResponder);
     later.clock.time = warm.clock.time + 1_000;
     await expect(fetchSeller('7000001', onFr(later.deps))).resolves.toMatchObject({
-      login: 'vendeuse_test',
+      id: '7000001',
     });
     expect(later.fetchMock).not.toHaveBeenCalled();
   });
@@ -617,7 +608,7 @@ describe('fetchSeller cooldown', () => {
     const de = harness(okResponder);
     await expect(
       fetchSeller('7000001', { ...de.deps, hostname: 'www.vinted.de' }),
-    ).resolves.toMatchObject({ login: 'vendeuse_test' });
+    ).resolves.toMatchObject({ id: '7000001' });
   });
 
   it('does not start a cooldown for other errors', async () => {

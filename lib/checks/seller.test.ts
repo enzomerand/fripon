@@ -2,9 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { Condition, Seller, SellerItem } from '../model';
 import { checkSeller, hasStockPattern, normalizeTitle } from './seller';
 
-const now = new Date('2026-10-20T12:00:00Z');
-const daysAgo = (n: number) => new Date(now.getTime() - n * 86_400_000).toISOString();
-
 function item(
   n: number,
   overrides: Partial<SellerItem> = {},
@@ -16,7 +13,6 @@ function item(
     condition,
     size: 'M',
     brand: null,
-    price: { amount: 10, currency: 'EUR' },
     photoUrl: null,
     ...overrides,
   };
@@ -25,17 +21,14 @@ function item(
 function seller(overrides: Partial<Seller> = {}): Seller {
   return {
     id: 's1',
-    login: 'marie',
-    createdAt: daysAgo(900),
     feedbackCount: 120,
-    rating: 4.9,
     itemCount: 3,
     items: [item(1), item(2), item(3)],
     ...overrides,
   };
 }
 
-const ids = (s: Seller) => checkSeller(s, now).signals.map((x) => x.id);
+const ids = (s: Seller) => checkSeller(s).signals.map((x) => x.id);
 
 describe('normalizeTitle', () => {
   it('removes accents, punctuation and size mentions', () => {
@@ -52,17 +45,11 @@ describe('normalizeTitle', () => {
 
 describe('checkSeller signals', () => {
   it('is reassuring for an old, well-reviewed, varied wardrobe', () => {
-    const result = checkSeller(seller(), now);
+    const result = checkSeller(seller());
     expect(result.id).toBe('seller');
     expect(result.status).toBe('ok');
     expect(result.tag).toBe('Rassurant');
     expect(result.signals).toEqual([]);
-  });
-
-  it('flags a new account (weak) only below 60 days', () => {
-    expect(ids(seller({ createdAt: daysAgo(59) }))).toEqual(['new_account']);
-    expect(ids(seller({ createdAt: daysAgo(60) }))).toEqual([]);
-    expect(ids(seller({ createdAt: null }))).toEqual([]);
   });
 
   it('flags few reviews (weak) only below 5', () => {
@@ -164,8 +151,8 @@ describe('stock pattern needs a second clue', () => {
       { itemId: '1', hash: HASH },
       { itemId: '2', hash: HASH },
     ];
-    expect(checkSeller(seller({ items, itemCount: 2 }), now).signals).toEqual([]);
-    expect(checkSeller(seller({ items, itemCount: 2 }), now, hashes).signals).toEqual([
+    expect(checkSeller(seller({ items, itemCount: 2 })).signals).toEqual([]);
+    expect(checkSeller(seller({ items, itemCount: 2 }), hashes).signals).toEqual([
       { id: 'stock_multiple_sizes', strength: 'strong' },
     ]);
   });
@@ -187,39 +174,32 @@ describe('stock pattern needs a second clue', () => {
 
 describe('checkSeller when Vinted data is missing', () => {
   it('has no review signal and no review sentence without a review count', () => {
-    const result = checkSeller(seller({ feedbackCount: null, createdAt: daysAgo(900) }), now);
+    const result = checkSeller(seller({ feedbackCount: null }));
     expect(result.signals).toEqual([]);
     expect(result.status).toBe('ok');
-    expect(result.detail).toBe('Inscrit il y a 2 ans. 3 articles en vente.');
+    expect(result.detail).toBe('3 articles en vente.');
     // Zero is a real count, null is not.
     expect(ids(seller({ feedbackCount: 0 }))).toEqual(['few_reviews']);
   });
 
-  it('starts the detail with the articles when nothing is known about the profile', () => {
-    const result = checkSeller(seller({ feedbackCount: null, createdAt: null }), now);
-    expect(result.detail).toBe('3 articles en vente.');
-  });
-
   it('flags the analysis as partial when most conditions are unknown, and never says Rassurant', () => {
     const items = Array.from({ length: 6 }, (_, i) => item(i, {}, i < 4 ? 'unknown' : 'good'));
-    const result = checkSeller(seller({ items, itemCount: 6 }), now);
+    const result = checkSeller(seller({ items, itemCount: 6 }));
     expect(result.status).toBe('ok');
     expect(result.tag).toBe("Peu d'infos");
-    expect(result.detail).toBe(
-      'Inscrit il y a 2 ans, 120 avis. 6 articles en vente. État des articles non analysé.',
-    );
+    expect(result.detail).toBe('120 avis. 6 articles en vente. État des articles non analysé.');
   });
 
   it('does not flag exactly half unknown', () => {
     const items = Array.from({ length: 6 }, (_, i) => item(i, {}, i < 3 ? 'unknown' : 'good'));
-    const result = checkSeller(seller({ items, itemCount: 6 }), now);
+    const result = checkSeller(seller({ items, itemCount: 6 }));
     expect(result.tag).toBe('Rassurant');
     expect(result.detail).not.toContain('non analysé');
   });
 
   it('keeps À surveiller, and the note, when signals exist', () => {
     const items = Array.from({ length: 6 }, () => item(1, {}, 'unknown'));
-    const result = checkSeller(seller({ items, itemCount: 6, feedbackCount: 2 }), now);
+    const result = checkSeller(seller({ items, itemCount: 6, feedbackCount: 2 }));
     expect(result.status).toBe('warn');
     expect(result.tag).toBe('À surveiller');
     expect(result.detail).toContain('État des articles non analysé.');
@@ -228,10 +208,10 @@ describe('checkSeller when Vinted data is missing', () => {
 
 describe('checkSeller status and wording', () => {
   it('is warn with only weak signals', () => {
-    const result = checkSeller(seller({ createdAt: daysAgo(21), feedbackCount: 3 }), now);
+    const result = checkSeller(seller({ feedbackCount: 3 }));
     expect(result.status).toBe('warn');
     expect(result.tag).toBe('À surveiller');
-    expect(result.detail).toBe('Inscrit il y a 3 semaines, 3 avis. 3 articles en vente.');
+    expect(result.detail).toBe('3 avis. 3 articles en vente.');
   });
 
   it('is bad with one strong signal and builds the detail from the data', () => {
@@ -242,14 +222,11 @@ describe('checkSeller status and wording', () => {
         i < 38 ? 'new_with_tags' : 'good',
       ),
     );
-    const result = checkSeller(
-      seller({ createdAt: daysAgo(21), feedbackCount: 3, itemCount: 41, items }),
-      now,
-    );
+    const result = checkSeller(seller({ feedbackCount: 3, itemCount: 41, items }));
     expect(result.status).toBe('bad');
     expect(result.tag).toBe('À surveiller');
     expect(result.detail).toBe(
-      'Inscrit il y a 3 semaines, 3 avis. 41 articles en vente dont 38 « neufs avec étiquette », souvent en plusieurs tailles.',
+      '3 avis. 41 articles en vente dont 38 « neufs avec étiquette », souvent en plusieurs tailles.',
     );
   });
 
@@ -257,7 +234,7 @@ describe('checkSeller status and wording', () => {
     const items = Array.from({ length: 20 }, (_, i) =>
       item(i, {}, i < 18 ? 'new_with_tags' : 'good'),
     );
-    const result = checkSeller(seller({ itemCount: 200, items }), now);
+    const result = checkSeller(seller({ itemCount: 200, items }));
     expect(result.detail).toContain(
       '200 articles en vente dont environ 90 % « neufs avec étiquette »',
     );
@@ -266,15 +243,13 @@ describe('checkSeller status and wording', () => {
   it('omits unknown parts and handles singular and zero', () => {
     const result = checkSeller(
       seller({
-        createdAt: null,
         feedbackCount: 0,
         itemCount: 1,
         items: [item(1, {}, 'new_with_tags')],
       }),
-      now,
     );
     expect(result.detail).toBe('Aucun avis. 1 article en vente dont 1 « neuf avec étiquette ».');
-    const empty = checkSeller(seller({ itemCount: 0, items: [], feedbackCount: 1 }), now);
-    expect(empty.detail).toBe('Inscrit il y a 2 ans, 1 avis. Aucun article en vente.');
+    const empty = checkSeller(seller({ itemCount: 0, items: [], feedbackCount: 1 }));
+    expect(empty.detail).toBe('1 avis. Aucun article en vente.');
   });
 });

@@ -11,11 +11,8 @@ export interface Anchor {
  * buttons. Null while neither is in the page.
  */
 export function findAnchor(doc: Document): Anchor | null {
-  const container = doc.querySelector(SELECTORS.priceContainer);
   const price =
-    doc.querySelector(SELECTORS.priceBlock) ??
-    container?.closest(SELECTORS.priceBlock) ??
-    container;
+    doc.querySelector(SELECTORS.priceBlock) ?? doc.querySelector(SELECTORS.priceContainer);
   if (price) return { element: price, position: 'after' };
 
   const actions = doc.querySelector(SELECTORS.actionsBlock);

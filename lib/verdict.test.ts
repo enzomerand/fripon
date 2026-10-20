@@ -11,7 +11,6 @@ import {
 const STRONG: SignalId[] = ['stock_multiple_sizes', 'mostly_new_with_tags'];
 const WEAK: SignalId[] = [
   'catalog_photo',
-  'new_account',
   'few_reviews',
   'photo_reused',
   'marketplace_style_text',
@@ -98,7 +97,7 @@ describe('dropshipping', () => {
     const verdict = computeVerdict(
       input({
         imageMatches: [TEMU_EXACT_NO_PRICE],
-        signals: [weak('new_account'), strong('catalog_photo')],
+        signals: [weak('few_reviews'), strong('catalog_photo')],
       }),
     );
     expect(verdict.lines).toEqual(['Même photo sur Temu', 'Photo type catalogue']);
@@ -134,7 +133,7 @@ describe('resold (exact match, honest reseller)', () => {
     const verdict = computeVerdict(
       input({
         imageMatches: [TEMU_EXACT_NO_PRICE],
-        signals: [weak('new_account'), weak('few_reviews'), weak('no_brand')],
+        signals: [weak('few_reviews'), weak('no_brand'), weak('photo_reused')],
       }),
     );
     expect(verdict.level).toBe('resold');
@@ -197,13 +196,12 @@ describe('review', () => {
   });
 
   it('weak signals from two distinct families', () => {
-    const verdict = computeVerdict(input({ signals: [weak('new_account'), weak('no_brand')] }));
+    const verdict = computeVerdict(input({ signals: [weak('few_reviews'), weak('no_brand')] }));
     expect(verdict.level).toBe('review');
-    expect(verdict.lines).toEqual(['Vendeur récemment inscrit', 'Aucune marque indiquée']);
+    expect(verdict.lines).toEqual(["Vendeur avec peu d'avis", 'Aucune marque indiquée']);
   });
 
   it.each([
-    ['profile', ['new_account', 'few_reviews']],
     ['text', ['no_brand', 'marketplace_style_text']],
     ['photo', ['catalog_photo', 'photo_reused']],
   ] as const)('two weak signals of the %s family count as one', (_family, ids) => {
@@ -211,9 +209,9 @@ describe('review', () => {
     expect(verdict.level).toBe('clean');
   });
 
-  it('a catalogue photo with a new account is two families', () => {
+  it('a catalogue photo with few reviews is two families', () => {
     expect(
-      computeVerdict(input({ signals: [weak('catalog_photo'), weak('new_account')] })).level,
+      computeVerdict(input({ signals: [weak('catalog_photo'), weak('few_reviews')] })).level,
     ).toBe('review');
   });
 
@@ -233,7 +231,7 @@ describe('review', () => {
           weak('no_brand'),
           strong('stock_multiple_sizes'),
           strong('catalog_photo'),
-          weak('new_account'),
+          weak('few_reviews'),
         ],
       }),
     );
@@ -283,7 +281,7 @@ describe('no image search (no key, quota, manual)', () => {
 
   it('still reviews on two weak signals', () => {
     const verdict = computeVerdict(
-      input({ imageOff: true, signals: [weak('new_account'), weak('marketplace_style_text')] }),
+      input({ imageOff: true, signals: [weak('few_reviews'), weak('marketplace_style_text')] }),
     );
     expect(verdict.level).toBe('review');
   });

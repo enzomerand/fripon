@@ -1,20 +1,5 @@
 import type { Condition } from '../model';
-
-/**
- * Vinted `status_id` values, as used by its catalogue filter (`status_ids[]=6`).
- *
- * ASSUMPTION: these ids come from Vinted's public catalogue filter, not from the recon:
- * neither the item page nor the wardrobe payload observed in `vinted-recon.md` carries a numeric
- * id (the wardrobe only has the localized `status` label). The ids are therefore only used when a
- * payload provides one; the localized label below remains the path actually exercised today.
- */
-export const STATUS_IDS: Readonly<Record<number, Condition>> = {
-  6: 'new_with_tags',
-  1: 'new_without_tags',
-  2: 'very_good',
-  3: 'good',
-  4: 'satisfactory',
-};
+import { stripAccents } from '../text';
 
 /**
  * Localized labels (fr, en, de, es, it, nl, pl), matched on their normalized form (lowercase, no
@@ -87,14 +72,10 @@ const LABEL_PATTERNS: ReadonlyArray<readonly [Condition, readonly string[]]> = [
 
 /** Lowercase, accents removed, whitespace collapsed. */
 function normalize(label: string): string {
-  return label.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return stripAccents(label).toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
-export function conditionFromStatusId(statusId: number | string | null | undefined): Condition {
-  const id = typeof statusId === 'string' ? Number(statusId) : statusId;
-  return (id !== null && id !== undefined && STATUS_IDS[id]) || 'unknown';
-}
-
+/** The condition behind a localized status label ("Neuf avec étiquette", "Good"...). */
 export function conditionFromLabel(label: string | null | undefined): Condition {
   if (!label) return 'unknown';
   const text = normalize(label);
@@ -102,15 +83,4 @@ export function conditionFromLabel(label: string | null | undefined): Condition 
     if (patterns.some((pattern) => text.includes(pattern))) return condition;
   }
   return 'unknown';
-}
-
-export interface ConditionSource {
-  statusId?: number | string | null;
-  label?: string | null;
-}
-
-/** Prefers the numeric `status_id` when the payload has one, then the localized label. */
-export function parseCondition(source: ConditionSource): Condition {
-  const byId = conditionFromStatusId(source.statusId);
-  return byId !== 'unknown' ? byId : conditionFromLabel(source.label);
 }

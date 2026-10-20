@@ -1,23 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Condition } from '../model';
-import { conditionFromLabel, conditionFromStatusId, parseCondition } from './condition';
-
-describe('conditionFromStatusId', () => {
-  it('maps the known ids, as numbers or numeric strings', () => {
-    expect(conditionFromStatusId(6)).toBe('new_with_tags');
-    expect(conditionFromStatusId(1)).toBe('new_without_tags');
-    expect(conditionFromStatusId(2)).toBe('very_good');
-    expect(conditionFromStatusId('3')).toBe('good');
-    expect(conditionFromStatusId(4)).toBe('satisfactory');
-  });
-
-  it('is unknown for missing or unexpected ids', () => {
-    expect(conditionFromStatusId(null)).toBe('unknown');
-    expect(conditionFromStatusId(undefined)).toBe('unknown');
-    expect(conditionFromStatusId(99)).toBe('unknown');
-    expect(conditionFromStatusId('abc')).toBe('unknown');
-  });
-});
+import { conditionFromLabel } from './condition';
 
 describe('conditionFromLabel', () => {
   const labels: Record<string, Array<[string, Condition]>> = {
@@ -90,17 +73,5 @@ describe('conditionFromLabel', () => {
     expect(conditionFromLabel('')).toBe('unknown');
     expect(conditionFromLabel(null)).toBe('unknown');
     expect(conditionFromLabel('Pristine')).toBe('unknown');
-  });
-});
-
-describe('parseCondition', () => {
-  it('prefers the numeric id over the label', () => {
-    expect(parseCondition({ statusId: 6, label: 'Bon état' })).toBe('new_with_tags');
-  });
-
-  it('falls back on the label when the id is missing or unknown', () => {
-    expect(parseCondition({ label: 'Bon état' })).toBe('good');
-    expect(parseCondition({ statusId: 42, label: 'Bon état' })).toBe('good');
-    expect(parseCondition({})).toBe('unknown');
   });
 });

@@ -1,4 +1,5 @@
 import type { CheckResult, Listing, Signal } from '../model';
+import { stripAccents } from '../text';
 
 /** Score at or above which the text is flagged as marketplace / machine-translated copy. */
 export const MARKETPLACE_SCORE_THRESHOLD = 3;
@@ -140,10 +141,6 @@ const REASON_LABELS: Record<MarketplaceReason, string> = {
   package_contents: 'contenu du colis',
   promo_words: 'vocabulaire promo',
 };
-
-function stripAccents(s: string): string {
-  return s.normalize('NFD').replace(/\p{M}/gu, '');
-}
 
 function words(text: string): string[] {
   return text.toLowerCase().match(/\p{L}+/gu) ?? [];

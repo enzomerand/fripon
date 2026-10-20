@@ -1,5 +1,6 @@
 import type { Listing } from '../model';
-import { parseCondition } from './condition';
+import { isRecord, type JsonObject } from '../json';
+import { conditionFromLabel } from './condition';
 import {
   ATTRIBUTE_CODES,
   ITEM_PATH_PATTERN,
@@ -7,8 +8,6 @@ import {
   PHOTO_IMG_TESTID_PATTERN,
   SELECTORS,
 } from './selectors';
-
-type JsonObject = Record<string, unknown>;
 
 const RSC_PUSH_PREFIX = 'self.__next_f.push(';
 /** Closed sibling objects skipped while looking for the object around an item id. */
@@ -24,10 +23,6 @@ const CURRENCY_BY_SYMBOL: ReadonlyArray<readonly [string, string]> = [
   ['lei', 'RON'],
   ['$', 'USD'],
 ];
-
-function isRecord(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function nonEmpty(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -180,15 +175,10 @@ function domPhotos(doc: Document, base: string): string[] {
 
 // ---- RSC fallback ----------------------------------------------------------------------------
 
-interface RscAttribute {
-  value: string | null;
-  id: number | string | null;
-}
-
 interface RscData {
   sellerId: string | null;
   photos: string[];
-  attributes: Map<string, RscAttribute>;
+  attributes: Map<string, string | null>;
 }
 
 const rscCache = new WeakMap<Document, { scriptCount: number; text: string }>();
@@ -279,20 +269,16 @@ function rscPhotos(text: string): string[] {
   return [];
 }
 
-function rscAttributes(text: string): Map<string, RscAttribute> {
+function rscAttributes(text: string): Map<string, string | null> {
   const known = new Set<string>(Object.values(ATTRIBUTE_CODES));
   for (const value of jsonValuesForKey(text, 'attributes')) {
     if (!Array.isArray(value)) continue;
     const rows = value.filter(isRecord).filter((row) => typeof row.code === 'string');
     if (!rows.some((row) => known.has(row.code as string))) continue;
-    const attributes = new Map<string, RscAttribute>();
+    const attributes = new Map<string, string | null>();
     for (const row of rows) {
       const data = isRecord(row.data) ? row.data : {};
-      const id = typeof data.id === 'number' || typeof data.id === 'string' ? data.id : null;
-      attributes.set(row.code as string, {
-        value: nonEmpty(data.value) ?? nonEmpty(data.title),
-        id,
-      });
+      attributes.set(row.code as string, nonEmpty(data.value) ?? nonEmpty(data.title));
     }
     return attributes;
   }
@@ -381,22 +367,21 @@ export function readListing(doc: Document, url: string): Listing | null {
   if (!title || amount === null || !currency || !sellerId) return null;
 
   const statusRow = doc.querySelector(SELECTORS.attributeStatus);
-  let condition = parseCondition({ label: attributeValue(statusRow) });
+  let condition = conditionFromLabel(attributeValue(statusRow));
   if (condition === 'unknown') {
-    const status = rsc().attributes.get(ATTRIBUTE_CODES.status);
-    condition = parseCondition({ statusId: status?.id, label: status?.value });
+    condition = conditionFromLabel(rsc().attributes.get(ATTRIBUTE_CODES.status));
   }
 
   const size =
     attributeValue(doc.querySelector(SELECTORS.attributeSize)) ??
-    rsc().attributes.get(ATTRIBUTE_CODES.size)?.value ??
+    rsc().attributes.get(ATTRIBUTE_CODES.size) ??
     null;
   // null = read and empty, undefined = could not be read (never "no brand" by default).
   const brand = ((): string | null | undefined => {
     const fromJsonLd = product ? jsonLdBrand(product) : null;
     if (fromJsonLd) return fromJsonLd;
     const attributes = rsc().attributes;
-    if (attributes.size > 0) return attributes.get(ATTRIBUTE_CODES.brand)?.value ?? null;
+    if (attributes.size > 0) return attributes.get(ATTRIBUTE_CODES.brand) ?? null;
     return product && 'brand' in product ? null : undefined;
   })();
 

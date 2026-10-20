@@ -34,19 +34,13 @@ export interface SellerItem {
   size: string | null;
   /** null when the item has no brand (or the API did not give one). */
   brand: string | null;
-  price: Money;
   photoUrl: string | null;
 }
 
 export interface Seller {
   id: string;
-  login: string;
-  /** ISO date of account creation, null when Vinted does not expose it. */
-  createdAt: string | null;
   /** Number of reviews, null when Vinted did not give it (then no review-based signal). */
   feedbackCount: number | null;
-  /** 0..5, null when unknown. */
-  rating: number | null;
   /** Total active listings of the seller. */
   itemCount: number;
   /** Sample of the seller's active listings (first wardrobe page). */
@@ -61,7 +55,6 @@ export type CheckStatus = 'ok' | 'warn' | 'bad' | 'off';
 export type SignalId =
   | 'stock_multiple_sizes'
   | 'mostly_new_with_tags'
-  | 'new_account'
   | 'few_reviews'
   | 'catalog_photo'
   | 'photo_reused'

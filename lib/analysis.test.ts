@@ -10,8 +10,6 @@ import {
 import { hashToHex } from './image/pixels';
 import type { CheckResult, ImageMatch, Listing, Seller, SellerItem } from './model';
 
-const NOW = new Date('2026-10-20T12:00:00Z');
-
 const listing: Listing = {
   id: '100',
   url: 'https://www.vinted.fr/items/100-robe',
@@ -31,17 +29,13 @@ const item = (n: number, overrides: Partial<SellerItem> = {}): SellerItem => ({
   condition: 'good',
   size: 'M',
   brand: null,
-  price: { amount: 10, currency: 'EUR' },
   photoUrl: `https://images1.vinted.net/t/${n}/f800/p.webp?s=${n}`,
   ...overrides,
 });
 
 const seller = (items: SellerItem[]): Seller => ({
   id: '7000001',
-  login: 'vendeuse_test',
-  createdAt: null,
   feedbackCount: 80,
-  rating: 4.8,
   itemCount: items.length,
   items,
 });
@@ -60,7 +54,6 @@ function deps(overrides: Partial<AnalysisDeps> = {}): AnalysisDeps {
         catalogScore: 0.2,
       }),
     ),
-    now: () => NOW,
     ...overrides,
   };
 }

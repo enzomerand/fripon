@@ -19,9 +19,8 @@ const HOST_TAG = 'fripon-listing-card';
 const HOST_CSS = ':host { display: block !important; margin: 12px 0 !important; }';
 
 const analysisDeps: AnalysisDeps = {
-  fetchSeller: (sellerId) => fetchSeller(sellerId),
+  fetchSeller,
   analyzeImage: (url) => sendMessage({ type: 'analyzeImage', url }),
-  now: () => new Date(),
 };
 
 type Ui = Awaited<ReturnType<typeof createShadowRootUi<HTMLElement>>>;

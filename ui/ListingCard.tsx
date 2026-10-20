@@ -76,7 +76,6 @@ function CheckRow({ check, listing }: { check: CheckResult; listing: Listing }) 
 
 function Result({ listing, verdict, checks }: Extract<CardState, { status: 'done' }>) {
   const [expanded, setExpanded] = useState(false);
-  const count = checks.length;
   return (
     <section
       class={`fripon fripon--${LEVEL_COLOUR[verdict.level]}`}
@@ -98,7 +97,7 @@ function Result({ listing, verdict, checks }: Extract<CardState, { status: 'done
         aria-controls={CHECKS_ID}
         onClick={() => setExpanded(!expanded)}
       >
-        {expanded ? 'Masquer les vérifications' : `Voir les ${count} vérifications`}
+        {expanded ? 'Masquer les vérifications' : `Voir les ${checks.length} vérifications`}
       </button>
       {expanded && (
         <div id={CHECKS_ID}>

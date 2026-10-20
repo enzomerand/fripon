@@ -28,7 +28,6 @@ const SIGNAL_LINES: Array<[SignalId, string]> = [
   ['mostly_new_with_tags', 'Surtout du neuf avec étiquette'],
   ['price_above_similar', 'Plus cher que les annonces similaires'],
   ['photo_reused', "Même photo sur d'autres annonces"],
-  ['new_account', 'Vendeur récemment inscrit'],
   ['marketplace_style_text', 'Description style boutique en ligne'],
   ['few_reviews', "Vendeur avec peu d'avis"],
   ['no_brand', 'Aucune marque indiquée'],
@@ -38,7 +37,6 @@ type SignalFamily = 'profile' | 'text' | 'photo' | 'price' | 'wardrobe';
 
 const SIGNAL_FAMILY: Record<SignalId, SignalFamily> = {
   few_reviews: 'profile',
-  new_account: 'profile',
   no_brand: 'text',
   marketplace_style_text: 'text',
   catalog_photo: 'photo',

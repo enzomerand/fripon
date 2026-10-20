@@ -1,11 +1,9 @@
-import { accountAgeDays, formatAccountAge } from '../format';
 import { hammingDistance } from '../image/pixels';
 import type { CheckResult, Seller, SellerItem, Signal } from '../model';
+import { stripAccents } from '../text';
 import { isNoBrand } from './description';
-import { isInformativeHash } from './photos';
+import { isInformativeHash, type PhotosInput } from './photos';
 
-/** An account younger than this many days is a weak signal. */
-export const NEW_ACCOUNT_DAYS = 60;
 /** Fewer reviews than this is a weak signal. */
 export const FEW_REVIEWS = 5;
 /** Minimum sample size before the share of "new with tags" items means anything. */
@@ -33,12 +31,6 @@ const TITLE_STOPWORDS = new Set(
   ),
 );
 
-/** Main photo hash of a seller's item, as computed for the photos check. */
-export interface ItemPhotoHash {
-  itemId: string;
-  hash: bigint;
-}
-
 const SIZE_TOKEN = '(?:[2-5]?x{0,3}s|[2-5]?x{0,3}l|m|\\d{2}(?:/\\d{2})?)';
 /** "taille M", "size 38", "T.38", "t38". */
 const SIZE_PHRASE = new RegExp(
@@ -47,10 +39,6 @@ const SIZE_PHRASE = new RegExp(
 );
 /** A lone letter size: "S", "XL", "2XL". Numbers are kept ("Air Max 90"). */
 const LONE_LETTER_SIZE = /\b(?:[2-5]?x{0,3}s|[2-5]?x{0,3}l|m)\b/g;
-
-function stripAccents(s: string): string {
-  return s.normalize('NFD').replace(/\p{M}/gu, '');
-}
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -98,7 +86,7 @@ function sharesBrand(group: SellerItem[]): boolean {
 }
 
 /** At least two copies have a near-identical main photo (hashes known and informative only). */
-function sharesPhoto(group: SellerItem[], hashes: ItemPhotoHash[]): boolean {
+function sharesPhoto(group: SellerItem[], hashes: PhotosInput['others']): boolean {
   const byItem = new Map(
     hashes.filter((entry) => isInformativeHash(entry.hash)).map((e) => [e.itemId, e.hash]),
   );
@@ -118,7 +106,7 @@ function sharesPhoto(group: SellerItem[], hashes: ItemPhotoHash[]): boolean {
  * copies look like one product: same real brand, or near-identical photos. A seller who owns
  * "Robe fleurie" in two sizes (a sister, a mother) is not stock.
  */
-export function hasStockPattern(items: SellerItem[], hashes: ItemPhotoHash[] = []): boolean {
+export function hasStockPattern(items: SellerItem[], hashes: PhotosInput['others'] = []): boolean {
   const groups = new Map<string, SellerItem[]>();
   for (const item of items) {
     const key = normalizeTitle(item.title, item.size);
@@ -141,7 +129,6 @@ export function hasStockPattern(items: SellerItem[], hashes: ItemPhotoHash[] = [
 
 function buildDetail(
   seller: Seller,
-  now: Date,
   newWithTags: number,
   articleCount: number,
   sampleSize: number,
@@ -150,16 +137,10 @@ function buildDetail(
 ): string {
   const parts: string[] = [];
 
-  const registered = formatAccountAge(seller.createdAt, now);
   // A missing review count is not "no review": say nothing rather than something wrong.
-  const reviews =
-    seller.feedbackCount === null
-      ? ''
-      : seller.feedbackCount === 0
-        ? 'aucun avis'
-        : `${seller.feedbackCount} avis`;
-  const profile = [registered && `Inscrit ${registered}`, reviews].filter(Boolean).join(', ');
-  if (profile) parts.push(`${profile.charAt(0).toUpperCase()}${profile.slice(1)}.`);
+  if (seller.feedbackCount !== null) {
+    parts.push(seller.feedbackCount === 0 ? 'Aucun avis.' : `${seller.feedbackCount} avis.`);
+  }
 
   if (articleCount === 0) {
     parts.push('Aucun article en vente.');
@@ -185,17 +166,9 @@ function buildDetail(
  * @param photoHashes main-photo hashes of the seller's items, when already computed: they let
  *   the stock pattern be confirmed by near-identical photos.
  */
-export function checkSeller(
-  seller: Seller,
-  now: Date,
-  photoHashes: ItemPhotoHash[] = [],
-): CheckResult {
+export function checkSeller(seller: Seller, photoHashes: PhotosInput['others'] = []): CheckResult {
   const signals: Signal[] = [];
 
-  const ageDays = accountAgeDays(seller.createdAt, now);
-  if (ageDays !== null && ageDays < NEW_ACCOUNT_DAYS) {
-    signals.push({ id: 'new_account', strength: 'weak' });
-  }
   if (seller.feedbackCount !== null && seller.feedbackCount < FEW_REVIEWS) {
     signals.push({ id: 'few_reviews', strength: 'weak' });
   }
@@ -225,7 +198,6 @@ export function checkSeller(
     tag: status !== 'ok' ? 'À surveiller' : conditionsUnknown ? "Peu d'infos" : 'Rassurant',
     detail: buildDetail(
       seller,
-      now,
       newWithTags,
       Math.max(seller.itemCount, sampleSize),
       sampleSize,

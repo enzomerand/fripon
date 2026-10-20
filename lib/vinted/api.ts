@@ -1,6 +1,7 @@
 import { browser, type Browser } from 'wxt/browser';
-import type { Money, Seller, SellerItem } from '../model';
-import { parseCondition } from './condition';
+import { isRecord } from '../json';
+import type { Seller, SellerItem } from '../model';
+import { conditionFromLabel } from './condition';
 
 /** Minimum delay between two Vinted API requests (DataDome / Cloudflare sit in front of `/api`). */
 export const MIN_REQUEST_SPACING_MS = 1_500;
@@ -103,8 +104,6 @@ export function storageSpacingStore(storage: StorageLike, key: () => string): Sp
 export interface QueueOptions {
   /** 0..1, used for the jitter of shared slots. Defaults to `Math.random`. */
   random?: () => number;
-  /** Longest wait a request may be given. Defaults to `MAX_QUEUE_WAIT_MS`. */
-  maxWaitMs?: number;
 }
 
 /**
@@ -112,13 +111,12 @@ export interface QueueOptions {
  * With a `store`, the slot is also reserved in shared storage, so other pages and tabs of the same
  * site keep their distance too (best effort: there is no lock between tabs). Reserved slots get a
  * small random jitter so that tabs which read the storage at the same moment do not pick the same
- * one, and a slot is never further away than `maxWaitMs`, so a wrong stored time cannot freeze it.
+ * one, and a slot is never further away than `MAX_QUEUE_WAIT_MS`, so a wrong stored time cannot freeze it.
  */
 export class RequestQueue {
   private tail: Promise<unknown> = Promise.resolve();
   private lastStart = Number.NEGATIVE_INFINITY;
   private readonly random: () => number;
-  private readonly maxWaitMs: number;
 
   constructor(
     private readonly spacingMs: number,
@@ -127,7 +125,6 @@ export class RequestQueue {
     options: QueueOptions = {},
   ) {
     this.random = options.random ?? Math.random;
-    this.maxWaitMs = options.maxWaitMs ?? MAX_QUEUE_WAIT_MS;
   }
 
   /**
@@ -141,7 +138,7 @@ export class RequestQueue {
       const shared = (await this.store?.load()) ?? Number.NEGATIVE_INFINITY;
       let slot = Math.max(now, Math.max(this.lastStart, shared) + this.spacingMs);
       if (this.store) slot += Math.floor(this.random() * SLOT_JITTER_MAX_MS);
-      slot = Math.min(slot, now + this.maxWaitMs);
+      slot = Math.min(slot, now + MAX_QUEUE_WAIT_MS);
       this.lastStart = slot;
       // Reserve the slot before waiting for it, so another tab reading now queues behind us.
       await this.store?.save(slot);
@@ -204,12 +201,6 @@ function resolveDeps(overrides: ApiOverrides): ResolvedDeps {
 
 // ---- Payload parsing -------------------------------------------------------------------------
 
-type JsonObject = Record<string, unknown>;
-
-function isRecord(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
 }
@@ -227,16 +218,6 @@ function invalid(what: string): VintedApiError {
   return new VintedApiError('invalid_response', `Unexpected Vinted payload: ${what}`);
 }
 
-function parseMoney(item: JsonObject): Money | null {
-  const price = item.price;
-  const amount = isRecord(price) ? asNumber(price.amount) : asNumber(price);
-  const currency =
-    (isRecord(price) ? asString(price.currency_code) : null) ??
-    asString(item.currency) ??
-    asString(item.currency_code);
-  return amount === null || amount < 0 || !currency ? null : { amount, currency };
-}
-
 /** The wardrobe gives the brand as a string; an object with a title is accepted too. */
 function parseBrand(value: unknown): string | null {
   if (isRecord(value)) return asString(value.title) ?? asString(value.name);
@@ -248,27 +229,23 @@ function parseWardrobeItem(raw: unknown): SellerItem | null {
   if (raw.is_closed === true || raw.is_hidden === true || raw.is_draft === true) return null;
   const id = asId(raw.id);
   const title = asString(raw.title);
-  const price = parseMoney(raw);
-  if (!id || !title || !price) return null;
+  if (!id || !title) return null;
 
   const photos = Array.isArray(raw.photos) ? raw.photos.filter(isRecord) : [];
   const mainPhoto = photos.find((photo) => photo.is_main === true) ?? photos[0];
   return {
     id,
     title,
-    condition: parseCondition({ statusId: asNumber(raw.status_id), label: asString(raw.status) }),
+    condition: conditionFromLabel(asString(raw.status)),
     size: asString(raw.size),
     brand: parseBrand(raw.brand ?? raw.brand_title),
-    price,
     photoUrl: mainPhoto ? asString(mainPhoto.url) : null,
   };
 }
 
 interface UserInfo {
   id: string;
-  login: string;
   feedbackCount: number | null;
-  rating: number | null;
   itemCount: number | null;
 }
 
@@ -276,19 +253,12 @@ function parseUser(body: unknown): UserInfo {
   const user = isRecord(body) ? body.user : null;
   if (!isRecord(user)) throw invalid('missing user');
   const id = asId(user.id);
-  const login = asString(user.login);
-  if (!id || !login) throw invalid('user without id or login');
+  if (!id) throw invalid('user without id');
 
-  // A missing count stays null: it must not read as "no reviews at all".
-  const feedbackCount = asNumber(user.feedback_count);
-  const reputation = asNumber(user.feedback_reputation);
   return {
     id,
-    login,
-    feedbackCount,
-    // `feedback_reputation` is 0..1; with no feedback at all it carries no information.
-    rating:
-      reputation !== null && feedbackCount !== 0 ? Math.round(reputation * 5 * 100) / 100 : null,
+    // A missing count stays null: it must not read as "no reviews at all".
+    feedbackCount: asNumber(user.feedback_count),
     itemCount: asNumber(user.item_count),
   };
 }
@@ -468,7 +438,6 @@ const inFlight = new Map<string, Promise<Seller>>();
 async function loadSeller(sellerId: string, deps: ResolvedDeps): Promise<Seller> {
   const cached = await readCache(sellerId, deps);
   if (cached) return cached;
-  await assertNoCooldown(deps);
 
   const user = parseUser(await getJson(`/api/v2/users/${sellerId}`, deps));
   const wardrobe = parseWardrobe(
@@ -477,10 +446,7 @@ async function loadSeller(sellerId: string, deps: ResolvedDeps): Promise<Seller>
 
   const seller: Seller = {
     id: user.id,
-    login: user.login,
-    createdAt: null,
     feedbackCount: user.feedbackCount,
-    rating: user.rating,
     itemCount: user.itemCount ?? wardrobe.total ?? wardrobe.items.length,
     items: wardrobe.items,
   };
@@ -490,7 +456,6 @@ async function loadSeller(sellerId: string, deps: ResolvedDeps): Promise<Seller>
 
 /**
  * The seller's profile and the first page of their wardrobe, cached for 24 hours.
- * Account creation date is not exposed by Vinted, so `createdAt` is always null.
  * While Vinted has asked us to back off (403 / 429), nothing is sent and `rate_limited` is thrown.
  * Concurrent calls for the same seller on the same site share one fetch.
  *
