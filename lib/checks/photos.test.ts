@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { CATALOG_THRESHOLD, checkPhotos, findReusedPhotos, REUSE_MAX_DISTANCE } from './photos';
+import {
+  CATALOG_THRESHOLD,
+  checkPhotos,
+  findReusedPhotos,
+  isInformativeHash,
+  REUSE_MAX_DISTANCE,
+} from './photos';
 
 const HASH = 0x0f0f_f0f0_1234_abcdn;
 
@@ -25,17 +31,18 @@ describe('checkPhotos', () => {
     expect(result).toMatchObject({ status: 'ok', tag: 'Photo réelle', signals: [] });
   });
 
-  it('is bad for a catalogue photo (strong)', () => {
+  it('is warn, never bad, for a catalogue-looking photo (weak)', () => {
     const result = checkPhotos({ main: { hash: HASH, catalogScore: 0.95 }, others: [] });
-    expect(result.status).toBe('bad');
-    expect(result.tag).toBe('Photo catalogue');
-    expect(result.signals).toEqual([{ id: 'catalog_photo', strength: 'strong' }]);
+    expect(result.status).toBe('warn');
+    expect(result.tag).toBe('Photo type catalogue');
+    expect(result.signals).toEqual([{ id: 'catalog_photo', strength: 'weak' }]);
+    expect(result.detail.startsWith('Ressemble à une photo catalogue')).toBe(true);
   });
 
   it('flags the catalogue photo exactly at the threshold', () => {
     expect(
       checkPhotos({ main: { hash: HASH, catalogScore: CATALOG_THRESHOLD }, others: [] }).status,
-    ).toBe('bad');
+    ).toBe('warn');
     expect(
       checkPhotos({ main: { hash: HASH, catalogScore: CATALOG_THRESHOLD - 0.01 }, others: [] })
         .status,
@@ -65,7 +72,7 @@ describe('checkPhotos', () => {
     expect(result.detail).toBe('La même photo sert sur 1 autre annonce du vendeur.');
   });
 
-  it('keeps bad and lists both signals when the catalogue photo is also reused', () => {
+  it('keeps warn and lists both signals when the catalogue photo is also reused', () => {
     const result = checkPhotos({
       main: { hash: HASH, catalogScore: 0.9 },
       others: [
@@ -73,11 +80,11 @@ describe('checkPhotos', () => {
         { itemId: 'b', hash: HASH },
       ],
     });
-    expect(result.status).toBe('bad');
-    expect(result.tag).toBe('Photo catalogue');
+    expect(result.status).toBe('warn');
+    expect(result.tag).toBe('Photo type catalogue');
     expect(result.signals.map((s) => s.id)).toEqual(['catalog_photo', 'photo_reused']);
     expect(result.detail).toBe(
-      'Fond uni et clair, comme sur une photo de catalogue. La même photo sert sur 2 autres annonces du vendeur.',
+      'Ressemble à une photo catalogue : fond uni et clair. La même photo sert sur 2 autres annonces du vendeur.',
     );
   });
 });
@@ -90,5 +97,38 @@ describe('findReusedPhotos', () => {
         { itemId: 'b', hash: flip(HASH, 20) },
       ]),
     ).toEqual(['a']);
+  });
+});
+
+describe('flat pictures', () => {
+  const FLAT = 0n;
+  const FULL = (1n << 64n) - 1n;
+
+  it('tells informative hashes from near-uniform ones', () => {
+    expect(isInformativeHash(HASH)).toBe(true);
+    expect(isInformativeHash(FLAT)).toBe(false);
+    expect(isInformativeHash(FULL)).toBe(false);
+    expect(isInformativeHash((1n << 11n) - 1n)).toBe(false); // 11 bits
+    expect(isInformativeHash((1n << 12n) - 1n)).toBe(true); // 12 bits
+    expect(isInformativeHash(FULL ^ ((1n << 11n) - 1n))).toBe(false); // 53 bits
+    expect(isInformativeHash(FULL ^ ((1n << 12n) - 1n))).toBe(true); // 52 bits
+  });
+
+  it('never reports reuse between flat pictures', () => {
+    expect(findReusedPhotos(FLAT, [{ itemId: 'a', hash: FLAT }])).toEqual([]);
+    expect(findReusedPhotos(FULL, [{ itemId: 'a', hash: FULL }])).toEqual([]);
+    const result = checkPhotos({
+      main: { hash: FLAT, catalogScore: 0.1 },
+      others: [{ itemId: 'a', hash: FLAT }],
+    });
+    expect(result).toMatchObject({ status: 'ok', signals: [] });
+  });
+
+  it('ignores a flat photo among the seller photos', () => {
+    expect(findReusedPhotos(HASH, [{ itemId: 'a', hash: FLAT }])).toEqual([]);
+  });
+
+  it('reuse needs 4 differing bits at most', () => {
+    expect(REUSE_MAX_DISTANCE).toBe(4);
   });
 });

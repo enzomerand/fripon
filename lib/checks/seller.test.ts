@@ -15,6 +15,7 @@ function item(
     title: `Article numéro ${n} très particulier`,
     condition,
     size: 'M',
+    brand: null,
     price: { amount: 10, currency: 'EUR' },
     photoUrl: null,
     ...overrides,
@@ -83,16 +84,18 @@ describe('checkSeller signals', () => {
     expect(ids(make(5, 5))).toEqual([]);
   });
 
-  it('flags the same article in two sizes (strong)', () => {
+  it('flags the same branded article in two sizes (strong)', () => {
     const items = [
-      item(1, { title: 'Robe fleurie Taille S', size: 'S' }),
-      item(2, { title: 'Robe fleurie taille M', size: 'M' }),
+      item(1, { title: 'Robe fleurie été Taille S', size: 'S', brand: 'Zara' }),
+      item(2, { title: 'Robe fleurie été taille M', size: 'M', brand: 'Zara' }),
     ];
     expect(ids(seller({ items, itemCount: 2 }))).toEqual(['stock_multiple_sizes']);
   });
 
-  it('flags the same article listed three times (strong)', () => {
-    const items = [1, 2, 3].map((n) => item(n, { title: 'Robe fleurie été', size: 'M' }));
+  it('flags the same branded article listed three times (strong)', () => {
+    const items = [1, 2, 3].map((n) =>
+      item(n, { title: 'Robe fleurie été', size: 'M', brand: 'Zara' }),
+    );
     expect(ids(seller({ items, itemCount: 3 }))).toEqual(['stock_multiple_sizes']);
   });
 
@@ -113,6 +116,75 @@ describe('checkSeller signals', () => {
   });
 });
 
+describe('stock pattern needs a second clue', () => {
+  const sizes = (brandA: string | null, brandB: string | null) => [
+    item(1, { title: 'Robe fleurie été Taille S', size: 'S', brand: brandA }),
+    item(2, { title: 'Robe fleurie été taille M', size: 'M', brand: brandB }),
+  ];
+  const HASH = 0x0f0f_f0f0_1234_abcdn;
+
+  it('does not flag two sizes of an article without brand or photo evidence', () => {
+    expect(hasStockPattern(sizes(null, null))).toBe(false);
+    expect(hasStockPattern(sizes('Zara', 'Mango'))).toBe(false);
+    expect(hasStockPattern(sizes('Sans marque', 'Sans marque'))).toBe(false);
+  });
+
+  it('accepts the same brand whatever the case or accents', () => {
+    expect(hasStockPattern(sizes('Zara', ' zara '))).toBe(true);
+    expect(hasStockPattern(sizes('Éram', 'ERAM'))).toBe(true);
+  });
+
+  it('accepts near-identical main photos instead of a brand', () => {
+    const hashes = [
+      { itemId: '1', hash: HASH },
+      { itemId: '2', hash: HASH ^ 0b111n }, // 3 bits apart
+    ];
+    expect(hasStockPattern(sizes(null, null), hashes)).toBe(true);
+  });
+
+  it('rejects photos that differ by more than 3 bits, unknown hashes and flat pictures', () => {
+    expect(
+      hasStockPattern(sizes(null, null), [
+        { itemId: '1', hash: HASH },
+        { itemId: '2', hash: HASH ^ 0b1111n },
+      ]),
+    ).toBe(false);
+    expect(hasStockPattern(sizes(null, null), [{ itemId: '1', hash: HASH }])).toBe(false);
+    expect(
+      hasStockPattern(sizes(null, null), [
+        { itemId: '1', hash: 0n },
+        { itemId: '2', hash: 0n },
+      ]),
+    ).toBe(false);
+  });
+
+  it('reaches checkSeller through the photo hashes argument', () => {
+    const items = sizes(null, null);
+    const hashes = [
+      { itemId: '1', hash: HASH },
+      { itemId: '2', hash: HASH },
+    ];
+    expect(checkSeller(seller({ items, itemCount: 2 }), now).signals).toEqual([]);
+    expect(checkSeller(seller({ items, itemCount: 2 }), now, hashes).signals).toEqual([
+      { id: 'stock_multiple_sizes', strength: 'strong' },
+    ]);
+  });
+
+  it('needs three meaningful words in the title', () => {
+    const two = [
+      item(1, { title: 'Robe fleurie', size: 'S', brand: 'Zara' }),
+      item(2, { title: 'Robe fleurie', size: 'M', brand: 'Zara' }),
+    ];
+    expect(hasStockPattern(two)).toBe(false);
+    // Small words and numbers do not count as meaningful.
+    const padded = [
+      item(1, { title: 'Robe de la 38', size: 'S', brand: 'Zara' }),
+      item(2, { title: 'Robe de la 38', size: 'M', brand: 'Zara' }),
+    ];
+    expect(hasStockPattern(padded)).toBe(false);
+  });
+});
+
 describe('checkSeller status and wording', () => {
   it('is warn with only weak signals', () => {
     const result = checkSeller(seller({ createdAt: daysAgo(21), feedbackCount: 3 }), now);
@@ -125,7 +197,7 @@ describe('checkSeller status and wording', () => {
     const items = Array.from({ length: 41 }, (_, i) =>
       item(
         i,
-        { title: `Robe modèle ${i % 8}`, size: i % 2 ? 'S' : 'M' },
+        { title: `Robe fleurie modèle ${i % 8}`, size: i % 2 ? 'S' : 'M', brand: 'Zara' },
         i < 38 ? 'new_with_tags' : 'good',
       ),
     );

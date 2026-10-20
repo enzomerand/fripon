@@ -3,14 +3,18 @@ import type { CheckResult, Listing, Signal } from '../model';
 /** Score at or above which the text is flagged as marketplace / machine-translated copy. */
 export const MARKETPLACE_SCORE_THRESHOLD = 3;
 
-/** Named weights of the marketplace-style rules. One rule alone never reaches the threshold, except a pile of spec lines. */
+/** Named weights of the marketplace-style rules. One rule alone never reaches the threshold. */
 export const WEIGHTS = {
   englishApparelTitle: 2,
   keywordStacking: 2,
-  /** Per distinct spec-sheet key ("Style", "Saison"…), capped at `specLinesCap`. */
+  /** Per distinct spec-sheet key ("Style", "Saison"…). */
   specLine: 1,
-  specLinesCap: 3,
   fiberBlend: 1,
+  /**
+   * Cap on the whole spec-sheet contribution (keys + fibre blend): a seller who copies the
+   * "Matière / Style / Saison" lines of a label never reaches the threshold on that alone.
+   */
+  specSheetCap: 2,
   yearNewArrival: 2,
   sizeChartPhrase: 2,
   sizeTableLines: 1,
@@ -22,8 +26,10 @@ export const WEIGHTS = {
 export const STACKING_MIN_CAPITALISED = 6;
 /** ...and the capitalised words must be at least this share of its words. */
 export const STACKING_MIN_CAPITALISED_SHARE = 0.7;
-/** A title made of at least this many comma / pipe / slash separated keywords reads as keyword stacking. */
+/** A title made of at least this many comma / pipe / slash separators between short fragments reads as keyword stacking. */
 export const STACKING_MIN_SEPARATORS = 4;
+/** A fragment of at most this many words counts as a keyword; longer ones are ordinary sentences. */
+export const STACKING_MAX_FRAGMENT_WORDS = 2;
 /** A size chart needs at least this many "M: 92 cm" lines to count. */
 export const SIZE_TABLE_MIN_LINES = 3;
 /** This many distinct promo words together are a sales pitch, not a personal description. */
@@ -157,7 +163,9 @@ export function looksFrenchOrEnglish(text: string): boolean {
   return frEn >= LANGUAGE_MIN_HINT_RATIO && frEn >= other;
 }
 
-export function isNoBrand(brand: string | null): boolean {
+/** true only for a brand that was read and is empty or a placeholder; undefined (not read) is false. */
+export function isNoBrand(brand: string | null | undefined): boolean {
+  if (brand === undefined) return false;
   if (brand === null) return true;
   const normalized = stripAccents(brand.toLowerCase()).trim();
   return normalized === '' || NO_BRAND_PLACEHOLDERS.test(normalized);
@@ -173,7 +181,18 @@ function looksStacked(line: string): boolean {
   ) {
     return true;
   }
-  return (line.match(/[,|/·•]/g) ?? []).length >= STACKING_MIN_SEPARATORS;
+  // "robe, femme, été, fleurie, casual": separators between short fragments. A sentence with
+  // a few commas ("portée deux fois, lavée, repassée, en très bon état") is not stacking.
+  const lengths = line
+    .split(/[,|/·•]/)
+    .map((fragment) => fragment.split(/\s+/).filter(Boolean).length);
+  const isShort = (n: number | undefined) =>
+    n !== undefined && n > 0 && n <= STACKING_MAX_FRAGMENT_WORDS;
+  let linked = 0;
+  for (let i = 0; i + 1 < lengths.length; i++) {
+    if (isShort(lengths[i]) && isShort(lengths[i + 1])) linked++;
+  }
+  return linked >= STACKING_MIN_SEPARATORS;
 }
 
 function specKeys(lines: string[]): number {
@@ -212,9 +231,10 @@ export function scoreMarketplaceStyle(title: string, description: string): Marke
   }
 
   const blend = (plain.match(FIBER_BLEND) ?? []).length >= 2;
-  const specScore =
-    Math.min(specKeys(segments) * WEIGHTS.specLine, WEIGHTS.specLinesCap) +
-    (blend ? WEIGHTS.fiberBlend : 0);
+  const specScore = Math.min(
+    specKeys(segments) * WEIGHTS.specLine + (blend ? WEIGHTS.fiberBlend : 0),
+    WEIGHTS.specSheetCap,
+  );
   if (specScore > 0) add('spec_sheet', specScore);
 
   if (YEAR_NEW_ARRIVAL.test(plain)) add('year_new_arrival', WEIGHTS.yearNewArrival);
@@ -233,6 +253,15 @@ export function scoreMarketplaceStyle(title: string, description: string): Marke
 }
 
 export function checkDescription(listing: Listing): CheckResult {
+  if (listing.description.trim() === '') {
+    return {
+      id: 'description',
+      status: 'off',
+      tag: 'Illisible',
+      detail: 'Description illisible.',
+      signals: [],
+    };
+  }
   const text = `${listing.title}\n${listing.description}`;
   if (!looksFrenchOrEnglish(text)) {
     return {

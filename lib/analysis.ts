@@ -5,7 +5,15 @@ import { priceCheckOff } from './checks/price';
 import { checkSeller } from './checks/seller';
 import { hexToHash } from './image/pixels';
 import type { AnalyzeImageResponse } from './messages';
-import type { CheckId, CheckResult, Listing, Seller, SellerItem, Verdict } from './model';
+import type {
+  CheckId,
+  CheckResult,
+  ImageMatch,
+  Listing,
+  Seller,
+  SellerItem,
+  Verdict,
+} from './model';
 import { computeVerdict } from './verdict';
 
 /** At most this many of the seller's other items get their main photo analysed. */
@@ -42,6 +50,26 @@ export interface AnalysisResult {
 interface PhotoAnalysis {
   hash: bigint;
   catalogScore: number;
+}
+
+/** Checks that only rely on local heuristics (no image search result behind them). */
+const LOCAL_HEURISTIC_CHECKS: ReadonlySet<CheckId> = new Set(['seller', 'photos', 'description']);
+
+/**
+ * Without an exact image match, nothing proves the listing is a copy: a local heuristic row may
+ * be orange at worst, never red. The signals themselves are untouched, so the verdict still sees
+ * them. This is the one place where that rule lives.
+ */
+export function capLocalHeuristics(
+  checks: CheckResult[],
+  imageMatches: ImageMatch[],
+): CheckResult[] {
+  if (imageMatches.some((match) => match.exact)) return checks;
+  return checks.map((check) =>
+    LOCAL_HEURISTIC_CHECKS.has(check.id) && check.status === 'bad'
+      ? { ...check, status: 'warn' }
+      : check,
+  );
 }
 
 /** Runs `fn` over `items`, at most `limit` at a time, keeping the order of the results. */
@@ -157,13 +185,19 @@ export async function analyzeListing(
     return analysis ? [{ itemId: item.id, hash: analysis.hash }] : [];
   });
 
-  const checks: CheckResult[] = [
-    imageCheckOff('no_key'),
-    priceCheckOff(),
-    seller ? guarded('seller', () => checkSeller(seller, deps.now())) : sellerCheckOff(sellerError),
-    guarded('photos', () => checkPhotos({ main, others })),
-    guarded('description', () => checkDescription(listing)),
-  ];
+  const imageMatches: ImageMatch[] = [];
+  const checks = capLocalHeuristics(
+    [
+      imageCheckOff('no_key'),
+      priceCheckOff(),
+      seller
+        ? guarded('seller', () => checkSeller(seller, deps.now(), others))
+        : sellerCheckOff(sellerError),
+      guarded('photos', () => checkPhotos({ main, others })),
+      guarded('description', () => checkDescription(listing)),
+    ],
+    imageMatches,
+  );
 
-  return { verdict: computeVerdict({ checks, imageMatches: [], priceRatio: null }), checks };
+  return { verdict: computeVerdict({ checks, imageMatches, priceRatio: null }), checks };
 }

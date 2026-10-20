@@ -1,5 +1,8 @@
 import { accountAgeDays, formatAccountAge } from '../format';
+import { hammingDistance } from '../image/pixels';
 import type { CheckResult, Seller, SellerItem, Signal } from '../model';
+import { isNoBrand } from './description';
+import { isInformativeHash } from './photos';
 
 /** An account younger than this many days is a weak signal. */
 export const NEW_ACCOUNT_DAYS = 60;
@@ -13,8 +16,28 @@ export const NEW_WITH_TAGS_SHARE = 0.6;
 export const STOCK_MIN_DISTINCT_SIZES = 2;
 /** The same article listed at least this many times is stock, whatever the sizes. */
 export const STOCK_MIN_COPIES = 3;
-/** Titles shorter than this (in words, once sizes are stripped) are too generic to compare ("Robe"). */
-export const STOCK_MIN_TITLE_WORDS = 2;
+/**
+ * Titles with fewer meaningful words than this (sizes, numbers and small words left out) are too
+ * generic to compare: "Robe fleurie" or "Jean slim" are in everyone's wardrobe.
+ */
+export const STOCK_MIN_TITLE_WORDS = 3;
+/** Main photos of two copies whose hashes differ by at most this many bits are the same picture. */
+export const STOCK_PHOTO_MAX_DISTANCE = 3;
+/** Above this share of items with an unknown condition, the condition signals are not trusted. */
+export const UNKNOWN_CONDITION_MAX_SHARE = 0.5;
+
+/** Function words that do not make a title specific. */
+const TITLE_STOPWORDS = new Set(
+  'de du des la le les un une et en au aux pour avec sans the of and for with in on a an'.split(
+    ' ',
+  ),
+);
+
+/** Main photo hash of a seller's item, as computed for the photos check. */
+export interface ItemPhotoHash {
+  itemId: string;
+  hash: bigint;
+}
 
 const SIZE_TOKEN = '(?:[2-5]?x{0,3}s|[2-5]?x{0,3}l|m|\\d{2}(?:/\\d{2})?)';
 /** "taille M", "size 38", "T.38", "t38". */
@@ -53,12 +76,53 @@ function normalizeSize(size: string | null): string | null {
   return s || null;
 }
 
-/** true when the sample holds the same article in several sizes, or many copies of it. */
-export function hasStockPattern(items: SellerItem[]): boolean {
+function meaningfulWords(normalizedTitle: string): number {
+  return normalizedTitle
+    .split(' ')
+    .filter((word) => word.length >= 3 && !/^\d+$/.test(word) && !TITLE_STOPWORDS.has(word)).length;
+}
+
+function normalizeBrand(brand: string | null): string | null {
+  if (brand === null || isNoBrand(brand)) return null;
+  return stripAccents(brand.toLowerCase()).replace(/\s+/g, ' ').trim() || null;
+}
+
+/** At least two copies carry the same real brand ("Sans marque" is not one). */
+function sharesBrand(group: SellerItem[]): boolean {
+  const counts = new Map<string, number>();
+  for (const item of group) {
+    const brand = normalizeBrand(item.brand);
+    if (brand) counts.set(brand, (counts.get(brand) ?? 0) + 1);
+  }
+  return Math.max(0, ...counts.values()) >= 2;
+}
+
+/** At least two copies have a near-identical main photo (hashes known and informative only). */
+function sharesPhoto(group: SellerItem[], hashes: ItemPhotoHash[]): boolean {
+  const byItem = new Map(
+    hashes.filter((entry) => isInformativeHash(entry.hash)).map((e) => [e.itemId, e.hash]),
+  );
+  const known = group.flatMap((item) => byItem.get(item.id) ?? []);
+  for (let i = 0; i < known.length; i++) {
+    for (let j = i + 1; j < known.length; j++) {
+      if (hammingDistance(known[i] as bigint, known[j] as bigint) <= STOCK_PHOTO_MAX_DISTANCE) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * true when the sample holds the same article in several sizes, or many copies of it, AND the
+ * copies look like one product: same real brand, or near-identical photos. A seller who owns
+ * "Robe fleurie" in two sizes (a sister, a mother) is not stock.
+ */
+export function hasStockPattern(items: SellerItem[], hashes: ItemPhotoHash[] = []): boolean {
   const groups = new Map<string, SellerItem[]>();
   for (const item of items) {
     const key = normalizeTitle(item.title, item.size);
-    if (key.split(' ').filter(Boolean).length < STOCK_MIN_TITLE_WORDS) continue;
+    if (meaningfulWords(key) < STOCK_MIN_TITLE_WORDS) continue;
     const group = groups.get(key);
     if (group) group.push(item);
     else groups.set(key, [item]);
@@ -69,7 +133,8 @@ export function hasStockPattern(items: SellerItem[]): boolean {
       const size = normalizeSize(item.size);
       if (size) sizes.add(size);
     }
-    if (sizes.size >= STOCK_MIN_DISTINCT_SIZES || group.length >= STOCK_MIN_COPIES) return true;
+    const repeated = sizes.size >= STOCK_MIN_DISTINCT_SIZES || group.length >= STOCK_MIN_COPIES;
+    if (repeated && (sharesBrand(group) || sharesPhoto(group, hashes))) return true;
   }
   return false;
 }
@@ -108,7 +173,15 @@ function buildDetail(
   return parts.join(' ');
 }
 
-export function checkSeller(seller: Seller, now: Date): CheckResult {
+/**
+ * @param photoHashes main-photo hashes of the seller's items, when already computed: they let
+ *   the stock pattern be confirmed by near-identical photos.
+ */
+export function checkSeller(
+  seller: Seller,
+  now: Date,
+  photoHashes: ItemPhotoHash[] = [],
+): CheckResult {
   const signals: Signal[] = [];
 
   const ageDays = accountAgeDays(seller.createdAt, now);
@@ -125,7 +198,7 @@ export function checkSeller(seller: Seller, now: Date): CheckResult {
     signals.push({ id: 'mostly_new_with_tags', strength: 'strong' });
   }
 
-  const stock = hasStockPattern(seller.items);
+  const stock = hasStockPattern(seller.items, photoHashes);
   if (stock) signals.push({ id: 'stock_multiple_sizes', strength: 'strong' });
 
   const status = signals.some((s) => s.strength === 'strong')

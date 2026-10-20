@@ -4,12 +4,13 @@ import {
   computeVerdict,
   DROPSHIP_PRICE_RATIO,
   MAX_LINES,
-  REVIEW_MIN_WEAK_SIGNALS,
+  REVIEW_MIN_WEAK_FAMILIES,
   type VerdictInput,
 } from './verdict';
 
-const STRONG: SignalId[] = ['catalog_photo', 'stock_multiple_sizes', 'mostly_new_with_tags'];
+const STRONG: SignalId[] = ['stock_multiple_sizes', 'mostly_new_with_tags'];
 const WEAK: SignalId[] = [
+  'catalog_photo',
   'new_account',
   'few_reviews',
   'photo_reused',
@@ -55,7 +56,7 @@ function input(overrides: Partial<VerdictInput> & { signals?: Signal[]; imageOff
 describe('thresholds', () => {
   it('are the documented values', () => {
     expect(DROPSHIP_PRICE_RATIO).toBe(2);
-    expect(REVIEW_MIN_WEAK_SIGNALS).toBe(2);
+    expect(REVIEW_MIN_WEAK_FAMILIES).toBe(2);
     expect(MAX_LINES).toBe(2);
   });
 });
@@ -100,7 +101,7 @@ describe('dropshipping', () => {
         signals: [weak('new_account'), strong('catalog_photo')],
       }),
     );
-    expect(verdict.lines).toEqual(['Même photo sur Temu', 'Photo catalogue']);
+    expect(verdict.lines).toEqual(['Même photo sur Temu', 'Photo type catalogue']);
   });
 });
 
@@ -195,10 +196,25 @@ describe('review', () => {
     expect(computeVerdict(input({ signals: [strong(id)] })).level).toBe('review');
   });
 
-  it('two distinct weak signals', () => {
-    const verdict = computeVerdict(input({ signals: [weak('new_account'), weak('few_reviews')] }));
+  it('weak signals from two distinct families', () => {
+    const verdict = computeVerdict(input({ signals: [weak('new_account'), weak('no_brand')] }));
     expect(verdict.level).toBe('review');
-    expect(verdict.lines).toEqual(['Vendeur récemment inscrit', "Vendeur avec peu d'avis"]);
+    expect(verdict.lines).toEqual(['Vendeur récemment inscrit', 'Aucune marque indiquée']);
+  });
+
+  it.each([
+    ['profile', ['new_account', 'few_reviews']],
+    ['text', ['no_brand', 'marketplace_style_text']],
+    ['photo', ['catalog_photo', 'photo_reused']],
+  ] as const)('two weak signals of the %s family count as one', (_family, ids) => {
+    const verdict = computeVerdict(input({ signals: ids.map(weak) }));
+    expect(verdict.level).toBe('clean');
+  });
+
+  it('a catalogue photo with a new account is two families', () => {
+    expect(
+      computeVerdict(input({ signals: [weak('catalog_photo'), weak('new_account')] })).level,
+    ).toBe('review');
   });
 
   it('counts a weak signal reported by two checks once', () => {
@@ -221,7 +237,7 @@ describe('review', () => {
         ],
       }),
     );
-    expect(verdict.lines).toEqual(['Photo catalogue', 'Même article en plusieurs tailles']);
+    expect(verdict.lines).toEqual(['Photo type catalogue', 'Même article en plusieurs tailles']);
   });
 });
 

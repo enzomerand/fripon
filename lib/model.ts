@@ -15,8 +15,11 @@ export interface Listing {
   title: string;
   description: string;
   price: Money;
-  /** null when the listing has no brand or uses a "no brand" placeholder. */
-  brand: string | null;
+  /**
+   * null when the listing has no brand or uses a "no brand" placeholder; undefined when the brand
+   * could not be read from the page (then no check may conclude "no brand").
+   */
+  brand?: string | null;
   size: string | null;
   condition: Condition;
   /** Full-size photo URLs, main photo first. */
@@ -29,6 +32,8 @@ export interface SellerItem {
   title: string;
   condition: Condition;
   size: string | null;
+  /** null when the item has no brand (or the API did not give one). */
+  brand: string | null;
   price: Money;
   photoUrl: string | null;
 }

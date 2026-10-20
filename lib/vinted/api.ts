@@ -210,6 +210,12 @@ function parseMoney(item: JsonObject): Money | null {
   return amount === null || amount < 0 || !currency ? null : { amount, currency };
 }
 
+/** The wardrobe gives the brand as a string; an object with a title is accepted too. */
+function parseBrand(value: unknown): string | null {
+  if (isRecord(value)) return asString(value.title) ?? asString(value.name);
+  return asString(value);
+}
+
 function parseWardrobeItem(raw: unknown): SellerItem | null {
   if (!isRecord(raw)) return null;
   if (raw.is_closed === true || raw.is_hidden === true || raw.is_draft === true) return null;
@@ -225,6 +231,7 @@ function parseWardrobeItem(raw: unknown): SellerItem | null {
     title,
     condition: parseCondition({ statusId: asNumber(raw.status_id), label: asString(raw.status) }),
     size: asString(raw.size),
+    brand: parseBrand(raw.brand),
     price,
     photoUrl: mainPhoto ? asString(mainPhoto.url) : null,
   };

@@ -178,6 +178,7 @@ describe('fetchSeller', () => {
       title: 'Robe 1',
       condition: 'new_with_tags',
       size: 'M',
+      brand: null,
       price: { amount: 12.5, currency: 'EUR' },
       photoUrl: 'https://images1.vinted.net/t/1a/f800/a.webp?s=a',
     });
@@ -186,6 +187,19 @@ describe('fetchSeller', () => {
       condition: 'good',
       price: { amount: 8, currency: 'PLN' },
     });
+  });
+
+  it('reads the wardrobe brand as a string or as an object with a title', async () => {
+    const body = {
+      items: [
+        wardrobeItem(1, { brand: 'Zara' }),
+        wardrobeItem(2, { brand: { id: 5, title: 'Mango' } }),
+        wardrobeItem(3, { brand: '' }),
+      ],
+    };
+    const { deps } = harness((url) => (url.includes('/wardrobe/') ? json(body) : json(USER_BODY)));
+    const seller = await fetchSeller('7000001', deps);
+    expect(seller.items.map((item) => item.brand)).toEqual(['Zara', 'Mango', null]);
   });
 
   it('has no rating without any feedback, and falls back on the wardrobe total', async () => {

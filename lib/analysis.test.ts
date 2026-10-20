@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   AnalysisCancelledError,
+  capLocalHeuristics,
   IMAGE_CONCURRENCY,
   MAX_OTHER_PHOTOS,
   analyzeListing,
   type AnalysisDeps,
 } from './analysis';
 import { hashToHex } from './image/pixels';
-import type { Listing, Seller, SellerItem } from './model';
+import type { CheckResult, ImageMatch, Listing, Seller, SellerItem } from './model';
 
 const NOW = new Date('2026-10-20T12:00:00Z');
 
@@ -29,6 +30,7 @@ const item = (n: number, overrides: Partial<SellerItem> = {}): SellerItem => ({
   title: `Article très particulier numéro ${n}`,
   condition: 'good',
   size: 'M',
+  brand: null,
   price: { amount: 10, currency: 'EUR' },
   photoUrl: `https://images1.vinted.net/t/${n}/f800/p.webp?s=${n}`,
   ...overrides,
@@ -116,7 +118,7 @@ describe('analyzeListing', () => {
     expect(vi.mocked(d.analyzeImage)).toHaveBeenCalledTimes(2);
   });
 
-  it('flags a catalogue main photo and a photo reused by the seller', async () => {
+  it('flags a catalogue-looking main photo reused by the seller, as one family of hints', async () => {
     const reused = item(2, { photoUrl: 'https://images1.vinted.net/t/main/f800/copy.webp?s=2' });
     const d = deps({
       fetchSeller: () => Promise.resolve(seller([item(1), reused])),
@@ -131,8 +133,40 @@ describe('analyzeListing', () => {
     const { checks, verdict } = await analyzeListing(listing, d);
 
     const photos = checks.find((c) => c.id === 'photos');
-    expect(photos).toMatchObject({ status: 'bad', tag: 'Photo catalogue' });
+    expect(photos).toMatchObject({ status: 'warn', tag: 'Photo type catalogue' });
     expect(photos?.signals.map((s) => s.id)).toEqual(['catalog_photo', 'photo_reused']);
+    // Both hints are about the photo: one family, not enough for a review on its own.
+    expect(verdict.level).toBe('clean');
+  });
+
+  it('confirms the stock pattern with the photos it already analysed', async () => {
+    const stock = [
+      item(1, {
+        title: 'Robe fleurie été Taille S',
+        size: 'S',
+        photoUrl: 'https://images1.vinted.net/t/s1/f800/a.webp',
+      }),
+      item(2, {
+        title: 'Robe fleurie été taille M',
+        size: 'M',
+        photoUrl: 'https://images1.vinted.net/t/s2/f800/a.webp',
+      }),
+    ];
+    const d = deps({
+      fetchSeller: () => Promise.resolve(seller(stock)),
+      analyzeImage: vi.fn((url: string) =>
+        Promise.resolve({
+          ok: true as const,
+          // The two copies share one picture; the listing's own photo is different.
+          hash: url.includes('/t/s') ? '0f0ff0f01234abcd' : distinctHash(url.length),
+          catalogScore: 0.1,
+        }),
+      ),
+    });
+    const { checks, verdict } = await analyzeListing(listing, d);
+
+    const sellerCheck = checks.find((c) => c.id === 'seller');
+    expect(sellerCheck?.signals.map((s) => s.id)).toContain('stock_multiple_sizes');
     expect(verdict.level).toBe('review');
   });
 
@@ -242,5 +276,51 @@ describe('analyzeListing cancellation', () => {
     // Photos already in flight finish; none starts after the cancellation.
     expect(analyze.mock.calls.length).toBeLessThanOrEqual(3 + IMAGE_CONCURRENCY);
     expect(analyze.mock.calls.length).toBeLessThan(1 + MAX_OTHER_PHOTOS);
+  });
+});
+
+describe('capLocalHeuristics', () => {
+  const row = (id: CheckResult['id'], status: CheckResult['status']): CheckResult => ({
+    id,
+    status,
+    tag: '',
+    detail: '',
+    signals: [{ id: 'stock_multiple_sizes', strength: 'strong' }],
+  });
+  const all: CheckResult[] = [
+    row('image', 'bad'),
+    row('price', 'bad'),
+    row('seller', 'bad'),
+    row('photos', 'bad'),
+    row('description', 'bad'),
+  ];
+  const exact: ImageMatch = { platform: 'Shein', url: 'https://x', exact: true, price: null };
+  const similar: ImageMatch = { ...exact, exact: false };
+
+  it('caps the local heuristic rows at warn without an exact match, signals untouched', () => {
+    const capped = capLocalHeuristics(all, [similar]);
+    expect(capped.map((c) => c.status)).toEqual(['bad', 'bad', 'warn', 'warn', 'warn']);
+    expect(capped[2]?.signals).toEqual(all[2]?.signals);
+  });
+
+  it('leaves every row alone when an exact match backs the verdict', () => {
+    expect(capLocalHeuristics(all, [exact])).toEqual(all);
+  });
+
+  it('does not touch rows that are not bad', () => {
+    const mixed = [row('seller', 'ok'), row('photos', 'off'), row('description', 'warn')];
+    expect(capLocalHeuristics(mixed, [])).toEqual(mixed);
+  });
+
+  it('caps a seller row that earned a strong signal in the full analysis', async () => {
+    const copies = Array.from({ length: 12 }, (_, i) =>
+      item(i + 1, { condition: 'new_with_tags' }),
+    );
+    const d = deps({ fetchSeller: () => Promise.resolve(seller(copies)) });
+    const { checks, verdict } = await analyzeListing(listing, d);
+    const sellerCheck = checks.find((c) => c.id === 'seller');
+    expect(sellerCheck?.signals.map((s) => s.id)).toContain('mostly_new_with_tags');
+    expect(sellerCheck?.status).toBe('warn');
+    expect(verdict.level).toBe('review');
   });
 });

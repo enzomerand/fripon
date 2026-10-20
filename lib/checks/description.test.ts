@@ -132,6 +132,18 @@ describe('checkDescription', () => {
   });
 });
 
+describe('checkDescription without text', () => {
+  it.each(['', '   \n '])('is off and unreadable for %j', (description) => {
+    expect(checkDescription({ ...GENUINE_FR, description })).toEqual({
+      id: 'description',
+      status: 'off',
+      tag: 'Illisible',
+      detail: 'Description illisible.',
+      signals: [],
+    });
+  });
+});
+
 describe('looksFrenchOrEnglish', () => {
   it('recognises French and English', () => {
     expect(looksFrenchOrEnglish('Je vends cette robe, elle est très jolie et en bon état.')).toBe(
@@ -192,7 +204,8 @@ describe('scoreMarketplaceStyle', () => {
       '- Style: Casual\n- Material: Polyester\n- Season: Summer',
     );
     expect(one.score).toBe(1);
-    expect(three.score).toBe(3);
+    // Capped at 2: a label copied line by line is not enough on its own.
+    expect(three.score).toBe(2);
     expect(three.reasons).toEqual(['spec_sheet']);
   });
 
@@ -201,7 +214,32 @@ describe('scoreMarketplaceStyle', () => {
       'Robe',
       'Style : Casual | Saison : Été | Matière : Polyester',
     );
-    expect(result.score).toBeGreaterThanOrEqual(MARKETPLACE_SCORE_THRESHOLD);
+    expect(result.reasons).toEqual(['spec_sheet']);
+    expect(result.score).toBeLessThan(MARKETPLACE_SCORE_THRESHOLD);
+  });
+
+  it('caps the spec sheet, fibre blend included', () => {
+    const sheet = scoreMarketplaceStyle(
+      'Robe',
+      'Matière : 95% polyester, 5% spandex\nStyle : casual\nSaison : été\nOccasion : fête',
+    );
+    expect(sheet.score).toBe(2);
+    // ...but it adds up with another rule.
+    const withYear = scoreMarketplaceStyle(
+      'Nouveau 2025 robe',
+      'Style : casual\nSaison : été\nOccasion : fête',
+    );
+    expect(withYear.score).toBeGreaterThanOrEqual(MARKETPLACE_SCORE_THRESHOLD);
+  });
+
+  it('does not read an ordinary sentence with commas as keyword stacking', () => {
+    const sentence = 'Robe portée deux fois, lavée, repassée, en très bon état, taille M';
+    expect(scoreMarketplaceStyle(sentence, '').reasons).not.toContain('keyword_stacking');
+    const lines = scoreMarketplaceStyle(
+      'Robe',
+      'Je la vends parce que, franchement, elle est trop grande, et puis, bon, voilà',
+    );
+    expect(lines.reasons).not.toContain('keyword_stacking');
   });
 
   it('detects a year with "new" in either order', () => {
@@ -221,6 +259,7 @@ describe('scoreMarketplaceStyle', () => {
 
 describe('isNoBrand', () => {
   it.each([
+    [undefined, false],
     [null, true],
     ['', true],
     ['Sans marque', true],

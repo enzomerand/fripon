@@ -3,8 +3,12 @@ import type { CheckResult, ImageMatch, SignalId, Verdict } from './model';
 
 /** An exact image match sold at least this many times its original price is dropshipping. */
 export const DROPSHIP_PRICE_RATIO = 2;
-/** Without any stronger evidence, this many distinct weak signals call for a closer look. */
-export const REVIEW_MIN_WEAK_SIGNALS = 2;
+/**
+ * Without any stronger evidence, weak signals call for a closer look only when they come from
+ * this many distinct families: two hints about the same thing (a catalogue-looking photo that is
+ * also reused) are one hint, not two.
+ */
+export const REVIEW_MIN_WEAK_FAMILIES = 2;
 /** From this ratio on, the price gap is worth a line of its own ("Vendu ici 3,8× plus cher"). */
 export const PRICE_LINE_MIN_RATIO = 1.5;
 /** The collapsed card shows at most this many lines. */
@@ -19,7 +23,7 @@ export interface VerdictInput {
 
 /** Short French line for each signal, most telling first (used to order lines of equal strength). */
 const SIGNAL_LINES: Array<[SignalId, string]> = [
-  ['catalog_photo', 'Photo catalogue'],
+  ['catalog_photo', 'Photo type catalogue'],
   ['stock_multiple_sizes', 'Même article en plusieurs tailles'],
   ['mostly_new_with_tags', 'Surtout du neuf avec étiquette'],
   ['price_above_similar', 'Plus cher que les annonces similaires'],
@@ -29,6 +33,20 @@ const SIGNAL_LINES: Array<[SignalId, string]> = [
   ['few_reviews', "Vendeur avec peu d'avis"],
   ['no_brand', 'Aucune marque indiquée'],
 ];
+
+type SignalFamily = 'profile' | 'text' | 'photo' | 'price' | 'wardrobe';
+
+const SIGNAL_FAMILY: Record<SignalId, SignalFamily> = {
+  few_reviews: 'profile',
+  new_account: 'profile',
+  no_brand: 'text',
+  marketplace_style_text: 'text',
+  catalog_photo: 'photo',
+  photo_reused: 'photo',
+  price_above_similar: 'price',
+  stock_multiple_sizes: 'wardrobe',
+  mostly_new_with_tags: 'wardrobe',
+};
 
 interface Collected {
   strong: SignalId[];
@@ -88,7 +106,8 @@ function exactLines(match: ImageMatch, ratio: number | null): string[] {
  *
  * - exact image match + (price >= 2x the original, or unknown price and a strong signal): dropshipping;
  * - exact image match otherwise: an honest resale of a Shein / Temu… item;
- * - non-exact match, price above similar listings, a strong signal or several weak ones: to verify;
+ * - non-exact match, price above similar listings, a strong signal or weak ones from several
+ *   families: to verify;
  * - nothing: clean (and it says so when the image search did not run).
  */
 export function computeVerdict(input: VerdictInput): Verdict {
@@ -115,7 +134,7 @@ export function computeVerdict(input: VerdictInput): Verdict {
     similar !== undefined ||
     strong.length > 0 ||
     weak.includes('price_above_similar') ||
-    weak.length >= REVIEW_MIN_WEAK_SIGNALS;
+    new Set(weak.map((id) => SIGNAL_FAMILY[id])).size >= REVIEW_MIN_WEAK_FAMILIES;
   if (review) {
     const lines = similar ? [`Photo ressemblante sur ${similar.platform}`] : [];
     return {
