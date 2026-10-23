@@ -103,11 +103,13 @@ export function OptionsApp() {
     void saveUiState({ welcomeDismissed: true }).catch(() => undefined);
   }
 
-  const hasKey = stored
-    ? PROVIDERS.some((provider) => stored.settings.keys[provider] !== '')
-    : true;
+  const onSaved = () => void reload();
   const showWelcome =
-    stored !== null && !welcomeClosed && (welcomeAsked || (!hasKey && !stored.ui.welcomeDismissed));
+    stored !== null &&
+    !welcomeClosed &&
+    (welcomeAsked ||
+      (!PROVIDERS.some((provider) => stored.settings.keys[provider] !== '') &&
+        !stored.ui.welcomeDismissed));
 
   return (
     <div class="page">
@@ -129,9 +131,9 @@ export function OptionsApp() {
             {showWelcome && (
               <WelcomeBanner onFollowGuide={followGuide} onDismiss={dismissWelcome} />
             )}
-            <ModeSection settings={stored.settings} onSaved={() => void reload()} />
-            <KeysSection settings={stored.settings} onSaved={() => void reload()} />
-            <CreditsSection usage={stored.usage} now={stored.now} onSaved={() => void reload()} />
+            <ModeSection settings={stored.settings} onSaved={onSaved} />
+            <KeysSection settings={stored.settings} onSaved={onSaved} />
+            <CreditsSection usage={stored.usage} now={stored.now} onSaved={onSaved} />
             <GuideSection
               geminiOpen={geminiOpen}
               visionOpen={visionOpen}

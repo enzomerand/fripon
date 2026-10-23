@@ -1,5 +1,4 @@
 import { browser } from 'wxt/browser';
-import { isRecord } from './json';
 import { withLock } from './lock';
 import type { Provider } from './settings';
 
@@ -166,9 +165,9 @@ async function purgeOlderPeriods(provider: Provider, now: Date) {
   const current = periodId(provider, now);
   const all = await browser.storage.local.get(null);
   // Period ids are zero-padded, so comparing them as strings compares them as dates.
-  const stale = isRecord(all)
-    ? Object.keys(all).filter((k) => k.startsWith(prefix) && k.slice(prefix.length) < current)
-    : [];
+  const stale = Object.keys(all).filter(
+    (k) => k.startsWith(prefix) && k.slice(prefix.length) < current,
+  );
   if (stale.length > 0) await browser.storage.local.remove(stale);
 }
 
@@ -187,21 +186,17 @@ export type Reservation =
  * from the stored settings: never trust a gate read earlier. If the call then fails for a reason
  * that cost nothing, give the credits back with `refund`.
  */
-export function reserve(
+export async function reserve(
   provider: Provider,
   units: number,
   cap: number | null,
   now?: Date,
 ): Promise<Reservation> {
-  try {
-    assertUnits(units);
-    if (cap !== null && !(Number.isInteger(cap) && cap >= 0)) {
-      throw new RangeError('cap must be null or a non-negative integer');
-    }
-  } catch (error) {
-    return Promise.reject(error);
+  assertUnits(units);
+  if (cap !== null && !(Number.isInteger(cap) && cap >= 0)) {
+    throw new RangeError('cap must be null or a non-negative integer');
   }
-  return withLock(CREDITS_LOCK, async () => {
+  return withLock(CREDITS_LOCK, async (): Promise<Reservation> => {
     // Read inside the lock: the wait for it may have crossed midnight.
     const at = now ?? new Date();
     const key = creditsKey(provider, at);
@@ -225,12 +220,8 @@ export function reserve(
  * `periodId` that `reserve` returned: the credits go back to the period they were taken from,
  * even if midnight has passed since.
  */
-export function refund(provider: Provider, units: number, period: string): Promise<void> {
-  try {
-    assertUnits(units);
-  } catch (error) {
-    return Promise.reject(error);
-  }
+export async function refund(provider: Provider, units: number, period: string): Promise<void> {
+  assertUnits(units);
   return withLock(CREDITS_LOCK, async () => {
     const key = creditsKeyFor(provider, period);
     const stored = await browser.storage.local.get(key);

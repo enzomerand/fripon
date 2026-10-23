@@ -42,20 +42,16 @@ describe('sendMessage (settings messages)', () => {
     expect(spy).toHaveBeenCalledWith({ type: 'getImageGate' });
   });
 
-  it('tests the saved key when only the provider is sent', async () => {
+  it('sends the candidate key to test and returns the result', async () => {
     const spy = vi
       .spyOn(browser.runtime, 'sendMessage')
       .mockResolvedValue({ ok: false, reason: 'billing' } as never);
-    expect(await sendMessage({ type: 'testKey', provider: 'vision' })).toEqual({
+    expect(
+      await sendMessage({ type: 'testKey', provider: 'gemini', key: 'AIzaCandidate' }),
+    ).toEqual({
       ok: false,
       reason: 'billing',
     });
-    expect(spy).toHaveBeenCalledWith({ type: 'testKey', provider: 'vision' });
-  });
-
-  it('can carry a candidate key to test before saving it', async () => {
-    const spy = vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue({ ok: true } as never);
-    await sendMessage({ type: 'testKey', provider: 'gemini', key: 'AIzaCandidate' });
     expect(spy).toHaveBeenCalledWith({ type: 'testKey', provider: 'gemini', key: 'AIzaCandidate' });
   });
 
@@ -82,14 +78,14 @@ describe('isRuntimeMessage', () => {
   });
 
   it('accepts testKey for a known provider only', () => {
-    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision' })).toBe(true);
-    expect(isRuntimeMessage({ type: 'testKey', provider: 'gemini' })).toBe(true);
-    expect(isRuntimeMessage({ type: 'testKey' })).toBe(false);
-    expect(isRuntimeMessage({ type: 'testKey', provider: 'openai' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: 'AIzaX' })).toBe(true);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'gemini', key: 'AIzaX' })).toBe(true);
+    expect(isRuntimeMessage({ type: 'testKey', key: 'AIzaX' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'openai', key: 'AIzaX' })).toBe(false);
   });
 
-  it('accepts a testKey candidate key only as a string', () => {
-    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: 'AIzaX' })).toBe(true);
+  it('needs the key to test, as a string', () => {
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision' })).toBe(false);
     expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: '' })).toBe(true);
     expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: 12 })).toBe(false);
     expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: null })).toBe(false);

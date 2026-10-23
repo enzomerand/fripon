@@ -5,7 +5,6 @@ import { loadImageGate } from '../lib/gate';
 import { checkKey } from '../lib/google/key-check';
 import { isRuntimeMessage } from '../lib/messages';
 import { openOptionsAt } from '../lib/options-nav';
-import { loadSettings } from '../lib/settings';
 
 /** Photos are shrunk to this many pixels on their longest side before analysis. */
 const MAX_ANALYSIS_SIDE = 256;
@@ -33,9 +32,8 @@ const analyzeImage = createImageAnalyzer({
 
 const deps: BackgroundDeps = {
   analyzeImage,
-  loadImageGate: () => loadImageGate(),
-  loadSettings,
-  checkKey: (provider, key) => checkKey(provider, key),
+  loadImageGate,
+  checkKey,
   openOptions: openOptionsAt,
 };
 
@@ -44,8 +42,7 @@ export default defineBackground(() => {
     if (!isRuntimeMessage(message)) return false;
     const own = { id: browser.runtime.id, origin: browser.runtime.getURL('/') };
     if (!isAllowedSender(message, sender, own)) return false;
-    // An empty answer tells the caller the background could not do it, instead of leaving it hanging.
-    void handleMessage(message, deps).then(sendResponse, () => sendResponse(undefined));
+    void handleMessage(message, deps).then(sendResponse);
     return true;
   });
 

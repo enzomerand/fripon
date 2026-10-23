@@ -42,10 +42,11 @@ export function imageCheckOff(reason: ImageCheckOffReason): CheckResult {
 }
 
 /**
- * The key is saved and the search may run, but it is not built yet: lot 3 replaces this row with
- * the real search.
+ * The image row for what the background said about the keys. For "ready" the key is saved and the
+ * search may run, but it is not built yet: lot 3 replaces that row with the real search.
  */
-export function imageCheckReady(): CheckResult {
+export function imageCheckForGate(gate: ImageGate): CheckResult {
+  if (gate !== 'ready') return imageCheckOff(gate);
   return {
     id: 'image',
     status: 'off',
@@ -54,9 +55,4 @@ export function imageCheckReady(): CheckResult {
       "Ta clé est enregistrée : la recherche d'image arrive avec la prochaine version de Fripon.",
     signals: [],
   };
-}
-
-/** The image row for what the background said about the keys. */
-export function imageCheckForGate(gate: ImageGate): CheckResult {
-  return gate === 'ready' ? imageCheckReady() : imageCheckOff(gate);
 }

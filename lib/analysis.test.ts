@@ -7,6 +7,7 @@ import {
   analyzeListing,
   type AnalysisDeps,
 } from './analysis';
+import { imageCheckForGate } from './checks/image';
 import { hashToHex } from './image/pixels';
 import type { CheckResult, ImageMatch, Listing, Seller, SellerItem } from './model';
 
@@ -233,27 +234,22 @@ describe('analyzeListing', () => {
   });
 });
 
+// What each row says is covered in checks/image.test.ts: here, only that the gate reaches the row.
 describe('analyzeListing image gate', () => {
-  const imageRow = async (imageGate?: Parameters<typeof analyzeListing>[2]) =>
-    (await analyzeListing(listing, deps(), imageGate)).checks[0];
+  const gates = ['no_key', 'quota', 'manual', 'ready'] as const;
 
   it('is "no key" when the gate is not given', async () => {
-    expect(await imageRow()).toMatchObject({ tag: 'Désactivée', action: 'open_guide' });
-    expect(await imageRow({})).toMatchObject({ tag: 'Désactivée', action: 'open_guide' });
+    const { checks } = await analyzeListing(listing, deps());
+    expect(checks[0]).toEqual(imageCheckForGate('no_key'));
   });
 
-  it('shows the row of each gate', async () => {
-    expect(await imageRow({ imageGate: 'no_key' })).toMatchObject({ action: 'open_guide' });
-    expect(await imageRow({ imageGate: 'quota' })).toMatchObject({
-      tag: 'Plafond atteint',
-      action: 'open_settings',
-    });
-    expect(await imageRow({ imageGate: 'manual' })).toMatchObject({ tag: 'Désactivée' });
-    expect(await imageRow({ imageGate: 'ready' })).toMatchObject({ tag: 'Clé prête' });
+  it.each(gates)('puts the row of the "%s" gate first', async (imageGate) => {
+    const { checks } = await analyzeListing(listing, deps(), { imageGate });
+    expect(checks[0]).toEqual(imageCheckForGate(imageGate));
   });
 
   it('keeps the other checks and the "without image search" verdict whatever the gate', async () => {
-    for (const imageGate of ['no_key', 'quota', 'manual', 'ready'] as const) {
+    for (const imageGate of gates) {
       const { checks, verdict } = await analyzeListing(listing, deps(), { imageGate });
       expect(checks.map((c) => c.id)).toEqual([
         'image',

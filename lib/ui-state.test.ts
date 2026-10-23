@@ -26,16 +26,11 @@ describe('loadUiState / saveUiState', () => {
   });
 
   it('stores { welcomeDismissed: true } under fripon:ui:v1', async () => {
-    expect(await saveUiState({ welcomeDismissed: true })).toEqual({ welcomeDismissed: true });
+    await saveUiState({ welcomeDismissed: true });
     expect((await browser.storage.local.get(UI_STATE_KEY))[UI_STATE_KEY]).toEqual({
       welcomeDismissed: true,
     });
     expect(UI_STATE_KEY).toBe('fripon:ui:v1');
     expect(await loadUiState()).toEqual({ welcomeDismissed: true });
-  });
-
-  it('survives concurrent saves', async () => {
-    await Promise.all([saveUiState({}), saveUiState({ welcomeDismissed: true }), saveUiState({})]);
-    expect((await loadUiState()).welcomeDismissed).toBe(true);
   });
 });

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { RuntimeMessage } from '../messages';
-import { DEFAULT_SETTINGS } from '../settings';
 import { handleMessage, isAllowedSender, type BackgroundDeps } from './handlers';
 
 const own = { id: 'abc', origin: 'chrome-extension://abc/' };
@@ -13,9 +12,6 @@ function makeDeps(overrides: Partial<BackgroundDeps> = {}): BackgroundDeps {
       Promise.resolve({ ok: true as const, hash: '0'.repeat(16), catalogScore: 0.1 }),
     ),
     loadImageGate: vi.fn(() => Promise.resolve('ready' as const)),
-    loadSettings: vi.fn(() =>
-      Promise.resolve({ ...DEFAULT_SETTINGS, keys: { vision: 'AIzaV', gemini: 'AIzaG' } }),
-    ),
     checkKey: vi.fn(() => Promise.resolve({ ok: true as const })),
     openOptions: vi.fn(() => Promise.resolve()),
     ...overrides,
@@ -26,7 +22,7 @@ describe('isAllowedSender', () => {
   const analyze: RuntimeMessage = { type: 'analyzeImage', url: 'https://x.test/a.jpg' };
   const gate: RuntimeMessage = { type: 'getImageGate' };
   const open: RuntimeMessage = { type: 'openOptions', section: 'guide' };
-  const test: RuntimeMessage = { type: 'testKey', provider: 'vision' };
+  const test: RuntimeMessage = { type: 'testKey', provider: 'vision', key: 'AIzaX' };
 
   it('rejects every message from another extension or from nowhere', () => {
     for (const message of [analyze, gate, open, test]) {
@@ -89,40 +85,15 @@ describe('handleMessage', () => {
     await expect(handleMessage({ type: 'openOptions' }, deps)).resolves.toBeUndefined();
   });
 
-  it('tests the STORED key of the provider when no key is sent', async () => {
+  it('tests the key it is given, for the provider it is given', async () => {
     const deps = makeDeps({
       checkKey: vi.fn(() => Promise.resolve({ ok: false as const, reason: 'billing' as const })),
     });
-    expect(await handleMessage({ type: 'testKey', provider: 'gemini' }, deps)).toEqual({
-      ok: false,
-      reason: 'billing',
-    });
-    expect(deps.checkKey).toHaveBeenCalledWith('gemini', 'AIzaG');
-    await handleMessage({ type: 'testKey', provider: 'vision' }, deps);
-    expect(deps.checkKey).toHaveBeenLastCalledWith('vision', 'AIzaV');
-  });
-
-  it('tests a candidate key as sent, without touching the saved one', async () => {
-    const deps = makeDeps();
-    await handleMessage({ type: 'testKey', provider: 'vision', key: '  AIzaCandidate ' }, deps);
-    expect(deps.checkKey).toHaveBeenCalledWith('vision', 'AIzaCandidate');
-    expect(deps.loadSettings).not.toHaveBeenCalled();
-  });
-
-  it('rejects, rather than inventing a network failure, when the saved key cannot be read', async () => {
-    const deps = makeDeps({ loadSettings: vi.fn(() => Promise.reject(new Error('storage'))) });
-    await expect(handleMessage({ type: 'testKey', provider: 'vision' }, deps)).rejects.toThrow(
-      'storage',
-    );
-    expect(deps.checkKey).not.toHaveBeenCalled();
-  });
-
-  it('still tests a candidate key when the saved settings are unreadable', async () => {
-    const deps = makeDeps({ loadSettings: vi.fn(() => Promise.reject(new Error('storage'))) });
     expect(
-      await handleMessage({ type: 'testKey', provider: 'vision', key: 'AIzaX' }, deps),
-    ).toEqual({
-      ok: true,
-    });
+      await handleMessage({ type: 'testKey', provider: 'gemini', key: 'AIzaCandidate' }, deps),
+    ).toEqual({ ok: false, reason: 'billing' });
+    expect(deps.checkKey).toHaveBeenCalledWith('gemini', 'AIzaCandidate');
+    await handleMessage({ type: 'testKey', provider: 'vision', key: 'AIzaOther' }, deps);
+    expect(deps.checkKey).toHaveBeenLastCalledWith('vision', 'AIzaOther');
   });
 });

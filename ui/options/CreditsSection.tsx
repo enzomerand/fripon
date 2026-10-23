@@ -30,11 +30,14 @@ interface CreditRowProps {
   onSaved: () => void;
 }
 
+/** What the cap field shows: empty without a cap. */
+const capText = (cap: number | null) => (cap === null ? '' : String(cap));
+
 function CreditRow({ provider, usage, now, onSaved }: CreditRowProps) {
   const text = CREDIT_TEXT[provider];
   const { defaultCap } = CREDIT_POLICY[provider];
   const { used, cap, state } = usage;
-  const [draft, setDraft] = useState(cap === null ? '' : String(cap));
+  const [draft, setDraft] = useState(capText(cap));
   const [capError, setCapError] = useState(false);
   const [saveError, setSaveError] = useState(false);
   // The "Sans plafond" choice just made, shown until the stored cap catches up (or the save fails).
@@ -43,7 +46,7 @@ function CreditRow({ provider, usage, now, onSaved }: CreditRowProps) {
 
   // Follows the stored cap (changed in another tab, or just saved).
   useEffect(() => {
-    setDraft(cap === null ? '' : String(cap));
+    setDraft(capText(cap));
     setCapError(false);
     setNoCapChosen(null);
   }, [cap]);
@@ -55,7 +58,7 @@ function CreditRow({ provider, usage, now, onSaved }: CreditRowProps) {
       onSaved();
     } catch {
       // Back to what is really stored: the page must not show a cap that was lost.
-      setDraft(cap === null ? '' : String(cap));
+      setDraft(capText(cap));
       setNoCapChosen(null);
       setSaveError(true);
     }
@@ -63,7 +66,7 @@ function CreditRow({ provider, usage, now, onSaved }: CreditRowProps) {
 
   function commitDraft(typed: string) {
     const value = Number(typed);
-    if (typed.trim() === '' || !Number.isSafeInteger(value) || value < 1) {
+    if (!Number.isSafeInteger(value) || value < 1) {
       setCapError(true);
       return;
     }

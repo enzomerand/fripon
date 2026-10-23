@@ -2,13 +2,12 @@ import type { ImageGate } from '../gate';
 import type { KeyCheckResult } from '../google/key-check';
 import type { PendingSection } from '../options-nav';
 import type { AnalyzeImageResponse, ResponseFor, RuntimeMessage } from '../messages';
-import type { Provider, Settings } from '../settings';
+import type { Provider } from '../settings';
 
 /** Everything the background does with the outside world, injected so it can be tested. */
 export interface BackgroundDeps {
   analyzeImage(url: string): Promise<AnalyzeImageResponse>;
   loadImageGate(): Promise<ImageGate>;
-  loadSettings(): Promise<Settings>;
   checkKey(provider: Provider, key: string): Promise<KeyCheckResult>;
   openOptions(section?: PendingSection): Promise<void>;
 }
@@ -40,11 +39,7 @@ export function isAllowedSender(
   return true;
 }
 
-/**
- * Runs one message. Only a `testKey` that cannot read the saved key rejects (the caller then
- * answers with nothing, which the options page shows as "could not run the test"): inventing a
- * "network" failure for a storage problem would send the user looking in the wrong place.
- */
+/** Runs one message and resolves with its answer. */
 export async function handleMessage<M extends RuntimeMessage>(
   message: M,
   deps: BackgroundDeps,
@@ -65,9 +60,7 @@ async function respond(message: RuntimeMessage, deps: BackgroundDeps) {
     case 'openOptions':
       await deps.openOptions(message.section).catch(() => undefined);
       return undefined;
-    case 'testKey': {
-      const key = message.key ?? (await deps.loadSettings()).keys[message.provider];
-      return deps.checkKey(message.provider, key.trim());
-    }
+    case 'testKey':
+      return deps.checkKey(message.provider, message.key);
   }
 }

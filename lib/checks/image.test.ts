@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { googleLensUrl, imageCheckForGate, imageCheckOff, imageCheckReady } from './image';
+import { googleLensUrl, imageCheckForGate, imageCheckOff } from './image';
 
 describe('googleLensUrl', () => {
   it('encodes the photo URL in the Lens upload-by-url link', () => {
@@ -50,9 +50,9 @@ describe('imageCheckOff', () => {
   });
 });
 
-describe('imageCheckReady', () => {
-  it('tells the key is saved and the search is coming', () => {
-    expect(imageCheckReady()).toEqual({
+describe('imageCheckForGate', () => {
+  it('tells the key is saved and the search is coming when the gate is open', () => {
+    expect(imageCheckForGate('ready')).toEqual({
       id: 'image',
       status: 'off',
       tag: 'Clé prête',
@@ -61,11 +61,8 @@ describe('imageCheckReady', () => {
       signals: [],
     });
   });
-});
 
-describe('imageCheckForGate', () => {
-  it('maps each gate to its row', () => {
-    expect(imageCheckForGate('ready')).toEqual(imageCheckReady());
+  it('gives the off row of the reason for every other gate', () => {
     for (const gate of ['no_key', 'quota', 'manual'] as const) {
       expect(imageCheckForGate(gate)).toEqual(imageCheckOff(gate));
     }

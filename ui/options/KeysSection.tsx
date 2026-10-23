@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { maskKey } from '../../lib/format';
-import type { KeyCheckFailure, KeyCheckResult } from '../../lib/google/key-check';
+import type { KeyCheckFailure } from '../../lib/google/key-check';
 import { sendMessage } from '../../lib/messages';
 import {
   PROVIDERS,
@@ -112,12 +112,9 @@ function KeyBlock({ provider, saved, onSaved }: KeyBlockProps) {
     setStatus({ kind: 'busy', text: 'Test en cours…' });
     // The typed candidate is tested as it is: a saved key that works must never be replaced by
     // one that may not. It is saved only once Google accepts it (or with "Enregistrer").
-    let result: KeyCheckResult | undefined;
-    try {
-      result = await sendMessage({ type: 'testKey', provider, key: typed });
-    } catch {
-      result = undefined;
-    }
+    const result = await sendMessage({ type: 'testKey', provider, key: typed }).catch(
+      () => undefined,
+    );
     if (!result) {
       setStatus({ kind: 'failed', reason: 'unavailable' });
       return;

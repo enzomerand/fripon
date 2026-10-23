@@ -76,33 +76,36 @@ describe('background', () => {
     const headerKey = (fetchMock: ReturnType<typeof stubGoogle>, call = 0) =>
       (fetchMock.mock.calls[call]?.[1].headers as Record<string, string>)['x-goog-api-key'];
 
-    it('refuses a content script, with or without a key', async () => {
+    it('refuses a content script, whatever key it brings', async () => {
       const fetchMock = stubGoogle();
-      await saveSettings({ keys: { gemini: 'AIzaGemini' } });
       const send = start();
 
-      expect(await send({ type: 'testKey', provider: 'gemini' }, fromPage)).toBe('no answer');
       expect(await send({ type: 'testKey', provider: 'gemini', key: 'AIzaX' }, fromPage)).toBe(
         'no answer',
       );
+      expect(await send({ type: 'testKey', provider: 'gemini', key: '' }, fromPage)).toBe(
+        'no answer',
+      );
+      // Without a key the message is not even a valid request.
+      expect(await send({ type: 'testKey', provider: 'gemini' }, fromOptions)).toBe('no answer');
       expect(fetchMock).not.toHaveBeenCalled();
       vi.unstubAllGlobals();
     });
 
-    it('tests the saved key for an extension page', async () => {
+    it('tests the key an extension page sends, in the header and nowhere else', async () => {
       const fetchMock = stubGoogle();
-      await saveSettings({ keys: { gemini: 'AIzaGemini' } });
       const send = start();
 
-      expect(await send({ type: 'testKey', provider: 'gemini' }, fromOptions)).toEqual({
-        ok: true,
-      });
+      expect(
+        await send({ type: 'testKey', provider: 'gemini', key: 'AIzaCandidate' }, fromOptions),
+      ).toEqual({ ok: true });
       expect(fetchMock).toHaveBeenCalledOnce();
-      expect(headerKey(fetchMock)).toBe('AIzaGemini');
+      expect(headerKey(fetchMock)).toBe('AIzaCandidate');
+      expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('AIzaCandidate');
       vi.unstubAllGlobals();
     });
 
-    it('tests a candidate key for an extension page, and leaves the saved one alone', async () => {
+    it('leaves the saved key alone, whatever the verdict on the candidate', async () => {
       const fetchMock = stubGoogle(400);
       await saveSettings({ keys: { gemini: 'AIzaSaved' } });
       const send = start();
@@ -114,15 +117,6 @@ describe('background', () => {
       expect(answer).toEqual({ ok: false, reason: 'invalid' });
       expect(headerKey(fetchMock)).toBe('AIzaCandidate');
       expect((await loadSettings()).keys.gemini).toBe('AIzaSaved');
-      vi.unstubAllGlobals();
-    });
-
-    it('answers nothing, not a network failure, when the saved key cannot be read', async () => {
-      const fetchMock = stubGoogle();
-      vi.spyOn(browser.storage.local, 'get').mockRejectedValue(new Error('storage'));
-      const send = start();
-      expect(await send({ type: 'testKey', provider: 'gemini' }, fromOptions)).toBeUndefined();
-      expect(fetchMock).not.toHaveBeenCalled();
       vi.unstubAllGlobals();
     });
   });
