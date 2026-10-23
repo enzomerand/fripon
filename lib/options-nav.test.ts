@@ -63,6 +63,19 @@ describe('openOptionsAt', () => {
   });
 });
 
+describe('openOptionsAt without session storage', () => {
+  it('reports the failure to open the page, not the missing storage', async () => {
+    const original = browser.storage.session;
+    Object.defineProperty(browser.storage, 'session', { value: undefined, configurable: true });
+    try {
+      vi.spyOn(browser.runtime, 'openOptionsPage').mockRejectedValue(new Error('no page'));
+      await expect(openOptionsAt('guide')).rejects.toThrow('no page');
+    } finally {
+      Object.defineProperty(browser.storage, 'session', { value: original, configurable: true });
+    }
+  });
+});
+
 describe('takePendingSection', () => {
   it('is null when nothing was asked', async () => {
     expect(await takePendingSection()).toBeNull();

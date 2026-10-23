@@ -51,20 +51,38 @@ describe('formatReset', () => {
   // Local-time dates throughout: the function reads the user's own clock.
   const now = new Date(2026, 9, 20, 14, 30);
 
-  it('gives just the time when the reset is within a day', () => {
-    expect(formatReset(new Date(2026, 9, 21, 9, 0), now)).toBe('à 9 h');
+  it('gives just the time when the reset is later today', () => {
     expect(formatReset(new Date(2026, 9, 20, 23, 0), now)).toBe('à 23 h');
+    expect(formatReset(new Date(2026, 9, 20, 9, 0), new Date(2026, 9, 20, 7, 0))).toBe('à 9 h');
+  });
+
+  it('says tomorrow when the reset is on the next local day, even within 24 h', () => {
+    expect(formatReset(new Date(2026, 9, 21, 9, 0), now)).toBe('demain à 9 h');
+    // 9 h later, but after midnight.
+    expect(formatReset(new Date(2026, 9, 21, 0, 30), new Date(2026, 9, 20, 23, 30))).toBe(
+      'demain à 0 h 30',
+    );
+    expect(formatReset(new Date(2026, 10, 1, 8, 0), new Date(2026, 9, 31, 20, 0))).toBe(
+      'demain à 8 h',
+    );
   });
 
   it('writes minutes when the offset is not a whole hour', () => {
-    expect(formatReset(new Date(2026, 9, 21, 13, 30), now)).toBe('à 13 h 30');
-    expect(formatReset(new Date(2026, 9, 21, 12, 5), now)).toBe('à 12 h 05');
+    expect(formatReset(new Date(2026, 9, 20, 22, 30), now)).toBe('à 22 h 30');
+    expect(formatReset(new Date(2026, 9, 21, 12, 5), now)).toBe('demain à 12 h 05');
   });
 
   it('adds the date for a later reset, with "1er" for the first of the month', () => {
     expect(formatReset(new Date(2026, 10, 1, 9, 0), now)).toBe('le 1er novembre à 9 h');
     expect(formatReset(new Date(2026, 11, 1, 8, 0), new Date(2026, 10, 3))).toBe(
       'le 1er décembre à 8 h',
+    );
+  });
+
+  it('does not call the day after tomorrow "tomorrow", even within 25 h', () => {
+    // 25 h later, which is two calendar days on.
+    expect(formatReset(new Date(2026, 9, 22, 0, 30), new Date(2026, 9, 20, 23, 30))).toBe(
+      'le 22 octobre à 0 h 30',
     );
   });
 
@@ -78,8 +96,12 @@ describe('formatReset', () => {
     );
   });
 
-  it('still says only the time on a 25-hour day', () => {
-    const start = new Date('2026-11-01T05:00:00Z');
-    expect(formatReset(new Date(start.getTime() + 25 * 3_600_000), start)).toMatch(/^à \d+ h/);
+  it('counts calendar days across the end of the year and a daylight saving change', () => {
+    expect(formatReset(new Date(2027, 0, 1, 9, 0), new Date(2026, 11, 31, 22, 0))).toBe(
+      'demain à 9 h',
+    );
+    expect(formatReset(new Date(2026, 9, 26, 9, 0), new Date(2026, 9, 25, 12, 0))).toBe(
+      'demain à 9 h',
+    );
   });
 });

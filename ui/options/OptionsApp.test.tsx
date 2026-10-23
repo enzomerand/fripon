@@ -437,7 +437,7 @@ describe('credits', () => {
     const vision = formatReset(nextReset('vision', now), now);
     const gemini = formatReset(nextReset('gemini', now), now);
     expect(vision).toMatch(/^le (1er|\d+) \S+ à \d+ h/);
-    expect(gemini).toMatch(/^à \d+ h/);
+    expect(gemini).toMatch(/^(demain )?à \d+ h/);
     expect(creditRow('vision').textContent).toContain(`Remis à zéro ${vision}.`);
     expect(creditRow('gemini').textContent).toContain(`Remis à zéro ${gemini}.`);
     expect($('#credits')?.textContent).toContain('minuit, heure de Californie');

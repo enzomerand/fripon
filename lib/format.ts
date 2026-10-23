@@ -35,16 +35,25 @@ function formatClock(date: Date): string {
     : `${date.getHours()} h ${String(minutes).padStart(2, '0')}`;
 }
 
-/** A day with a daylight saving change lasts 25 h. */
-const WITHIN_A_DAY_MS = 25 * 60 * 60 * 1_000;
+const DAY_MS = 24 * 60 * 60 * 1_000;
+
+/** Calendar days from `from` to `to` on the user's clock (0 = same day, 1 = the next one...). */
+function daysBetween(from: Date, to: Date): number {
+  const start = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
+  const end = new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime();
+  // Rounded: a day with a daylight saving change is not exactly 24 h long.
+  return Math.round((end - start) / DAY_MS);
+}
 
 /**
- * When a counter starts again from zero, in the user's own time: "à 9 h" when that is within a
- * day, else "le 1er novembre à 9 h" ("le 1er janvier 2027 à 9 h" when it is next year).
+ * When a counter starts again from zero, in the user's own time: "à 9 h" when that is today,
+ * "demain à 9 h", else "le 1er novembre à 9 h" ("le 1er janvier 2027 à 9 h" when it is next year).
  */
 export function formatReset(resetsAt: Date, now: Date): string {
   const time = formatClock(resetsAt);
-  if (resetsAt.getTime() - now.getTime() <= WITHIN_A_DAY_MS) return `à ${time}`;
+  const days = daysBetween(now, resetsAt);
+  if (days <= 0) return `à ${time}`;
+  if (days === 1) return `demain à ${time}`;
   const day = resetsAt.getDate();
   const month = new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(resetsAt);
   const year = resetsAt.getFullYear() === now.getFullYear() ? '' : ` ${resetsAt.getFullYear()}`;

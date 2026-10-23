@@ -226,9 +226,13 @@ describe('reserve', () => {
   });
 
   it('says how many credits are left, or null without a cap', async () => {
-    expect(await reserve('gemini', 1, 3, oct)).toEqual({ ok: true, remaining: 2 });
-    expect(await reserve('gemini', 2, 3, oct)).toEqual({ ok: true, remaining: 0 });
-    expect(await reserve('vision', 5, null, oct)).toEqual({ ok: true, remaining: null });
+    expect(await reserve('gemini', 1, 3, oct)).toEqual({
+      ok: true,
+      remaining: 2,
+      periodId: '2026-10-20',
+    });
+    expect(await reserve('gemini', 2, 3, oct)).toMatchObject({ ok: true, remaining: 0 });
+    expect(await reserve('vision', 5, null, oct)).toMatchObject({ ok: true, remaining: null });
   });
 
   it('refuses once the cap is reached, and counts nothing', async () => {
@@ -241,7 +245,7 @@ describe('reserve', () => {
     await reserve('vision', 4, 5, oct);
     expect(await reserve('vision', 2, 5, oct)).toEqual({ ok: false, remaining: 1 });
     expect((await getUsage('vision', 5, oct)).used).toBe(4);
-    expect(await reserve('vision', 1, 5, oct)).toEqual({ ok: true, remaining: 0 });
+    expect(await reserve('vision', 1, 5, oct)).toMatchObject({ ok: true, remaining: 0 });
   });
 
   it('applies the cap it is given at call time, so a raised cap lets calls through again', async () => {
@@ -276,7 +280,7 @@ describe('reserve', () => {
     const request = vi.fn(<T>(_name: string, callback: () => Promise<T>) => callback());
     vi.stubGlobal('navigator', { locks: { request } });
     await reserve('vision', 1, null, oct);
-    await refund('vision', 1, oct);
+    await refund('vision', 1, '2026-10');
     expect(request.mock.calls.map(([name]) => name)).toEqual([CREDITS_LOCK, CREDITS_LOCK]);
     expect(CREDITS_LOCK).toBe('fripon:credits');
   });
@@ -305,7 +309,7 @@ describe('reserve', () => {
 
   it('keeps working after a failed call', async () => {
     await expect(reserve('vision', 0, null, oct)).rejects.toThrow();
-    expect(await reserve('vision', 2, null, oct)).toEqual({ ok: true, remaining: null });
+    expect(await reserve('vision', 2, null, oct)).toMatchObject({ ok: true, remaining: null });
   });
 
   describe('purge of old periods', () => {
@@ -375,31 +379,77 @@ describe('reserve', () => {
 });
 
 describe('refund', () => {
-  it('gives credits back', async () => {
-    await reserve('vision', 5, null, oct);
-    await refund('vision', 2, oct);
+  it('gives credits back to the period reserve charged', async () => {
+    const taken = await reserve('vision', 5, null, oct);
+    if (!taken.ok) throw new Error('expected a reservation');
+    expect(taken.periodId).toBe('2026-10');
+    await refund('vision', 2, taken.periodId);
     expect((await getUsage('vision', 1_000, oct)).used).toBe(3);
   });
 
+  it('says which period was charged, in Pacific time', async () => {
+    const result = await reserve('gemini', 1, 20, at('2026-10-21T06:59:59Z'));
+    expect(result).toMatchObject({ ok: true, periodId: '2026-10-20' });
+    expect(await reserve('gemini', 1, 20, at('2026-10-21T07:00:00Z'))).toMatchObject({
+      periodId: '2026-10-21',
+    });
+  });
+
   it('puts the credit back within reach of a capped provider', async () => {
-    await reserve('gemini', 3, 3, oct);
+    const taken = await reserve('gemini', 3, 3, oct);
+    if (!taken.ok) throw new Error('expected a reservation');
     expect((await reserve('gemini', 1, 3, oct)).ok).toBe(false);
-    await refund('gemini', 1, oct);
-    expect(await reserve('gemini', 1, 3, oct)).toEqual({ ok: true, remaining: 0 });
+    await refund('gemini', 1, taken.periodId);
+    expect(await reserve('gemini', 1, 3, oct)).toMatchObject({ ok: true, remaining: 0 });
   });
 
   it('never goes below zero', async () => {
     await reserve('vision', 1, null, oct);
-    await refund('vision', 5, oct);
+    await refund('vision', 5, '2026-10');
     expect((await getUsage('vision', 1_000, oct)).used).toBe(0);
   });
 
-  it('does nothing, and creates nothing, when the period has no counter', async () => {
-    await refund('vision', 1, oct);
+  describe('when midnight in California passes between the reservation and the refund', () => {
+    const before = at('2026-10-21T06:59:59Z'); // 20 October, 23:59:59 Pacific
+    const after = at('2026-10-21T07:00:01Z'); // 21 October, 00:00:01 Pacific
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('refunds the old period, not the new one, and reads no clock', async () => {
+      const taken = await reserve('gemini', 2, 20, before);
+      const next = await reserve('gemini', 1, 20, after);
+      if (!taken.ok || !next.ok) throw new Error('expected reservations');
+      // The new period purged the old counter: the refund finds nothing and must not
+      // fall back on today's counter.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(after);
+      await refund('gemini', 2, taken.periodId);
+      expect(await browser.storage.local.get(null)).toEqual({
+        'fripon:credits:v1:gemini:2026-10-21': 1,
+      });
+    });
+
+    it('gives back to the old counter while it still exists', async () => {
+      const taken = await reserve('gemini', 3, 20, before);
+      if (!taken.ok) throw new Error('expected a reservation');
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(after);
+      await refund('gemini', 1, taken.periodId);
+      expect(await browser.storage.local.get(null)).toEqual({
+        'fripon:credits:v1:gemini:2026-10-20': 2,
+      });
+      // Nothing was created for the new period.
+      expect((await getUsage('gemini', 20, after)).used).toBe(0);
+    });
+  });
+
+  it('does nothing, and creates nothing, when that period has no counter', async () => {
+    await refund('vision', 1, '2026-10');
     expect(await browser.storage.local.get(null)).toEqual({});
-    // A counter of another period is not touched either.
     await reserve('vision', 3, null, at('2026-09-10T20:00:00Z'));
-    await refund('vision', 1, oct);
+    await refund('vision', 1, '2026-10');
     expect(await browser.storage.local.get(null)).toEqual({
       'fripon:credits:v1:vision:2026-09': 3,
     });
@@ -408,15 +458,15 @@ describe('refund', () => {
   it('is serialised with reserve', async () => {
     await reserve('vision', 10, null, oct);
     await Promise.all([
-      refund('vision', 1, oct),
+      refund('vision', 1, '2026-10'),
       reserve('vision', 1, null, oct),
-      refund('vision', 1, oct),
+      refund('vision', 1, '2026-10'),
       reserve('vision', 1, null, oct),
     ]);
     expect((await getUsage('vision', 1_000, oct)).used).toBe(10);
   });
 
   it.each([0, -1, 1.5, NaN])('rejects %s units', async (units) => {
-    await expect(refund('vision', units, oct)).rejects.toBeInstanceOf(RangeError);
+    await expect(refund('vision', units, '2026-10')).rejects.toBeInstanceOf(RangeError);
   });
 });

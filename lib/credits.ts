@@ -110,8 +110,12 @@ export function nextReset(provider: Provider, now: Date): Date {
 }
 
 /** `fripon:credits:v1:<provider>:<periodId>` */
+function creditsKeyFor(provider: Provider, period: string): string {
+  return `${CREDITS_KEY_PREFIX}${provider}:${period}`;
+}
+
 export function creditsKey(provider: Provider, now: Date): string {
-  return `${CREDITS_KEY_PREFIX}${provider}:${periodId(provider, now)}`;
+  return creditsKeyFor(provider, periodId(provider, now));
 }
 
 // ---- Reading ----------------------------------------------------------------------------------
@@ -169,8 +173,11 @@ async function purgeOlderPeriods(provider: Provider, now: Date) {
 }
 
 export type Reservation =
-  /** The credits are counted: go ahead and call Google. `remaining` is null without a cap. */
-  | { ok: true; remaining: number | null }
+  /**
+   * The credits are counted: go ahead and call Google. `remaining` is null without a cap.
+   * `periodId` is the period they were charged to: pass it to `refund`.
+   */
+  | { ok: true; remaining: number | null; periodId: string }
   /** Nothing is counted and the call must not be made. */
   | { ok: false; remaining: number };
 
@@ -205,21 +212,29 @@ export function reserve(
     await browser.storage.local.set({ [key]: used + units });
     // Only a new period's first spend can leave old counters behind.
     if (stored[key] === undefined) await purgeOlderPeriods(provider, at);
-    return { ok: true, remaining: cap === null ? null : cap - used - units };
+    return {
+      ok: true,
+      remaining: cap === null ? null : cap - used - units,
+      periodId: periodId(provider, at),
+    };
   });
 }
 
-/** Gives back credits reserved for a call that failed without costing anything. */
-export function refund(provider: Provider, units: number, now?: Date): Promise<void> {
+/**
+ * Gives back credits reserved for a call that failed without costing anything. `period` is the
+ * `periodId` that `reserve` returned: the credits go back to the period they were taken from,
+ * even if midnight has passed since.
+ */
+export function refund(provider: Provider, units: number, period: string): Promise<void> {
   try {
     assertUnits(units);
   } catch (error) {
     return Promise.reject(error);
   }
   return withLock(CREDITS_LOCK, async () => {
-    const key = creditsKey(provider, now ?? new Date());
+    const key = creditsKeyFor(provider, period);
     const stored = await browser.storage.local.get(key);
-    // No counter this period: the credits belonged to a period that is over, nothing to give back.
+    // No counter for that period (already purged): nothing to give back.
     if (stored[key] === undefined) return;
     await browser.storage.local.set({ [key]: Math.max(0, readCount(stored[key]) - units) });
   });

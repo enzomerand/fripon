@@ -30,8 +30,13 @@ export async function openOptionsAt(section?: PendingSection): Promise<void> {
   try {
     await browser.runtime.openOptionsPage();
   } catch (error) {
-    // Nobody will read it: do not leave it to surprise the next visit.
-    await browser.storage.session.remove(PENDING_SECTION_KEY).catch(() => undefined);
+    // Nobody will read it: do not leave it to surprise the next visit. If even that fails (no
+    // session storage), the error worth reporting is still the one from opening the page.
+    try {
+      await browser.storage.session.remove(PENDING_SECTION_KEY);
+    } catch {
+      // Ignored on purpose.
+    }
     throw error;
   }
 }
