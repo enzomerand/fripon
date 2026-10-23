@@ -35,7 +35,63 @@ describe('sendMessage', () => {
   });
 });
 
+describe('sendMessage (settings messages)', () => {
+  it('returns the image gate', async () => {
+    const spy = vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue('quota' as never);
+    expect(await sendMessage({ type: 'getImageGate' })).toBe('quota');
+    expect(spy).toHaveBeenCalledWith({ type: 'getImageGate' });
+  });
+
+  it('sends the candidate key to test and returns the result', async () => {
+    const spy = vi
+      .spyOn(browser.runtime, 'sendMessage')
+      .mockResolvedValue({ ok: false, reason: 'billing' } as never);
+    expect(
+      await sendMessage({ type: 'testKey', provider: 'gemini', key: 'AIzaCandidate' }),
+    ).toEqual({
+      ok: false,
+      reason: 'billing',
+    });
+    expect(spy).toHaveBeenCalledWith({ type: 'testKey', provider: 'gemini', key: 'AIzaCandidate' });
+  });
+
+  it('asks to open the options page at a section', async () => {
+    const spy = vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue(undefined as never);
+    await sendMessage({ type: 'openOptions', section: 'guide' });
+    expect(spy).toHaveBeenCalledWith({ type: 'openOptions', section: 'guide' });
+  });
+});
+
 describe('isRuntimeMessage', () => {
+  it('accepts getImageGate with nothing else', () => {
+    expect(isRuntimeMessage({ type: 'getImageGate' })).toBe(true);
+  });
+
+  it('accepts openOptions without a section or with a known one', () => {
+    expect(isRuntimeMessage({ type: 'openOptions' })).toBe(true);
+    for (const section of ['guide', 'keys', 'credits']) {
+      expect(isRuntimeMessage({ type: 'openOptions', section })).toBe(true);
+    }
+    expect(isRuntimeMessage({ type: 'openOptions', section: 'welcome' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'openOptions', section: '../x' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'openOptions', section: 3 })).toBe(false);
+  });
+
+  it('accepts testKey for a known provider only', () => {
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: 'AIzaX' })).toBe(true);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'gemini', key: 'AIzaX' })).toBe(true);
+    expect(isRuntimeMessage({ type: 'testKey', key: 'AIzaX' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'openai', key: 'AIzaX' })).toBe(false);
+  });
+
+  it('needs the key to test, as a string', () => {
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: '' })).toBe(true);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: 12 })).toBe(false);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: null })).toBe(false);
+    expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: { a: 1 } })).toBe(false);
+  });
+
   it('accepts a well-formed analyzeImage request only', () => {
     expect(isRuntimeMessage({ type: 'analyzeImage', url: 'https://x.test/a.jpg' })).toBe(true);
     expect(isRuntimeMessage({ type: 'analyzeImage' })).toBe(false);

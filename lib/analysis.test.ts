@@ -7,6 +7,7 @@ import {
   analyzeListing,
   type AnalysisDeps,
 } from './analysis';
+import { imageCheckForGate } from './checks/image';
 import { hashToHex } from './image/pixels';
 import type { CheckResult, ImageMatch, Listing, Seller, SellerItem } from './model';
 
@@ -230,6 +231,35 @@ describe('analyzeListing', () => {
       expect(checks[3]).toMatchObject({ id: 'photos', status: 'off' });
       expect(checks).toHaveLength(5);
     });
+  });
+});
+
+// What each row says is covered in checks/image.test.ts: here, only that the gate reaches the row.
+describe('analyzeListing image gate', () => {
+  const gates = ['no_key', 'quota', 'manual', 'ready'] as const;
+
+  it('is "no key" when the gate is not given', async () => {
+    const { checks } = await analyzeListing(listing, deps());
+    expect(checks[0]).toEqual(imageCheckForGate('no_key'));
+  });
+
+  it.each(gates)('puts the row of the "%s" gate first', async (imageGate) => {
+    const { checks } = await analyzeListing(listing, deps(), { imageGate });
+    expect(checks[0]).toEqual(imageCheckForGate(imageGate));
+  });
+
+  it('keeps the other checks and the "without image search" verdict whatever the gate', async () => {
+    for (const imageGate of gates) {
+      const { checks, verdict } = await analyzeListing(listing, deps(), { imageGate });
+      expect(checks.map((c) => c.id)).toEqual([
+        'image',
+        'price',
+        'seller',
+        'photos',
+        'description',
+      ]);
+      expect(verdict.withoutImageSearch).toBe(true);
+    }
   });
 });
 

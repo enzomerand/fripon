@@ -1,8 +1,9 @@
 import { checkDescription } from './checks/description';
-import { imageCheckOff } from './checks/image';
+import { imageCheckForGate } from './checks/image';
 import { checkPhotos } from './checks/photos';
 import { priceCheckOff } from './checks/price';
 import { checkSeller } from './checks/seller';
+import type { ImageGate } from './gate';
 import { hexToHash } from './image/pixels';
 import type { AnalyzeImageResponse } from './messages';
 import type {
@@ -28,6 +29,8 @@ export interface AnalysisDeps {
 }
 
 export interface AnalysisOptions {
+  /** What the background says about the image search; 'no_key' when not given. */
+  imageGate?: ImageGate;
   /** Polled between steps: once true, no further request is made and the analysis is abandoned. */
   isCancelled?: () => boolean;
 }
@@ -149,6 +152,7 @@ export async function analyzeListing(
   options: AnalysisOptions = {},
 ): Promise<AnalysisResult> {
   const cancelled = options.isCancelled ?? (() => false);
+  const imageGate = options.imageGate ?? 'no_key';
   const ensureActive = () => {
     if (cancelled()) throw new AnalysisCancelledError();
   };
@@ -187,7 +191,7 @@ export async function analyzeListing(
   const imageMatches: ImageMatch[] = [];
   const checks = capLocalHeuristics(
     [
-      imageCheckOff('no_key'),
+      imageCheckForGate(imageGate),
       priceCheckOff(),
       seller ? guarded('seller', () => checkSeller(seller, others)) : sellerCheckOff(sellerError),
       guarded('photos', () => checkPhotos({ main, others })),

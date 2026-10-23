@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { googleLensUrl, imageCheckOff } from './image';
+import { googleLensUrl, imageCheckForGate, imageCheckOff } from './image';
 
 describe('googleLensUrl', () => {
   it('encodes the photo URL in the Lens upload-by-url link', () => {
@@ -13,8 +13,21 @@ describe('googleLensUrl', () => {
 describe('imageCheckOff', () => {
   it.each(['no_key', 'quota', 'manual'] as const)('is an off image row for %s', (reason) => {
     const result = imageCheckOff(reason);
-    expect(result).toMatchObject({ id: 'image', status: 'off', tag: 'Désactivée', signals: [] });
+    expect(result).toMatchObject({ id: 'image', status: 'off', signals: [] });
+    expect(result.tag.length).toBeGreaterThan(3);
     expect(result.detail.length).toBeGreaterThan(10);
+  });
+
+  it('says the search is disabled without a key or in manual mode, and the cap reached on quota', () => {
+    expect(imageCheckOff('no_key').tag).toBe('Désactivée');
+    expect(imageCheckOff('manual').tag).toBe('Désactivée');
+    expect(imageCheckOff('quota').tag).toBe('Plafond atteint');
+  });
+
+  it('offers the guide without a key and the settings on quota, nothing yet in manual mode', () => {
+    expect(imageCheckOff('no_key').action).toBe('open_guide');
+    expect(imageCheckOff('quota').action).toBe('open_settings');
+    expect(imageCheckOff('manual')).not.toHaveProperty('action');
   });
 
   it('tells the user to add a key when there is none', () => {
@@ -23,10 +36,35 @@ describe('imageCheckOff', () => {
     );
   });
 
+  it('does not promise a click button before it exists', () => {
+    expect(imageCheckOff('manual').detail).toBe(
+      "Tu as choisi l'analyse au clic : le bouton pour lancer la recherche d'image arrive avec la prochaine version de Fripon.",
+    );
+  });
+
   it('gives a different explanation per reason', () => {
     const details = new Set(
       (['no_key', 'quota', 'manual'] as const).map((r) => imageCheckOff(r).detail),
     );
     expect(details.size).toBe(3);
+  });
+});
+
+describe('imageCheckForGate', () => {
+  it('tells the key is saved and the search is coming when the gate is open', () => {
+    expect(imageCheckForGate('ready')).toEqual({
+      id: 'image',
+      status: 'off',
+      tag: 'Clé prête',
+      detail:
+        "Ta clé est enregistrée : la recherche d'image arrive avec la prochaine version de Fripon.",
+      signals: [],
+    });
+  });
+
+  it('gives the off row of the reason for every other gate', () => {
+    for (const gate of ['no_key', 'quota', 'manual'] as const) {
+      expect(imageCheckForGate(gate)).toEqual(imageCheckOff(gate));
+    }
   });
 });

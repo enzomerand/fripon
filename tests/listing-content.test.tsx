@@ -102,6 +102,28 @@ async function until(predicate: () => boolean, timeoutMs = 8_000) {
   }
 }
 
+/** What the background answers to `getImageGate`; an Error makes the message fail. */
+let imageGate: string | Error;
+
+type SentMessage = { type: string; url?: string; section?: string };
+
+function sentMessages(type: string): SentMessage[] {
+  return vi
+    .mocked(browser.runtime.sendMessage)
+    .mock.calls.map(([message]) => message as unknown as SentMessage)
+    .filter((message) => message.type === type);
+}
+
+async function expandChecks() {
+  const toggle = hostCard()?.shadowRoot?.querySelector('.fripon__toggle') as HTMLButtonElement;
+  toggle.click();
+  await until(() => shadowText().includes('Chercher moi-même sur Google Lens'));
+}
+
+function actionButton(): HTMLButtonElement | null {
+  return hostCard()?.shadowRoot?.querySelector('.fripon__action') ?? null;
+}
+
 let ctx: ContentScriptContext;
 
 beforeEach(() => {
@@ -109,12 +131,18 @@ beforeEach(() => {
   (window as unknown as HappyWindow).happyDOM.setURL(ITEM_URL);
   document.head.innerHTML = '';
   document.body.innerHTML = PAGE;
-  vi.spyOn(browser.runtime, 'sendMessage').mockImplementation(((message: { url: string }) =>
-    Promise.resolve({
+  imageGate = 'no_key';
+  vi.spyOn(browser.runtime, 'sendMessage').mockImplementation(((message: SentMessage) => {
+    if (message.type === 'getImageGate') {
+      return imageGate instanceof Error ? Promise.reject(imageGate) : Promise.resolve(imageGate);
+    }
+    if (message.type === 'openOptions') return Promise.resolve(undefined);
+    return Promise.resolve({
       ok: true,
-      hash: message.url.includes('/02/') ? 'ffffffffffffffff' : '0000000000000000',
+      hash: message.url?.includes('/02/') ? 'ffffffffffffffff' : '0000000000000000',
       catalogScore: 0.1,
-    })) as never);
+    });
+  }) as never);
   ctx = new ContentScriptContext('listing', { matches: [] });
 });
 
@@ -138,8 +166,72 @@ describe('listing content script', () => {
       '/api/v2/users/7000001',
       '/api/v2/wardrobe/7000001/items?page=1&per_page=96',
     ]);
-    expect(browser.runtime.sendMessage).toHaveBeenCalledTimes(2);
+    expect(sentMessages('analyzeImage')).toHaveLength(2);
+    // The gate is asked once per run, and only that: no key ever travels to the page.
+    expect(sentMessages('getImageGate')).toEqual([{ type: 'getImageGate' }]);
   }, 15_000);
+
+  describe('image search gate', () => {
+    it('offers the guide without a key, and the button opens it', async () => {
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      await expandChecks();
+
+      expect(actionButton()?.textContent).toBe('Activer en 2 minutes');
+      actionButton()?.click();
+      expect(sentMessages('openOptions')).toEqual([{ type: 'openOptions', section: 'guide' }]);
+    }, 15_000);
+
+    it('shows the cap reached with a link to the settings on quota', async () => {
+      imageGate = 'quota';
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      await expandChecks();
+
+      expect(shadowText()).toContain('Plafond atteint');
+      expect(actionButton()?.textContent).toBe('Voir mes réglages');
+      actionButton()?.click();
+      expect(sentMessages('openOptions')).toEqual([{ type: 'openOptions', section: 'credits' }]);
+    }, 15_000);
+
+    it('says the key is ready when the gate is open', async () => {
+      imageGate = 'ready';
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      await expandChecks();
+
+      expect(shadowText()).toContain('Clé prête');
+      expect(actionButton()).toBeNull();
+    }, 15_000);
+
+    it('runs the free checks and offers no button in manual mode', async () => {
+      imageGate = 'manual';
+      const calls = stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      await expandChecks();
+
+      expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(2);
+      expect(actionButton()).toBeNull();
+    }, 15_000);
+
+    it.each([new Error('background asleep'), 'whatever'])(
+      'falls back to "no key" when the gate is unavailable or unknown (%s)',
+      async (answer) => {
+        imageGate = answer;
+        stubFetch();
+        await script.main(ctx);
+        await until(() => shadowText().includes('Voir les 5 vérifications'));
+        await expandChecks();
+
+        expect(actionButton()?.textContent).toBe('Activer en 2 minutes');
+      },
+      15_000,
+    );
+  });
 
   it('does nothing but warn when there is no anchor', async () => {
     stubFetch();
@@ -204,7 +296,7 @@ describe('listing content script', () => {
 
     expect(document.querySelectorAll('fripon-listing-card')).toHaveLength(1);
     expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(2);
-    expect(browser.runtime.sendMessage).toHaveBeenCalledTimes(2);
+    expect(sentMessages('analyzeImage')).toHaveLength(2);
   }, 15_000);
 
   describe('navigation without a page load', () => {

@@ -91,7 +91,8 @@
 }
 
 .fripon__toggle:focus-visible,
-.fripon__link:focus-visible {
+.fripon__link:focus-visible,
+.fripon__action:focus-visible {
   outline: 2px solid var(--title);
   outline-offset: 2px;
   border-radius: 3px;
@@ -152,9 +153,35 @@
   line-height: 1.4;
 }
 
+.fripon__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+/* The primary button of a check ("Activer en 2 minutes"), outlined like the mockup's. */
+.fripon__action {
+  display: inline-block;
+  border: 1px solid var(--title);
+  border-radius: 5px;
+  background: #fff;
+  padding: 3px 8px;
+  color: var(--title);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.fripon__action:hover {
+  background: var(--bg);
+  text-decoration: underline;
+}
+
 .fripon__link {
   display: inline-block;
-  margin-top: 5px;
   border: 1px solid #006670;
   border-radius: 5px;
   background: #fff;
