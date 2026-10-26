@@ -219,7 +219,7 @@ describe('listing content script', () => {
       await until(() => shadowText().includes('Voir les 5 vérifications'));
 
       ctx.notifyInvalidated();
-      rerenderPriceBlock();
+      expect(rerenderPriceBlock()?.isConnected).toBe(true);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(hostCard()).toBeNull();
