@@ -19,7 +19,7 @@ export type KeyCheckResult = { ok: true } | { ok: false; reason: KeyCheckFailure
 
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
-interface GoogleErrorInfo {
+export interface GoogleErrorInfo {
   status: string;
   message: string;
   /** Normalised `google.rpc.ErrorInfo` reasons, plus the legacy `errors[].reason` ones. */
@@ -43,21 +43,17 @@ const PROBES: Record<Provider, { url: string; init: RequestInit }> = {
   },
 };
 
-/** A header value must be printable ASCII: anything else would make `fetch` throw. */
 const HEADER_SAFE = /^[\x21-\x7e]+$/;
 
-async function readError(response: Response): Promise<GoogleErrorInfo> {
+/** A header value must be printable ASCII: anything else would make `fetch` throw. */
+export function isHeaderSafe(key: string): boolean {
+  return HEADER_SAFE.test(key);
+}
+
+/** What a Google `error` object (an HTTP error body, or a per-image error) says about itself. */
+export function errorInfoOf(error: unknown): GoogleErrorInfo {
   const info: GoogleErrorInfo = { status: '', message: '', reasons: [] };
-  // Reading the text may time out: that error is left to the caller (a network failure).
-  const text = await response.text();
-  let body: unknown;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    return info;
-  }
-  const error = isRecord(body) && isRecord(body.error) ? body.error : null;
-  if (!error) return info;
+  if (!isRecord(error)) return info;
   if (typeof error.status === 'string') info.status = error.status;
   if (typeof error.message === 'string') info.message = error.message;
   for (const list of [error.details, error.errors]) {
@@ -71,13 +67,30 @@ async function readError(response: Response): Promise<GoogleErrorInfo> {
   return info;
 }
 
+/** Reads the error of a failed response; an unreadable body gives an empty info. */
+export async function readError(response: Response): Promise<GoogleErrorInfo> {
+  // Reading the text may time out: that error is left to the caller (a network failure).
+  const text = await response.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return errorInfoOf(null);
+  }
+  return errorInfoOf(isRecord(body) ? body.error : null);
+}
+
 /** "SERVICE_DISABLED" and the legacy "accessNotConfigured" compare as plain upper-case words. */
 const normaliseReason = (reason: string) => reason.replaceAll('_', '').toUpperCase();
 
 const has = (info: GoogleErrorInfo, ...reasons: string[]) =>
   reasons.some((reason) => info.reasons.includes(normaliseReason(reason)));
 
-function classify(status: number, info: GoogleErrorInfo): KeyCheckFailure {
+/**
+ * The failure Google's answer names outright, null when it names none. Per-image errors use this
+ * one: an unrecognised refusal there says nothing about the key.
+ */
+export function classifyKnown(status: number, info: GoogleErrorInfo): KeyCheckFailure | null {
   // The key is restricted to other APIs (403 PERMISSION_DENIED): not a disabled API, a restriction.
   if (has(info, 'API_KEY_SERVICE_BLOCKED')) return 'restricted';
   if (
@@ -93,8 +106,12 @@ function classify(status: number, info: GoogleErrorInfo): KeyCheckFailure {
     return 'disabled';
   }
   if (status === 429 || info.status === 'RESOURCE_EXHAUSTED') return 'quota';
-  // API_KEY_INVALID (400 INVALID_ARGUMENT) and every other refusal.
-  return 'invalid';
+  return null;
+}
+
+/** An HTTP refusal: API_KEY_INVALID (400 INVALID_ARGUMENT) and every other one are `invalid`. */
+export function classify(status: number, info: GoogleErrorInfo): KeyCheckFailure {
+  return classifyKnown(status, info) ?? 'invalid';
 }
 
 /**
@@ -106,7 +123,7 @@ export async function checkKey(
   key: string,
   fetchImpl: FetchLike = (input, init) => fetch(input, init),
 ): Promise<KeyCheckResult> {
-  if (!HEADER_SAFE.test(key)) return { ok: false, reason: 'invalid' };
+  if (!isHeaderSafe(key)) return { ok: false, reason: 'invalid' };
 
   const probe = PROBES[provider];
   const controller = new AbortController();
