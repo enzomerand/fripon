@@ -41,7 +41,12 @@ const deps: BackgroundDeps = {
   analyzeImage,
   searchImage,
   loadImageGate,
-  checkKey,
+  checkKey: async (provider, key) => {
+    const result = await checkKey(provider, key);
+    // A Vision key that tests fine: whatever was wrong is fixed, so stop remembering the refusal.
+    if (provider === 'vision' && result.ok) searchImage.forgetKeyFailure();
+    return result;
+  },
   openOptions: openOptionsAt,
 };
 

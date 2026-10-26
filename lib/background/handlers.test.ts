@@ -75,8 +75,21 @@ describe('handleMessage', () => {
       { type: 'searchImage', photoUrl: 'https://images1.vinted.net/a.jpg' },
       deps,
     );
-    expect(deps.searchImage).toHaveBeenCalledWith('https://images1.vinted.net/a.jpg');
+    expect(deps.searchImage).toHaveBeenCalledWith('https://images1.vinted.net/a.jpg', false);
     expect(response).toEqual({ status: 'ok', matches });
+  });
+
+  it('asks the searcher for the cache only when the page says so', async () => {
+    const deps = makeDeps({
+      searchImage: vi.fn(() => Promise.resolve({ status: 'not_cached' as const })),
+    });
+    const photoUrl = 'https://images1.vinted.net/a.jpg';
+    expect(await handleMessage({ type: 'searchImage', photoUrl, cacheOnly: true }, deps)).toEqual({
+      status: 'not_cached',
+    });
+    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, true);
+    await handleMessage({ type: 'searchImage', photoUrl, cacheOnly: false }, deps);
+    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, false);
   });
 
   it('still answers a searchImage whose searcher rejects', async () => {

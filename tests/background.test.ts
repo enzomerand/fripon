@@ -124,7 +124,12 @@ describe('background', () => {
 
   describe('searchImage', () => {
     const PHOTO = 'https://images1.vinted.net/t/01_a/f800/main.webp?s=aa';
-    const KEY = 'AIzaSECRETSECRETSECRETSECRETSECRET1234';
+    // The background remembers a refused key in memory across tests: each test gets its own key.
+    let KEY = '';
+    let keyCount = 0;
+    beforeEach(() => {
+      KEY = `AIzaSECRETSECRETSECRETSECRETSECRET${String(++keyCount).padStart(4, '0')}`;
+    });
     const FOUND = {
       responses: [
         {
@@ -222,6 +227,80 @@ describe('background', () => {
         reason: 'billing',
       });
       expect(await used()).toBe(0);
+      vi.unstubAllGlobals();
+    });
+
+    it('answers from the cache only when asked to, and never spends for it', async () => {
+      const fetchMock = stubWeb(() => Response.json(FOUND));
+      await saveSettings({ keys: { vision: KEY } });
+      const send = start();
+
+      expect(
+        await send({ type: 'searchImage', photoUrl: PHOTO, cacheOnly: true }, fromPage),
+      ).toEqual({ status: 'not_cached' });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(await used()).toBe(0);
+
+      const searched = await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage);
+      expect(
+        await send({ type: 'searchImage', photoUrl: PHOTO, cacheOnly: true }, fromPage),
+      ).toEqual(searched);
+      expect(visionCalls(fetchMock)).toHaveLength(1);
+      expect(await used()).toBe(1);
+      vi.unstubAllGlobals();
+    });
+
+    it('answers no_key and quota from the background, whatever the page believes', async () => {
+      const fetchMock = stubWeb(() => Response.json(FOUND));
+      const send = start();
+      expect(await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage)).toEqual({
+        status: 'no_key',
+      });
+      await saveSettings({ keys: { vision: KEY }, caps: { vision: 1 } });
+      await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage);
+      expect(
+        await send(
+          { type: 'searchImage', photoUrl: 'https://images1.vinted.net/t/2/f800/b.webp' },
+          fromPage,
+        ),
+      ).toEqual({ status: 'quota' });
+      expect(visionCalls(fetchMock)).toHaveLength(1);
+      vi.unstubAllGlobals();
+    });
+
+    it('stops calling Google for a refused key until the key tests fine', async () => {
+      let vision = () =>
+        Response.json(
+          {
+            error: {
+              code: 403,
+              status: 'PERMISSION_DENIED',
+              message: 'This API method requires billing to be enabled.',
+            },
+          },
+          { status: 403 },
+        );
+      const fetchMock = stubWeb(() => vision());
+      await saveSettings({ keys: { vision: KEY } });
+      const send = start();
+      const other = 'https://images1.vinted.net/t/2/f800/b.webp';
+
+      const refused = { status: 'error', reason: 'billing' };
+      expect(await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage)).toEqual(refused);
+      expect(await send({ type: 'searchImage', photoUrl: other }, fromPage)).toEqual(refused);
+      expect(visionCalls(fetchMock)).toHaveLength(1);
+
+      // The user fixes the project and tests the key in the options page.
+      vision = () => Response.json({});
+      expect(await send({ type: 'testKey', provider: 'vision', key: KEY }, fromOptions)).toEqual({
+        ok: true,
+      });
+      vision = () => Response.json(FOUND);
+      const probes = visionCalls(fetchMock).length;
+      expect(
+        (await send({ type: 'searchImage', photoUrl: other }, fromPage)) as { status: string },
+      ).toMatchObject({ status: 'ok' });
+      expect(visionCalls(fetchMock)).toHaveLength(probes + 1);
       vi.unstubAllGlobals();
     });
 

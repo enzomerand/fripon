@@ -19,6 +19,13 @@ export const VISION_URL = 'https://vision.googleapis.com/v1/images:annotate';
  */
 export type VisionFailure = KeyCheckFailure | 'photo';
 
+/** Failures that come from the key or its project, and that the user fixes in Google Cloud. */
+export function isKeyFailure(reason: VisionFailure): boolean {
+  return (
+    reason === 'invalid' || reason === 'restricted' || reason === 'disabled' || reason === 'billing'
+  );
+}
+
 interface WebImage {
   url?: string;
 }

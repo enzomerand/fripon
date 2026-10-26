@@ -195,6 +195,8 @@ describe('imageCheckForSearch', () => {
     );
     expect(imageCheckForSearch({ status: 'no_key' })).toEqual(imageCheckOff('no_key'));
     expect(imageCheckForSearch({ status: 'quota' })).toEqual(imageCheckOff('quota'));
+    // Asked for the cache alone and not there: back to the row that waits for a click.
+    expect(imageCheckForSearch({ status: 'not_cached' })).toEqual(imageCheckOff('manual'));
     expect(imageCheckForSearch({ status: 'error', reason: 'billing' })).toEqual(
       imageCheckFailed('billing'),
     );

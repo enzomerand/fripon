@@ -1,3 +1,4 @@
+import { isKeyFailure } from '../google/vision';
 import type { SearchImageFailure, SearchImageResponse } from '../messages';
 import type { CheckAction, CheckResult, ImageMatch } from '../model';
 
@@ -92,14 +93,6 @@ const FAILURE_DETAILS: Record<SearchImageFailure, string> = {
   photo: "La photo de l'annonce n'a pas pu être analysée, réessaie plus tard.",
 };
 
-/** Failures that come from the key or its project: the user can fix them in the settings. */
-const KEY_FAILURES: readonly SearchImageFailure[] = [
-  'invalid',
-  'restricted',
-  'disabled',
-  'billing',
-];
-
 /** The image row when the search was tried and failed. */
 export function imageCheckFailed(reason: SearchImageFailure): CheckResult {
   return {
@@ -108,7 +101,7 @@ export function imageCheckFailed(reason: SearchImageFailure): CheckResult {
     tag: 'Recherche impossible',
     detail: FAILURE_DETAILS[reason],
     signals: [],
-    ...(KEY_FAILURES.includes(reason) && { action: 'open_keys' as const }),
+    ...(isKeyFailure(reason) && { action: 'open_keys' as const }),
   };
 }
 
@@ -123,6 +116,9 @@ export function imageCheckForSearch(response: SearchImageResponse): CheckResult 
       return imageCheckOff('no_key');
     case 'quota':
       return imageCheckOff('quota');
+    case 'not_cached':
+      // Only asked for the cache (manual mode) and nothing was there: the row waits for a click.
+      return imageCheckOff('manual');
     case 'error':
       return imageCheckFailed(response.reason);
     default:

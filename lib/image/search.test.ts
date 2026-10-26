@@ -4,7 +4,7 @@ import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { getUsage, reserve } from '../credits';
 import type { WebDetectResult } from '../google/vision';
 import { saveSettings } from '../settings';
-import { bytesToBase64, createImageSearcher } from './search';
+import { KEY_FAILURE_MEMO_MS, bytesToBase64, createImageSearcher } from './search';
 import { VISION_CACHE_PREFIX, VISION_CACHE_TTL_MS } from './search-cache';
 
 const KEY = 'AIzaSyFakeKeyForTestsOnly_0123456789abcd';
@@ -186,7 +186,7 @@ describe('createImageSearcher cache', () => {
 });
 
 describe('createImageSearcher gate', () => {
-  it('does nothing without a key', async () => {
+  it('does nothing without a key: no download, no call, no credit', async () => {
     await saveSettings({ keys: { vision: '' } });
     const { search, photo, detect } = setup();
     expect(await search(PHOTO)).toEqual({ status: 'no_key' });
@@ -195,23 +195,40 @@ describe('createImageSearcher gate', () => {
     expect(await used()).toBe(0);
   });
 
-  it('does not call Google when the cap is reached, and counts nothing', async () => {
+  it('answers quota before downloading anything when the cap is reached, and counts nothing', async () => {
     await saveSettings({ caps: { vision: 1 } });
-    const { search, detect } = setup();
+    const { search, photo, detect } = setup();
     await search(PHOTO);
+    expect(photo).toHaveBeenCalledOnce();
     expect(await search('https://images1.vinted.net/t/02/f800/other.webp?s=b')).toEqual({
       status: 'quota',
     });
+    expect(photo).toHaveBeenCalledOnce();
     expect(detect).toHaveBeenCalledOnce();
     expect(await used()).toBe(1);
   });
 
   it('takes the cap from the stored settings, whatever a page was told earlier', async () => {
-    const { search, detect } = setup();
+    const { search, photo, detect } = setup();
     expect((await reserve('vision', 1, null)).ok).toBe(true);
     await saveSettings({ caps: { vision: 1 } });
     expect(await search(PHOTO)).toEqual({ status: 'quota' });
+    expect(photo).not.toHaveBeenCalled();
     expect(detect).not.toHaveBeenCalled();
+    expect(await used()).toBe(1);
+  });
+
+  it('gives the last credit to one of two searches racing for it', async () => {
+    await saveSettings({ caps: { vision: 1 } });
+    const { search, photo, detect } = setup();
+    const [a, b] = await Promise.all([
+      search('https://images1.vinted.net/t/1/f800/a.webp'),
+      search('https://images1.vinted.net/t/2/f800/b.webp'),
+    ]);
+    expect([a.status, b.status].sort()).toEqual(['ok', 'quota']);
+    // Both passed the cap check and downloaded; only one reserved the credit and called Google.
+    expect(photo).toHaveBeenCalledTimes(2);
+    expect(detect).toHaveBeenCalledOnce();
     expect(await used()).toBe(1);
   });
 
@@ -255,7 +272,7 @@ describe('createImageSearcher failures', () => {
   it('can try again after a refunded failure, and pays once for the success', async () => {
     const detect = vi
       .fn<(base64: string, key: string) => Promise<WebDetectResult>>()
-      .mockResolvedValueOnce({ ok: false, reason: 'billing', refundable: true })
+      .mockResolvedValueOnce({ ok: false, reason: 'quota', refundable: true })
       .mockResolvedValueOnce(FOUND);
     const search = createImageSearcher({
       fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
@@ -278,6 +295,148 @@ describe('createImageSearcher failures', () => {
     const { search } = setup();
     vi.spyOn(browser.storage.local, 'get').mockRejectedValue(new Error('storage down'));
     expect(await search(PHOTO)).toEqual({ status: 'error', reason: 'network' });
+  });
+});
+
+describe('createImageSearcher key failures', () => {
+  const refused = (reason: 'invalid' | 'restricted' | 'disabled' | 'billing') =>
+    ({ ok: false, reason, refundable: true }) as const;
+  const OTHER = 'https://images1.vinted.net/t/2/f800/other.webp?s=b';
+
+  it.each(['invalid', 'restricted', 'disabled', 'billing'] as const)(
+    'remembers a "%s" key for 10 minutes: no download, no call, no credit for the next listings',
+    async (reason) => {
+      const { search, photo, detect } = setup(refused(reason));
+      expect(await search(PHOTO)).toEqual({ status: 'error', reason });
+      expect(photo).toHaveBeenCalledOnce();
+      expect(detect).toHaveBeenCalledOnce();
+
+      clock = NOW + KEY_FAILURE_MEMO_MS - 1;
+      expect(await search(OTHER)).toEqual({ status: 'error', reason });
+      expect(await search(PHOTO)).toEqual({ status: 'error', reason });
+      expect(photo).toHaveBeenCalledOnce();
+      expect(detect).toHaveBeenCalledOnce();
+      expect(await used()).toBe(0);
+    },
+  );
+
+  it('tries the key again after 10 minutes', async () => {
+    const { search, detect } = setup(refused('billing'));
+    await search(PHOTO);
+    clock = NOW + KEY_FAILURE_MEMO_MS;
+    await search(OTHER);
+    expect(detect).toHaveBeenCalledTimes(2);
+  });
+
+  it('remembers a key whose failure Google may have billed too', async () => {
+    const { search, detect } = setup({ ok: false, reason: 'invalid', refundable: false });
+    await search(PHOTO);
+    await search(OTHER);
+    expect(detect).toHaveBeenCalledOnce();
+  });
+
+  it('does not remember failures that say nothing about the key', async () => {
+    for (const reason of ['network', 'photo', 'quota'] as const) {
+      const { search, detect } = setup({ ok: false, reason, refundable: true });
+      await search(PHOTO);
+      await search(OTHER);
+      expect(detect).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it('forgets the failure as soon as another key is saved', async () => {
+    const { search, detect } = setup(refused('invalid'));
+    await search(PHOTO);
+    await saveSettings({ keys: { vision: `${KEY}2` } });
+    await search(OTHER);
+    expect(detect).toHaveBeenCalledTimes(2);
+    expect(detect).toHaveBeenLastCalledWith('AQID', `${KEY}2`);
+  });
+
+  it('forgets the failure when asked to (the key just tested fine)', async () => {
+    const { search, detect } = setup(refused('billing'));
+    await search(PHOTO);
+    search.forgetKeyFailure();
+    await search(OTHER);
+    expect(detect).toHaveBeenCalledTimes(2);
+  });
+
+  it('forgets the failure after a success', async () => {
+    const detect = vi
+      .fn<(base64: string, key: string) => Promise<WebDetectResult>>()
+      .mockResolvedValueOnce(refused('billing'))
+      .mockResolvedValue(FOUND);
+    const search = createImageSearcher({
+      fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
+      webDetect: detect,
+      now: () => clock,
+    });
+    await search(PHOTO);
+    clock = NOW + KEY_FAILURE_MEMO_MS;
+    expect((await search(OTHER)).status).toBe('ok');
+    expect((await search('https://images1.vinted.net/t/3/f800/c.webp')).status).toBe('ok');
+    expect(detect).toHaveBeenCalledTimes(3);
+  });
+
+  it('still serves a cached result while the key is remembered as refused', async () => {
+    const detect = vi
+      .fn<(base64: string, key: string) => Promise<WebDetectResult>>()
+      .mockResolvedValueOnce(FOUND)
+      .mockResolvedValue(refused('billing'));
+    const search = createImageSearcher({
+      fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
+      webDetect: detect,
+      now: () => clock,
+    });
+    await search(PHOTO);
+    await search(OTHER);
+    expect((await search(PHOTO)).status).toBe('ok');
+    expect(await search(OTHER)).toEqual({ status: 'error', reason: 'billing' });
+  });
+});
+
+describe('createImageSearcher cache only', () => {
+  it('answers not_cached for a photo never searched, touching nothing', async () => {
+    const { search, photo, detect } = setup();
+    expect(await search(PHOTO, true)).toEqual({ status: 'not_cached' });
+    expect(photo).not.toHaveBeenCalled();
+    expect(detect).not.toHaveBeenCalled();
+    expect(await used()).toBe(0);
+  });
+
+  it('answers the cached result for free, even with no key and the cap reached', async () => {
+    const { search, detect } = setup();
+    const result = await search(PHOTO);
+    await saveSettings({ keys: { vision: '' }, caps: { vision: 1 } });
+
+    expect(await search(PHOTO, true)).toEqual(result);
+    expect(detect).toHaveBeenCalledOnce();
+    expect(await used()).toBe(1);
+  });
+
+  it('never searches, even with a key and credits', async () => {
+    const { search, detect } = setup();
+    await search(PHOTO, true);
+    await search(PHOTO, true);
+    expect(detect).not.toHaveBeenCalled();
+    expect(await used()).toBe(0);
+    // A normal search afterwards still works.
+    expect((await search(PHOTO)).status).toBe('ok');
+  });
+
+  it('forgets a cached result after 7 days', async () => {
+    const { search } = setup();
+    await search(PHOTO);
+    clock = NOW + VISION_CACHE_TTL_MS + 1;
+    expect(await search(PHOTO, true)).toEqual({ status: 'not_cached' });
+  });
+
+  it('refuses a foreign URL like any search', async () => {
+    const { search } = setup();
+    expect(await search('https://evil.example/a.jpg', true)).toEqual({
+      status: 'error',
+      reason: 'photo',
+    });
   });
 });
 

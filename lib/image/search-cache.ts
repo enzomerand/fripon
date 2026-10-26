@@ -3,7 +3,13 @@ import { isRecord } from '../json';
 import { withLock } from '../lock';
 import type { ImageMatch, Money } from '../model';
 
-/** `storage.local` key of a search: `fripon:vision:v1:<origin + path of the photo>`. */
+/**
+ * `storage.local` key of a search: `fripon:vision:v1:<origin + path of the photo>`.
+ *
+ * Lot 3b adds the original price to each match: it must bump this to `v2` at the same time.
+ * Entries written by `v1` hold `price: null` for 7 days, and would hide the prices of every photo
+ * already searched. The old `v1` entries are inert once nothing reads them.
+ */
 export const VISION_CACHE_PREFIX = 'fripon:vision:v1:';
 /** A result is reused for this long: the same listing reloaded costs nothing. */
 export const VISION_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;

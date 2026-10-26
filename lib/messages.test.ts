@@ -122,6 +122,15 @@ describe('isRuntimeMessage', () => {
     expect(isRuntimeMessage({ type: 'searchImage', photoUrl: null })).toBe(false);
   });
 
+  it('accepts cacheOnly on a searchImage request only as a boolean', () => {
+    const photoUrl = 'https://x.test/a.jpg';
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, cacheOnly: true })).toBe(true);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, cacheOnly: false })).toBe(true);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, cacheOnly: 'yes' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, cacheOnly: 1 })).toBe(false);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, cacheOnly: null })).toBe(false);
+  });
+
   it('accepts a well-formed analyzeImage request only', () => {
     expect(isRuntimeMessage({ type: 'analyzeImage', url: 'https://x.test/a.jpg' })).toBe(true);
     expect(isRuntimeMessage({ type: 'analyzeImage' })).toBe(false);
