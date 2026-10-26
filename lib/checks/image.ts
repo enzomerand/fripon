@@ -93,16 +93,24 @@ const FAILURE_DETAILS: Record<SearchImageFailure, string> = {
   photo: "La photo de l'annonce n'a pas pu être analysée, réessaie plus tard.",
 };
 
-/** The image row when the search was tried and failed. */
+/** What the retry button of a failed search says: the action is the one of the "Au clic" button. */
+export const RETRY_SEARCH_LABEL = 'Réessayer la recherche';
+
+/**
+ * The image row when the search was tried and failed. A problem with the key sends the user to
+ * the keys; anything else (Google not answering, a photo that could not be read, a quota used up
+ * at Google) may pass, so the row offers to search again.
+ */
 export function imageCheckFailed(reason: SearchImageFailure): CheckResult {
-  return {
+  const row: CheckResult = {
     id: 'image',
     status: 'off',
     tag: 'Recherche impossible',
     detail: FAILURE_DETAILS[reason],
     signals: [],
-    ...(isKeyFailure(reason) && { action: 'open_keys' as const }),
   };
+  if (isKeyFailure(reason)) return { ...row, action: 'open_keys' };
+  return { ...row, action: 'run_image_search', actionLabel: RETRY_SEARCH_LABEL };
 }
 
 /** The image row for the answer of the background to a `searchImage` request. */

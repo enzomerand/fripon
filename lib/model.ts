@@ -77,6 +77,8 @@ export interface CheckResult {
   signals: Signal[];
   /** A button the card shows under the detail, when there is something the user can do about it. */
   action?: CheckAction;
+  /** What that button says, when the default wording of the action does not fit (a retry). */
+  actionLabel?: string;
   /** Image row only: where the photo was found, exact matches first (the card links to them). */
   matches?: ImageMatch[];
 }

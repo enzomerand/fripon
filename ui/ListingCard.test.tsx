@@ -239,7 +239,7 @@ describe('ListingCard', () => {
 
       expect(links().map((a) => a.textContent)).toEqual([
         'Voir sur Shein',
-        'Voir sur Temu',
+        'Photo proche sur Temu',
         'Chercher moi-même sur Google Lens',
       ]);
       const [first, second] = links();
@@ -282,7 +282,7 @@ describe('ListingCard', () => {
       await expand();
       const hrefs = links().map((a) => a.getAttribute('href'));
       expect(hrefs.some((href) => href?.startsWith('javascript'))).toBe(false);
-      expect(links().map((a) => a.textContent)).toContain('Voir sur Temu');
+      expect(links().map((a) => a.textContent)).toContain('Photo proche sur Temu');
     });
 
     it('puts match links on the image row only', async () => {
@@ -294,6 +294,18 @@ describe('ListingCard', () => {
       await show({ ...state, checks: [state.checks[0] as CheckResult, stray, ...checks.slice(2)] });
       await expand();
       expect(links().filter((a) => a.textContent === 'Voir sur Shein')).toHaveLength(1);
+    });
+
+    it('labels a copy "Voir sur" and a lookalike "Photo proche sur"', async () => {
+      const matches = [match('Temu', 2, false), match('Shein', 1, true), match('Temu', 3, false)];
+      await show(withImage({ matches }));
+      await expand();
+      expect(links().map((a) => a.textContent)).toEqual([
+        'Voir sur Shein',
+        'Photo proche sur Temu',
+        'Photo proche sur Temu',
+        'Chercher moi-même sur Google Lens',
+      ]);
     });
 
     it('shows "Lancer la recherche d\'image" on the run action, and runs the search on click', async () => {
@@ -358,6 +370,70 @@ describe('ListingCard', () => {
       expect(row.textContent).toContain('Recherche en cours…');
       expect(row.querySelector('.fripon__tag--off')?.textContent).toBe('En cours');
       expect(row.querySelector('.fripon__action')).toBeNull();
+    });
+
+    describe('the search button on the collapsed card', () => {
+      const manual = withImage({ status: 'off', tag: 'Au clic', action: 'run_image_search' });
+      const topButtons = () => [
+        ...root.querySelectorAll<HTMLButtonElement>('.fripon > .fripon__actions .fripon__action'),
+      ];
+
+      it('sits under the verdict lines, before the toggle, and runs the search', async () => {
+        const run = vi.fn();
+        await show(manual, undefined, undefined, run);
+
+        const buttons = topButtons();
+        expect(buttons.map((b) => b.textContent)).toEqual(["Lancer la recherche d'image"]);
+        const card = root.querySelector('.fripon') as HTMLElement;
+        const order = [...card.children].map((el) => el.className);
+        expect(order.indexOf('fripon__actions')).toBeGreaterThan(order.lastIndexOf('fripon__line'));
+        expect(order.indexOf('fripon__actions')).toBeLessThan(order.indexOf('fripon__toggle'));
+        await act(() => buttons[0]?.click());
+        expect(run).toHaveBeenCalledOnce();
+      });
+
+      it('hands over to the image row once the checks are expanded: one button at a time', async () => {
+        await show(manual, undefined, undefined, vi.fn());
+        await expand();
+        expect(topButtons()).toHaveLength(0);
+        expect(root.querySelectorAll('.fripon__action')).toHaveLength(1);
+        expect(root.querySelector('.fripon__check .fripon__action')?.textContent).toBe(
+          "Lancer la recherche d'image",
+        );
+        await act(() => (root.querySelector('.fripon__toggle') as HTMLButtonElement).click());
+        expect(topButtons()).toHaveLength(1);
+      });
+
+      it('has no button when nobody handles the click', async () => {
+        await show(manual);
+        expect(topButtons()).toHaveLength(0);
+      });
+
+      it('has no button for the other actions, which stay in the expanded rows', async () => {
+        await show(withImage({ status: 'off', action: 'open_guide' }), undefined, vi.fn(), vi.fn());
+        expect(root.querySelector('.fripon__action')).toBeNull();
+        await show(withImage({ matches: [match('Shein', 1, true)] }), undefined, vi.fn(), vi.fn());
+        expect(root.querySelector('.fripon__action')).toBeNull();
+      });
+
+      it('says "Réessayer la recherche" on a retry, collapsed and expanded', async () => {
+        const retry = withImage({
+          status: 'off',
+          tag: 'Recherche impossible',
+          action: 'run_image_search',
+          actionLabel: 'Réessayer la recherche',
+        });
+        const run = vi.fn();
+        await show(retry, undefined, undefined, run);
+        expect(topButtons().map((b) => b.textContent)).toEqual(['Réessayer la recherche']);
+        await act(() => topButtons()[0]?.click());
+        expect(run).toHaveBeenCalledOnce();
+
+        await expand();
+        expect(root.querySelector('.fripon__check .fripon__action')?.textContent).toBe(
+          'Réessayer la recherche',
+        );
+      });
     });
 
     it('keeps the checks expanded when the row changes after a search', async () => {

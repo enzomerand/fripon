@@ -44,6 +44,11 @@ const OPTIONS_ACTIONS: Record<
 };
 
 const RUN_IMAGE_SEARCH_LABEL = "Lancer la recherche d'image";
+
+/** "Voir sur Shein" for a copy of the photo, "Photo proche sur Temu" for a lookalike. */
+function matchLinkLabel(match: ImageMatch): string {
+  return match.exact ? `Voir sur ${match.platform}` : `Photo proche sur ${match.platform}`;
+}
 /** The row links to the first few matches only: the card is not a results page. */
 const MAX_MATCH_LINKS = 3;
 
@@ -76,6 +81,15 @@ const CHECKS_ID = 'fripon-checks';
 
 function Tag({ check }: { check: CheckResult }) {
   return <span class={`fripon__tag fripon__tag--${TAG_COLOUR[check.status]}`}>{check.tag}</span>;
+}
+
+/** The "Au clic" button, and the retry button of a failed search: both run the image search. */
+function RunSearchButton({ check, onRun }: { check: CheckResult; onRun: () => void }) {
+  return (
+    <button type="button" class="fripon__action" onClick={onRun}>
+      {check.actionLabel ?? RUN_IMAGE_SEARCH_LABEL}
+    </button>
+  );
 }
 
 /** The matches the row links to: exact ones first, and only real http(s) links. */
@@ -121,11 +135,7 @@ function CheckRow({ check, listing, onOpenOptions, onRunImageSearch }: CheckRowP
               {action.label}
             </button>
           )}
-          {runSearch && (
-            <button type="button" class="fripon__action" onClick={runSearch}>
-              {RUN_IMAGE_SEARCH_LABEL}
-            </button>
-          )}
+          {runSearch && <RunSearchButton check={check} onRun={runSearch} />}
           {matches.map((match) => (
             <a
               key={match.url}
@@ -134,7 +144,7 @@ function CheckRow({ check, listing, onOpenOptions, onRunImageSearch }: CheckRowP
               target="_blank"
               rel="noopener noreferrer"
             >
-              Voir sur {match.platform}
+              {matchLinkLabel(match)}
             </a>
           ))}
           {showLens && (
@@ -158,6 +168,15 @@ type ResultProps = Extract<CardState, { status: 'done' }> &
 
 function Result({ listing, verdict, checks, onOpenOptions, onRunImageSearch }: ResultProps) {
   const [expanded, setExpanded] = useState(false);
+  // The collapsed card is all most people see: the button that runs the search must be there too.
+  // Once expanded, the image row carries it.
+  const imageCheck = checks.find((check) => check.id === 'image');
+  const searchButton =
+    !expanded && imageCheck?.action === 'run_image_search' && onRunImageSearch ? (
+      <div class="fripon__actions">
+        <RunSearchButton check={imageCheck} onRun={onRunImageSearch} />
+      </div>
+    ) : null;
   return (
     <section
       class={`fripon fripon--${LEVEL_COLOUR[verdict.level]}`}
@@ -172,6 +191,7 @@ function Result({ listing, verdict, checks, onOpenOptions, onRunImageSearch }: R
           {line}
         </p>
       ))}
+      {searchButton}
       <button
         type="button"
         class="fripon__toggle"

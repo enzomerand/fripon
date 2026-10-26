@@ -151,26 +151,40 @@ describe('imageCheckFailed', () => {
     },
   );
 
-  it('says Google does not answer on a network failure, with no button', () => {
-    const row = imageCheckFailed('network');
-    expect(row).toMatchObject({
+  it('says Google does not answer on a network failure', () => {
+    expect(imageCheckFailed('network')).toMatchObject({
       status: 'off',
       tag: 'Recherche impossible',
       detail: 'Google ne répond pas, réessaie plus tard.',
     });
-    expect(row).not.toHaveProperty('action');
   });
 
-  it('explains a quota used up at Google and a photo that could not be loaded', () => {
+  it('explains a quota used up at Google and a photo that could not be analysed', () => {
     expect(imageCheckFailed('quota').detail).toBe(
       'Google a atteint le quota de ta clé Vision, réessaie plus tard.',
     );
     expect(imageCheckFailed('photo').detail).toBe(
       "La photo de l'annonce n'a pas pu être analysée, réessaie plus tard.",
     );
-    expect(imageCheckFailed('quota')).not.toHaveProperty('action');
-    expect(imageCheckFailed('photo')).not.toHaveProperty('action');
   });
+
+  it.each(['network', 'photo', 'quota'] as const)(
+    'offers to search again when the failure may pass (%s)',
+    (reason) => {
+      expect(imageCheckFailed(reason)).toMatchObject({
+        action: 'run_image_search',
+        actionLabel: 'Réessayer la recherche',
+      });
+    },
+  );
+
+  it.each(['invalid', 'restricted', 'disabled', 'billing'] as const)(
+    'does not offer to search again when the key is the problem (%s)',
+    (reason) => {
+      expect(imageCheckFailed(reason)).not.toHaveProperty('actionLabel');
+      expect(imageCheckFailed(reason).action).toBe('open_keys');
+    },
+  );
 
   it('says something for every reason', () => {
     const reasons: SearchImageFailure[] = [

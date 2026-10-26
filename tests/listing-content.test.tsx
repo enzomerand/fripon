@@ -298,7 +298,7 @@ describe('listing content script', () => {
       const links = [...(hostCard()?.shadowRoot?.querySelectorAll('a') ?? [])];
       expect(links.map((a) => a.textContent)).toEqual([
         'Voir sur Shein',
-        'Voir sur Temu',
+        'Photo proche sur Temu',
         'Chercher moi-même sur Google Lens',
       ]);
       expect(links[0]?.getAttribute('href')).toBe(SHEIN_EXACT.url);
