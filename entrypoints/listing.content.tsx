@@ -65,7 +65,6 @@ function createCardController(ctx: ContentScriptContext) {
 
   function stopKeepingAttached() {
     keepAttached?.disconnect();
-    keepAttached = null;
   }
 
   /**
@@ -73,7 +72,6 @@ function createCardController(ctx: ContentScriptContext) {
    * with it: move the same host, shadow tree and state included, next to the new anchor.
    */
   function keepCardAttached(host: HTMLElement) {
-    stopKeepingAttached();
     keepAttached = new MutationObserver(() => {
       // A card moved onto another item's page before `wxt:locationchange` disposes it would lie.
       if (host.isConnected || itemIdFromUrl(location.href) !== currentItemId) return;
