@@ -16,12 +16,12 @@ Design: `docs/superpowers/specs/2026-10-20-fripon-extension-design.md`. Mockups:
 
 WXT 0.21 + Preact 11 + TypeScript strict (`noUncheckedIndexedAccess`), Manifest V3.
 
-- `entrypoints/background.ts`: service worker. Answers `lib/messages.ts` requests (`analyzeImage`, `getImageGate`, `openOptions`, `testKey`), opens the options page (toolbar button, first install). Handler logic is in `lib/background/handlers.ts`.
-- `entrypoints/listing.content.tsx`: content script on Vinted item pages. Mounts the card (shadow root UI), reads the listing, runs `lib/analysis.ts`, re-runs on bfcache restore and `wxt:locationchange`.
+- `entrypoints/background.ts`: service worker. Answers `lib/messages.ts` requests (`analyzeImage`, `searchImage`, `getImageGate`, `openOptions`, `testKey`), opens the options page (toolbar button, first install). Handler logic is in `lib/background/handlers.ts`.
+- `entrypoints/listing.content.tsx`: content script on Vinted item pages. Mounts the card (shadow root UI), reads the listing, runs `lib/analysis.ts`, re-runs on bfcache restore and `wxt:locationchange`. In "Au clic" mode the image row's button sends `searchImage`, then `withImageSearch` redoes the verdict from the stored checks (no new Vinted request).
 - `entrypoints/options/` + `ui/options/`: full-tab settings page (mode, keys, credits, guide). `ui/ListingCard.*`: the card.
 - `lib/vinted/`: `listing-reader.ts` (JSON-LD + DOM), `selectors.ts` (every selector, one place), `anchor.ts`, `api.ts` (seller fetch: shared request queue spaced 1.5 s across tabs, 24 h cache, cooldown after 403/429).
-- `lib/checks/` (image, price, seller, photos, description) -> `lib/verdict.ts`; `lib/analysis.ts` orchestrates; `lib/image/` pixel hashing, run in the background.
-- `lib/settings.ts` (`fripon:settings:v1`), `lib/credits.ts` (counters `fripon:credits:v1:<provider>:<period>`, periods and resets on Pacific time like Google, caps from `CREDIT_POLICY`, atomic `reserve`/`refund`), `lib/lock.ts` (`navigator.locks` with an in-module fallback), `lib/gate.ts` (`ready|no_key|quota|manual`), `lib/google/key-check.ts` (free key test), `lib/options-nav.ts` (which options section to show, via `storage.session`).
+- `lib/checks/` (image, price, seller, photos, description) -> `lib/verdict.ts`; `lib/analysis.ts` orchestrates (the Vision search starts in parallel with the seller fetch when the gate is `ready`); `lib/checks/image-matches.ts` turns Vision `pagesWithMatchingImages` into `ImageMatch[]` (platform allowlist by hostname, `exact` = full match on a product URL); `lib/image/` runs in the background: pixel hashing, `analyzer.ts` (guarded photo fetch, shared), `search.ts` (`searchImage`: 7-day cache in `search-cache.ts` under `fripon:vision:v1:<origin+path>`, in-flight dedupe, `reserve`/`refund`).
+- `lib/settings.ts` (`fripon:settings:v1`), `lib/credits.ts` (counters `fripon:credits:v1:<provider>:<period>`, periods and resets on Pacific time like Google, caps from `CREDIT_POLICY`, atomic `reserve`/`refund`), `lib/lock.ts` (`navigator.locks` with an in-module fallback), `lib/gate.ts` (`ready|no_key|quota|manual`), `lib/google/key-check.ts` (free key test, and the Google error classifier `vision.ts` reuses), `lib/google/vision.ts` (`webDetect`, the paid WEB_DETECTION call), `lib/options-nav.ts` (which options section to show, via `storage.session`).
 
 ## Conventions
 
@@ -39,4 +39,7 @@ WXT 0.21 + Preact 11 + TypeScript strict (`noUncheckedIndexedAccess`), Manifest 
 - Vinted is not a single-page app (pages reload), but bfcache restores (`pageshow`) and `wxt:locationchange` are handled anyway.
 - Paid Google calls (lots 3-4): `reserve` a credit in the background right before each call and `refund` it if the call cost nothing. The gate sent to pages is only a display hint.
 - Do not touch existing storage keys (`fripon:seller:v2:*`, `fripon:lastRequestAt:*`, `fripon:cooldownUntil:*`).
+- Vinted re-renders the item sidebar ~0.3 s and ~2 s after load: injected nodes must re-attach, and browser tests must inject at DOMContentLoaded, not after load.
+- Vision WEB_DETECTION finds Shein catalog photos as many `pagesWithMatchingImages` across shein country hosts (some are category pages): exact = `fullMatchingImages` on a product URL.
+- Listing-grid thumbnails often lazy-load placeholders: take `og:image` / JSON-LD photos instead.
 - Typed `browser.runtime.getURL('/options.html')` only exists after `wxt prepare`: build the URL from `getURL('/')`.
