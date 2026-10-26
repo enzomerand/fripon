@@ -1,6 +1,5 @@
 import { isRecord } from '../json';
 import {
-  classify,
   classifyKnown,
   errorInfoOf,
   isHeaderSafe,
@@ -14,8 +13,11 @@ export const VISION_TIMEOUT_MS = 20_000;
 export const VISION_MAX_RESULTS = 30;
 export const VISION_URL = 'https://vision.googleapis.com/v1/images:annotate';
 
-/** Same words as a key check: why Google refused (see `KeyCheckFailure`). */
-export type VisionFailure = KeyCheckFailure;
+/**
+ * Why a search failed: the words of a key check (see `KeyCheckFailure`), or `photo` when the
+ * problem is the image itself (Google could not read it, or it is too big).
+ */
+export type VisionFailure = KeyCheckFailure | 'photo';
 
 interface WebImage {
   url?: string;
@@ -37,19 +39,30 @@ export interface WebDetection {
 }
 
 export type WebDetectResult =
-  { ok: true; webDetection: WebDetection } | { ok: false; reason: VisionFailure };
+  | { ok: true; webDetection: WebDetection }
+  | {
+      ok: false;
+      reason: VisionFailure;
+      /**
+       * true only when Google certainly did not bill the call: it was never sent, or Google
+       * answered 400, 403 or 429 with a refusal it names (invalid key, API blocked or disabled,
+       * billing off, quota). Anything else (a timeout, a 5xx, an unreadable answer, an error on
+       * the image) may have been processed, so the credit stays spent.
+       */
+      refundable: boolean;
+    };
 
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 /** gRPC codes of a per-image error (`google.rpc.Status`) that need a word of their own. */
-const GRPC_RESOURCE_EXHAUSTED = 8;
+const GRPC_INVALID_ARGUMENT = 3;
 const GRPC_PERMISSION_DENIED = 7;
+const GRPC_RESOURCE_EXHAUSTED = 8;
 const GRPC_UNAUTHENTICATED = 16;
 
 /**
- * The failure of one image inside a 200 answer. Billing, API and key problems are named by
- * Google's reasons; anything else (bad image data...) is not the key's fault, so it counts as a
- * failed attempt that may be retried.
+ * The failure of one image inside a 200 answer. Key, billing and API problems are named by
+ * Google's reasons; "bad image data" blames the photo; anything else is a failed attempt.
  */
 function perImageFailure(error: unknown): VisionFailure {
   const info = errorInfoOf(error);
@@ -57,7 +70,26 @@ function perImageFailure(error: unknown): VisionFailure {
   if (code === GRPC_RESOURCE_EXHAUSTED && info.status === '') info.status = 'RESOURCE_EXHAUSTED';
   const known = classifyKnown(0, info);
   if (known) return known;
-  return code === GRPC_PERMISSION_DENIED || code === GRPC_UNAUTHENTICATED ? 'invalid' : 'network';
+  if (code === GRPC_PERMISSION_DENIED || code === GRPC_UNAUTHENTICATED) return 'invalid';
+  if (code === GRPC_INVALID_ARGUMENT || /bad image data/i.test(info.message)) return 'photo';
+  return 'network';
+}
+
+/** HTTP statuses on which a refusal that Google names is known not to have been billed. */
+const UNBILLED_REFUSALS: ReadonlySet<number> = new Set([400, 403, 429]);
+
+/**
+ * An HTTP refusal. A recognised one is the key's or the project's problem, and free of charge on
+ * the statuses of `UNBILLED_REFUSALS`. An unrecognised 400 or 413 blames the image, any other
+ * unrecognised refusal reads as a bad key; neither is known to be free of charge.
+ */
+async function refusal(response: Response): Promise<WebDetectResult> {
+  const known = classifyKnown(response.status, await readError(response));
+  if (known) {
+    return { ok: false, reason: known, refundable: UNBILLED_REFUSALS.has(response.status) };
+  }
+  const imageProblem = response.status === 400 || response.status === 413;
+  return { ok: false, reason: imageProblem ? 'photo' : 'invalid', refundable: false };
 }
 
 /**
@@ -108,7 +140,8 @@ export async function webDetect(
   key: string,
   fetchImpl: FetchLike = (input, init) => fetch(input, init),
 ): Promise<WebDetectResult> {
-  if (!isHeaderSafe(key)) return { ok: false, reason: 'invalid' };
+  // Never sent, so never billed.
+  if (!isHeaderSafe(key)) return { ok: false, reason: 'invalid', refundable: true };
 
   const controller = new AbortController();
   // Covers the whole exchange, body included.
@@ -128,22 +161,22 @@ export async function webDetect(
       credentials: 'omit',
       signal: controller.signal,
     });
-    // Google having a bad moment says nothing about the key.
-    if (response.status >= 500) return { ok: false, reason: 'network' };
-    if (!response.ok)
-      return { ok: false, reason: classify(response.status, await readError(response)) };
+    // Google having a bad moment says nothing about the key, and may have billed the call.
+    if (response.status >= 500) return { ok: false, reason: 'network', refundable: false };
+    if (!response.ok) return await refusal(response);
 
     const body: unknown = await response.json();
     const first = isRecord(body) && Array.isArray(body.responses) ? body.responses[0] : undefined;
-    if (!isRecord(first)) return { ok: false, reason: 'network' };
-    // The call went through but this image failed: no result, and nothing to bill.
+    if (!isRecord(first)) return { ok: false, reason: 'network', refundable: false };
+    // The call went through but this image failed: no result, yet not proven free of charge.
     if (first.error !== undefined && first.error !== null) {
-      return { ok: false, reason: perImageFailure(first.error) };
+      return { ok: false, reason: perImageFailure(first.error), refundable: false };
     }
     // A photo with no match at all comes back without `webDetection`.
     return { ok: true, webDetection: sanitizeWebDetection(first.webDetection) };
   } catch {
-    return { ok: false, reason: 'network' };
+    // A timeout, an abort or a failed request: Google may have received the image.
+    return { ok: false, reason: 'network', refundable: false };
   } finally {
     clearTimeout(timer);
   }

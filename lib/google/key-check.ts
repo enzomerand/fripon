@@ -93,6 +93,7 @@ const has = (info: GoogleErrorInfo, ...reasons: string[]) =>
 export function classifyKnown(status: number, info: GoogleErrorInfo): KeyCheckFailure | null {
   // The key is restricted to other APIs (403 PERMISSION_DENIED): not a disabled API, a restriction.
   if (has(info, 'API_KEY_SERVICE_BLOCKED')) return 'restricted';
+  if (has(info, 'API_KEY_INVALID')) return 'invalid';
   if (
     has(info, 'BILLING_DISABLED') ||
     /requires billing|billing (is )?(not enabled|disabled)/i.test(info.message)

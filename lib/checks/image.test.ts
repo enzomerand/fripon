@@ -151,7 +151,7 @@ describe('imageCheckFailed', () => {
       'Google a atteint le quota de ta clé Vision, réessaie plus tard.',
     );
     expect(imageCheckFailed('photo').detail).toBe(
-      "Impossible de charger la photo de l'annonce, réessaie plus tard.",
+      "La photo de l'annonce n'a pas pu être analysée, réessaie plus tard.",
     );
     expect(imageCheckFailed('quota')).not.toHaveProperty('action');
     expect(imageCheckFailed('photo')).not.toHaveProperty('action');

@@ -226,26 +226,36 @@ describe('createImageSearcher gate', () => {
 });
 
 describe('createImageSearcher failures', () => {
-  it.each(['invalid', 'disabled', 'restricted', 'billing', 'quota', 'network'] as const)(
-    'gives the credit back and reports "%s"',
+  it.each(['invalid', 'disabled', 'restricted', 'billing', 'quota'] as const)(
+    'gives the credit back when Google refused for "%s" without billing',
     async (reason) => {
-      const { search } = setup({ ok: false, reason });
+      const { search } = setup({ ok: false, reason, refundable: true });
       expect(await search(PHOTO)).toEqual({ status: 'error', reason });
       expect(await used()).toBe(0);
       expect(await cacheKeys()).toEqual([]);
     },
   );
 
-  it('treats a Vision call that throws as a network failure and refunds', async () => {
+  it.each(['network', 'photo', 'invalid', 'quota'] as const)(
+    'keeps the credit when the call may have been billed ("%s")',
+    async (reason) => {
+      const { search } = setup({ ok: false, reason, refundable: false });
+      expect(await search(PHOTO)).toEqual({ status: 'error', reason });
+      expect(await used()).toBe(1);
+      expect(await cacheKeys()).toEqual([]);
+    },
+  );
+
+  it('keeps the credit of a Vision call that throws, and reports a network failure', async () => {
     const { search } = setup(new Error('boom'));
     expect(await search(PHOTO)).toEqual({ status: 'error', reason: 'network' });
-    expect(await used()).toBe(0);
+    expect(await used()).toBe(1);
   });
 
-  it('can try again after a failure, and pays once for the success', async () => {
+  it('can try again after a refunded failure, and pays once for the success', async () => {
     const detect = vi
       .fn<(base64: string, key: string) => Promise<WebDetectResult>>()
-      .mockResolvedValueOnce({ ok: false, reason: 'network' })
+      .mockResolvedValueOnce({ ok: false, reason: 'billing', refundable: true })
       .mockResolvedValueOnce(FOUND);
     const search = createImageSearcher({
       fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
@@ -326,9 +336,10 @@ describe('createImageSearcher in flight', () => {
   });
 
   it('forgets an in-flight search once it is over', async () => {
-    const { search, detect } = setup({ ok: false, reason: 'network' });
+    const { search, detect } = setup({ ok: false, reason: 'network', refundable: false });
     await search(PHOTO);
     await search(PHOTO);
     expect(detect).toHaveBeenCalledTimes(2);
+    expect(await used()).toBe(2);
   });
 });

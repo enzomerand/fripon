@@ -1,6 +1,7 @@
 import { browser } from 'wxt/browser';
 import type { ImageGate } from './gate';
-import type { KeyCheckFailure, KeyCheckResult } from './google/key-check';
+import type { KeyCheckResult } from './google/key-check';
+import type { VisionFailure } from './google/vision';
 import type { ImageMatch } from './model';
 import type { Provider } from './settings';
 
@@ -30,8 +31,8 @@ export interface SearchImageRequest {
   photoUrl: string;
 }
 
-/** Why a search failed: Google's reason (see `KeyCheckFailure`), or `photo` when the photo itself could not be loaded. */
-export type SearchImageFailure = KeyCheckFailure | 'photo';
+/** Why a search failed (see `VisionFailure`); `photo` blames the image, not the key or Google. */
+export type SearchImageFailure = VisionFailure;
 
 export type SearchImageResponse =
   | { status: 'ok'; matches: ImageMatch[] }

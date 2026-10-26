@@ -88,7 +88,7 @@ const FAILURE_DETAILS: Record<SearchImageFailure, string> = {
   billing: KEY_REFUSED,
   quota: 'Google a atteint le quota de ta clé Vision, réessaie plus tard.',
   network: 'Google ne répond pas, réessaie plus tard.',
-  photo: "Impossible de charger la photo de l'annonce, réessaie plus tard.",
+  photo: "La photo de l'annonce n'a pas pu être analysée, réessaie plus tard.",
 };
 
 /** Failures that come from the key or its project: the user can fix them in the settings. */

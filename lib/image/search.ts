@@ -34,8 +34,8 @@ const NETWORK_ERROR: SearchImageResponse = { status: 'error', reason: 'network' 
  *
  * - A search made in the last 7 days is answered from the cache, for free, even without a key.
  * - The same photo asked twice at once is searched once.
- * - A Vision credit is reserved right before the paid call and given back if it fails: a
- *   failure costs nothing, whatever the reason. Failures are never cached.
+ * - A Vision credit is reserved right before the paid call and given back only when Google
+ *   certainly did not bill it (see `WebDetectResult.refundable`). Failures are never cached.
  *
  * The key and Google's raw answer stay in here. The returned function never rejects.
  */
@@ -70,10 +70,12 @@ export function createImageSearcher(
     try {
       result = await deps.webDetect(image, key);
     } catch {
-      result = { ok: false, reason: 'network' };
+      result = { ok: false, reason: 'network', refundable: false };
     }
     if (!result.ok) {
-      await refund('vision', 1, reservation.periodId).catch(() => undefined);
+      // Only a call Google certainly did not bill gives its credit back: after a timeout or a
+      // 5xx the image may have been processed, and the counter must not understate the spend.
+      if (result.refundable) await refund('vision', 1, reservation.periodId).catch(() => undefined);
       return { status: 'error', reason: result.reason };
     }
 
