@@ -4,6 +4,7 @@ import {
   IMAGE_FETCH_TIMEOUT_MS,
   IMAGE_MAX_BYTES,
   createImageAnalyzer,
+  fetchGuardedImage,
   isAllowedImageUrl,
   type ImageAnalyzerDeps,
 } from './analyzer';
@@ -149,5 +150,46 @@ describe('createImageAnalyzer', () => {
     expect(fetchMock).toHaveBeenCalledTimes(IMAGE_CACHE_MAX_ENTRIES + 1);
     await analyze(url(0)); // evicted
     expect(fetchMock).toHaveBeenCalledTimes(IMAGE_CACHE_MAX_ENTRIES + 2);
+  });
+});
+
+// The download the photo search shares with the analyzer: the same guards, without the pixels.
+describe('fetchGuardedImage', () => {
+  it('returns the photo bytes', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(imageResponse('abc')));
+    const blob = await fetchGuardedImage(fetchMock, URL_OK);
+    expect(await blob.text()).toBe('abc');
+    expect(fetchMock).toHaveBeenCalledWith(
+      URL_OK,
+      expect.objectContaining({ redirect: 'error', credentials: 'omit' }),
+    );
+  });
+
+  it('refuses a foreign URL without touching the network', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(imageResponse()));
+    await expect(fetchGuardedImage(fetchMock, 'https://evil.example/a.jpg')).rejects.toThrow(
+      'URL not allowed',
+    );
+    await expect(
+      fetchGuardedImage(fetchMock, 'https://images1.vinted.net:8443/a.jpg'),
+    ).rejects.toThrow('URL not allowed');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('fails on an HTTP error, a foreign final host and an oversized photo', async () => {
+    const missing = () => Promise.resolve(imageResponse('', { status: 404 }));
+    await expect(fetchGuardedImage(missing, URL_OK)).rejects.toThrow('HTTP 404');
+
+    const moved = imageResponse();
+    Object.defineProperty(moved, 'url', { value: 'https://evil.example/a.jpg' });
+    await expect(fetchGuardedImage(() => Promise.resolve(moved), URL_OK)).rejects.toThrow(
+      'Unexpected image host',
+    );
+
+    const huge = () =>
+      Promise.resolve(
+        imageResponse('x', { headers: { 'content-length': String(IMAGE_MAX_BYTES + 1) } }),
+      );
+    await expect(fetchGuardedImage(huge, URL_OK)).rejects.toThrow('Image too large');
   });
 });

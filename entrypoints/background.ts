@@ -1,8 +1,10 @@
-import { createImageAnalyzer, type PixelResult } from '../lib/image/analyzer';
+import { createImageAnalyzer, fetchGuardedImage, type PixelResult } from '../lib/image/analyzer';
+import { createImageSearcher } from '../lib/image/search';
 import { dHash, catalogScore, hashToHex } from '../lib/image/pixels';
 import { handleMessage, isAllowedSender, type BackgroundDeps } from '../lib/background/handlers';
 import { loadImageGate } from '../lib/gate';
 import { checkKey } from '../lib/google/key-check';
+import { webDetect } from '../lib/google/vision';
 import { isRuntimeMessage } from '../lib/messages';
 import { openOptionsAt } from '../lib/options-nav';
 
@@ -30,8 +32,14 @@ const analyzeImage = createImageAnalyzer({
   computePixels,
 });
 
+const searchImage = createImageSearcher({
+  fetchPhoto: (url) => fetchGuardedImage((input, init) => fetch(input, init), url),
+  webDetect: (base64, key) => webDetect(base64, key),
+});
+
 const deps: BackgroundDeps = {
   analyzeImage,
+  searchImage,
   loadImageGate,
   checkKey,
   openOptions: openOptionsAt,

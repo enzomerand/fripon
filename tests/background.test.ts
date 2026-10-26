@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import background from '../entrypoints/background';
+import { getUsage } from '../lib/credits';
 import { PENDING_SECTION_KEY } from '../lib/options-nav';
 import { loadSettings, saveSettings } from '../lib/settings';
 
@@ -117,6 +118,126 @@ describe('background', () => {
       expect(answer).toEqual({ ok: false, reason: 'invalid' });
       expect(headerKey(fetchMock)).toBe('AIzaCandidate');
       expect((await loadSettings()).keys.gemini).toBe('AIzaSaved');
+      vi.unstubAllGlobals();
+    });
+  });
+
+  describe('searchImage', () => {
+    const PHOTO = 'https://images1.vinted.net/t/01_a/f800/main.webp?s=aa';
+    const KEY = 'AIzaSECRETSECRETSECRETSECRETSECRET1234';
+    const FOUND = {
+      responses: [
+        {
+          webDetection: {
+            pagesWithMatchingImages: [
+              {
+                url: 'https://fr.shein.com/Robe-Test-p-1234567-cat-1727.html',
+                fullMatchingImages: [{ url: 'https://img.example.test/a.jpg' }],
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    /** The Vinted CDN answers with a few bytes, Vision with `visionAnswer`. */
+    function stubWeb(visionAnswer: () => Response) {
+      const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>((url) =>
+        Promise.resolve(
+          String(url).startsWith('https://vision.googleapis.com/')
+            ? visionAnswer()
+            : new Response(new Uint8Array([1, 2, 3]), {
+                status: 200,
+                headers: { 'content-type': 'image/webp' },
+              }),
+        ),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      return fetchMock;
+    }
+    const visionCalls = (fetchMock: ReturnType<typeof stubWeb>) =>
+      fetchMock.mock.calls.filter(([url]) => String(url).includes('vision.googleapis.com'));
+    const used = async () => (await getUsage('vision', null)).used;
+
+    it('searches the photo with the saved key, spends one credit and answers with the matches only', async () => {
+      const fetchMock = stubWeb(() => Response.json(FOUND));
+      await saveSettings({ keys: { vision: KEY } });
+      const send = start();
+
+      const answer = await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage);
+      expect(answer).toEqual({
+        status: 'ok',
+        matches: [
+          {
+            platform: 'Shein',
+            url: 'https://fr.shein.com/Robe-Test-p-1234567-cat-1727.html',
+            exact: true,
+            price: null,
+          },
+        ],
+      });
+      expect(JSON.stringify(answer)).not.toContain('SECRET');
+
+      const calls = visionCalls(fetchMock);
+      expect(calls).toHaveLength(1);
+      const [url, init] = calls[0] as [string, RequestInit];
+      expect(url).not.toContain('SECRET');
+      expect((init.headers as Record<string, string>)['x-goog-api-key']).toBe(KEY);
+      expect(await used()).toBe(1);
+
+      // The same listing reloaded: no second call, no second credit.
+      expect(await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage)).toEqual(answer);
+      expect(visionCalls(fetchMock)).toHaveLength(1);
+      expect(await used()).toBe(1);
+      vi.unstubAllGlobals();
+    });
+
+    it('does nothing without a key', async () => {
+      const fetchMock = stubWeb(() => Response.json(FOUND));
+      const send = start();
+      expect(await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage)).toEqual({
+        status: 'no_key',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    });
+
+    it('gives the credit back when Google refuses', async () => {
+      stubWeb(() =>
+        Response.json(
+          {
+            error: {
+              code: 403,
+              status: 'PERMISSION_DENIED',
+              message: 'This API method requires billing to be enabled.',
+            },
+          },
+          { status: 403 },
+        ),
+      );
+      await saveSettings({ keys: { vision: KEY } });
+      const send = start();
+      expect(await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage)).toEqual({
+        status: 'error',
+        reason: 'billing',
+      });
+      expect(await used()).toBe(0);
+      vi.unstubAllGlobals();
+    });
+
+    it('refuses a photo that is not on the Vinted CDN, and a sender that is not ours', async () => {
+      const fetchMock = stubWeb(() => Response.json(FOUND));
+      await saveSettings({ keys: { vision: KEY } });
+      const send = start();
+
+      expect(
+        await send({ type: 'searchImage', photoUrl: 'https://evil.example/a.jpg' }, fromPage),
+      ).toEqual({ status: 'error', reason: 'photo' });
+      expect(
+        await send({ type: 'searchImage', photoUrl: PHOTO }, { id: 'other', url: fromPage.url }),
+      ).toBe('no answer');
+      expect(await send({ type: 'searchImage' }, fromPage)).toBe('no answer');
+      expect(fetchMock).not.toHaveBeenCalled();
       vi.unstubAllGlobals();
     });
   });
