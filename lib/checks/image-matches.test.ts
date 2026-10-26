@@ -31,6 +31,10 @@ describe('platformOfHost', () => {
     ['www.wish.com', 'Wish'],
     ['fr.zaful.com', 'Zaful'],
     ['www.banggood.com', 'Banggood'],
+    ['www.shopcider.com', 'Cider'],
+    ['shopcider.com', 'Cider'],
+    ['fr.romwe.fr', 'Romwe'],
+    ['aliexpress.ru', 'AliExpress'],
     ['shein.com.', 'Shein'],
   ])('knows %s as %s', (host, name) => {
     expect(platformOfHost(host)?.name).toBe(name);
@@ -45,6 +49,20 @@ describe('platformOfHost', () => {
     'sheinfan.fr',
     'shein.shop',
     'shein.top',
+    // One TLD per platform: look-alikes on another TLD are not them.
+    'wish.it',
+    'www.wish.fr',
+    'dhgate.xx',
+    'dhgate.co.uk',
+    'temu.fr',
+    'www.temu.co.uk',
+    'aliexpress.fr',
+    'aliexpress.co.uk',
+    'alibaba.fr',
+    'banggood.de',
+    'zaful.it',
+    'shopcider.fr',
+    'cider.com',
     'shein',
     'com',
     'wish.shein.evil.com',
@@ -55,6 +73,16 @@ describe('platformOfHost', () => {
     '',
   ])('does not know %s', (host) => {
     expect(platformOfHost(host)).toBeUndefined();
+  });
+
+  it('lets Shein and Romwe use country domains, and the others only their own', () => {
+    expect(platformOfHost('www.shein.com.au')?.name).toBe('Shein');
+    expect(platformOfHost('shein.co.il')?.name).toBe('Shein');
+    expect(platformOfHost('www.romwe.com')?.name).toBe('Romwe');
+    expect(platformOfHost('www.aliexpress.com')?.name).toBe('AliExpress');
+    expect(platformOfHost('www.aliexpress.us')?.name).toBe('AliExpress');
+    expect(platformOfHost('www.aliexpress.ru')?.name).toBe('AliExpress');
+    expect(platformOfHost('www.temu.com')?.name).toBe('Temu');
   });
 
   it('reads the registrable label, so a platform name in a subdomain does not count', () => {
@@ -75,6 +103,8 @@ describe('parseWebDetection platforms', () => {
         full('https://www.instagram.com/p/abc/'),
         full('https://shein.someblog.com/post-p-1234567'),
         full('https://wishlist.com/product/1'),
+        full('https://www.wish.it/product/1'),
+        full('https://www.dhgate.xx/product/1'),
         full('https://www.leboncoin.fr/vetements/123.htm'),
       ),
     );
@@ -100,6 +130,7 @@ describe('parseWebDetection platforms', () => {
         full('https://www.wish.com/product/abc'),
         full('https://fr.zaful.com/robe-p_300.html'),
         full('https://www.banggood.com/Robe-p-400.html'),
+        full('https://www.shopcider.com/product/robe-fleurie-1234'),
       ),
     );
     expect(matches.map((m) => m.platform)).toEqual([
@@ -112,6 +143,7 @@ describe('parseWebDetection platforms', () => {
       'Wish',
       'Zaful',
       'Banggood',
+      'Cider',
     ]);
     expect(matches.every((m) => m.exact && m.price === null)).toBe(true);
   });
@@ -143,6 +175,7 @@ describe('parseWebDetection exact matches', () => {
     ['https://www.dhgate.com/product/robe-femme/123456789.html'],
     ['https://www.wish.com/product/5c1234abcd'],
     ['https://fr.zaful.com/robe-p_1234567.html'],
+    ['https://www.shopcider.com/product/robe-fleurie-1234'],
   ])('is exact for a full match on the product page %s', (url) => {
     expect(parseWebDetection(detect(full(url)))[0]?.exact).toBe(true);
   });
@@ -166,6 +199,7 @@ describe('parseWebDetection exact matches', () => {
     ['https://www.alibaba.com/trade/search?SearchText=robe'],
     ['https://fr.zaful.com/robes-c_100.html'],
     ['https://www.dhgate.com/wholesale/robe.html'],
+    ['https://www.shopcider.com/collection/robes'],
     ['https://www.shein.com/'],
   ])('is not exact for the category or search page %s, even with a full match', (url) => {
     const matches = parseWebDetection(detect(full(url)));

@@ -52,12 +52,14 @@ export function imageCheckSearching(): CheckResult {
 }
 
 /**
- * The image row for what the search found. `matches` come exact first (see `parseWebDetection`):
- * a copy on a product page is red, only similar pages are orange, nothing is green.
+ * The image row for what the search found: a copy on a product page is red, only similar pages
+ * are orange, nothing is green. The status and the platform come from the exact match when there
+ * is one, whatever the order of `matches`.
  */
 export function imageCheckForMatches(matches: ImageMatch[]): CheckResult {
-  const first = matches[0];
-  if (!first) {
+  const exact = matches.find((match) => match.exact);
+  const closest = exact ?? matches[0];
+  if (!closest) {
     return {
       id: 'image',
       status: 'ok',
@@ -66,14 +68,13 @@ export function imageCheckForMatches(matches: ImageMatch[]): CheckResult {
       signals: [],
     };
   }
-  const exact = first.exact;
   return {
     id: 'image',
     status: exact ? 'bad' : 'warn',
-    tag: exact ? `Trouvée sur ${first.platform}` : 'Photo proche',
+    tag: exact ? `Trouvée sur ${closest.platform}` : 'Photo proche',
     detail: exact
-      ? `La même photo est en vente sur ${first.platform}.`
-      : `Une photo très proche existe sur ${first.platform}.`,
+      ? `La même photo est en vente sur ${closest.platform}.`
+      : `Une photo très proche existe sur ${closest.platform}.`,
     signals: [],
     matches,
   };

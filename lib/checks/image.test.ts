@@ -98,6 +98,21 @@ describe('imageCheckForMatches', () => {
     expect(row).not.toHaveProperty('action');
   });
 
+  it('reads the exact match wherever it is in the list', () => {
+    const row = imageCheckForMatches([similarTemu, exactShein]);
+    expect(row).toMatchObject({
+      status: 'bad',
+      tag: 'Trouvée sur Shein',
+      detail: 'La même photo est en vente sur Shein.',
+    });
+    expect(row.matches).toEqual([similarTemu, exactShein]);
+  });
+
+  it('names the platform of the first exact match when several are exact', () => {
+    const exactTemu: ImageMatch = { ...similarTemu, exact: true };
+    expect(imageCheckForMatches([similarTemu, exactTemu, exactShein]).tag).toBe('Trouvée sur Temu');
+  });
+
   it('is orange for pages that only look like the photo', () => {
     const row = imageCheckForMatches([similarTemu]);
     expect(row).toMatchObject({
