@@ -1,3 +1,4 @@
+import type { FetchLike } from '../fetch';
 import type { AnalyzeImageResponse } from '../messages';
 
 /** Photos are only fetched from Vinted's image CDN (`images1.vinted.net`...). */
@@ -16,7 +17,7 @@ export interface PixelResult {
 }
 
 export interface ImageAnalyzerDeps {
-  fetch(url: string, init: RequestInit): Promise<Response>;
+  fetch: FetchLike;
   /** Decodes the image and computes its hash and catalogue score. */
   computePixels(blob: Blob): Promise<PixelResult>;
 }
@@ -69,6 +70,24 @@ async function readLimited(response: Response): Promise<Blob> {
 }
 
 /**
+ * Downloads a Vinted photo with every guard: an allowed URL, no redirect, no cookies, a timeout,
+ * a final host that is still the CDN and a size limit. Everything the background fetches from
+ * the page's request goes through here.
+ */
+export async function fetchGuardedImage(fetchImpl: FetchLike, url: string): Promise<Blob> {
+  if (!isAllowedImageUrl(url)) throw new Error('URL not allowed');
+  const response = await fetchImpl(url, {
+    // A redirect could lead anywhere: refuse it rather than follow it.
+    redirect: 'error',
+    credentials: 'omit',
+    signal: AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (response.url && !isAllowedImageUrl(response.url)) throw new Error('Unexpected image host');
+  return readLimited(response);
+}
+
+/**
  * Builds the `analyzeImage` handler of the background. Results are cached by URL; the in-flight
  * promise is cached too, so the same photo asked twice at once is downloaded once. Failures are
  * never cached, so a later request can retry. The returned function never rejects.
@@ -79,15 +98,7 @@ export function createImageAnalyzer(
   const cache = new Map<string, Promise<AnalyzeImageResponse>>();
 
   async function run(url: string): Promise<AnalyzeImageResponse> {
-    const response = await deps.fetch(url, {
-      // A redirect could lead anywhere: refuse it rather than follow it.
-      redirect: 'error',
-      credentials: 'omit',
-      signal: AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS),
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    if (response.url && !isAllowedImageUrl(response.url)) throw new Error('Unexpected image host');
-    const pixels = await deps.computePixels(await readLimited(response));
+    const pixels = await deps.computePixels(await fetchGuardedImage(deps.fetch, url));
     return { ok: true, hash: pixels.hash, catalogScore: pixels.catalogScore };
   }
 

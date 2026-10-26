@@ -11,6 +11,7 @@ function makeDeps(overrides: Partial<BackgroundDeps> = {}): BackgroundDeps {
     analyzeImage: vi.fn(() =>
       Promise.resolve({ ok: true as const, hash: '0'.repeat(16), catalogScore: 0.1 }),
     ),
+    searchImage: vi.fn(() => Promise.resolve({ status: 'ok' as const, matches: [] })),
     loadImageGate: vi.fn(() => Promise.resolve('ready' as const)),
     checkKey: vi.fn(() => Promise.resolve({ ok: true as const })),
     openOptions: vi.fn(() => Promise.resolve()),
@@ -20,19 +21,20 @@ function makeDeps(overrides: Partial<BackgroundDeps> = {}): BackgroundDeps {
 
 describe('isAllowedSender', () => {
   const analyze: RuntimeMessage = { type: 'analyzeImage', url: 'https://x.test/a.jpg' };
+  const search: RuntimeMessage = { type: 'searchImage', photoUrl: 'https://x.test/a.jpg' };
   const gate: RuntimeMessage = { type: 'getImageGate' };
   const open: RuntimeMessage = { type: 'openOptions', section: 'guide' };
   const test: RuntimeMessage = { type: 'testKey', provider: 'vision', key: 'AIzaX' };
 
   it('rejects every message from another extension or from nowhere', () => {
-    for (const message of [analyze, gate, open, test]) {
+    for (const message of [analyze, search, gate, open, test]) {
       expect(isAllowedSender(message, { id: 'other', url: optionsPage }, own)).toBe(false);
       expect(isAllowedSender(message, { url: optionsPage }, own)).toBe(false);
     }
   });
 
-  it('lets our content scripts ask for the gate, an image analysis or the options page', () => {
-    for (const message of [analyze, gate, open]) {
+  it('lets our content scripts ask for the gate, an image analysis, a search or the options page', () => {
+    for (const message of [analyze, search, gate, open]) {
       expect(isAllowedSender(message, { id: 'abc', url: page }, own)).toBe(true);
     }
   });
@@ -60,6 +62,44 @@ describe('handleMessage', () => {
     );
     expect(deps.analyzeImage).toHaveBeenCalledWith('https://x.test/a.jpg');
     expect(response).toMatchObject({ ok: true });
+  });
+
+  it('forwards searchImage to the searcher with the photo URL', async () => {
+    const matches = [
+      { platform: 'Shein', url: 'https://fr.shein.com/x-p-1.html', exact: true, price: null },
+    ];
+    const deps = makeDeps({
+      searchImage: vi.fn(() => Promise.resolve({ status: 'ok' as const, matches })),
+    });
+    const response = await handleMessage(
+      { type: 'searchImage', photoUrl: 'https://images1.vinted.net/a.jpg' },
+      deps,
+    );
+    expect(deps.searchImage).toHaveBeenCalledWith('https://images1.vinted.net/a.jpg', false);
+    expect(response).toEqual({ status: 'ok', matches });
+  });
+
+  it('asks the searcher for the cache only when the page says so', async () => {
+    const deps = makeDeps({
+      searchImage: vi.fn(() => Promise.resolve({ status: 'not_cached' as const })),
+    });
+    const photoUrl = 'https://images1.vinted.net/a.jpg';
+    expect(await handleMessage({ type: 'searchImage', photoUrl, cacheOnly: true }, deps)).toEqual({
+      status: 'not_cached',
+    });
+    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, true);
+    await handleMessage({ type: 'searchImage', photoUrl, cacheOnly: false }, deps);
+    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, false);
+  });
+
+  it('still answers a searchImage whose searcher rejects', async () => {
+    const deps = makeDeps({ searchImage: vi.fn(() => Promise.reject(new Error('boom'))) });
+    expect(
+      await handleMessage(
+        { type: 'searchImage', photoUrl: 'https://images1.vinted.net/a.jpg' },
+        deps,
+      ),
+    ).toEqual({ status: 'error', reason: 'network' });
   });
 
   it('answers getImageGate with the gate word and nothing else', async () => {

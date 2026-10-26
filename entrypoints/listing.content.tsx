@@ -1,8 +1,18 @@
 import { render } from 'preact';
 import type { ContentScriptContext } from 'wxt/utils/content-script-context';
-import { AnalysisCancelledError, analyzeListing, type AnalysisDeps } from '../lib/analysis';
+import {
+  AnalysisCancelledError,
+  analyzeListing,
+  searchPhoto,
+  withImageSearch,
+  type AnalysisDeps,
+  type AnalysisResult,
+  type SearchDeps,
+} from '../lib/analysis';
+import { imageCheckSearching } from '../lib/checks/image';
 import type { ImageGate } from '../lib/gate';
 import { sendMessage, type OptionsSection } from '../lib/messages';
+import type { Listing } from '../lib/model';
 import { waitFor } from '../lib/wait';
 import { fetchSeller } from '../lib/vinted/api';
 import { findAnchor } from '../lib/vinted/anchor';
@@ -22,6 +32,11 @@ const HOST_CSS = ':host { display: block !important; margin: 12px 0 !important; 
 const analysisDeps: AnalysisDeps = {
   fetchSeller,
   analyzeImage: (url) => sendMessage({ type: 'analyzeImage', url }),
+};
+
+const searchDeps: SearchDeps = {
+  searchImage: (photoUrl, cacheOnly) =>
+    sendMessage({ type: 'searchImage', photoUrl, ...(cacheOnly && { cacheOnly: true }) }),
 };
 
 const IMAGE_GATES: readonly ImageGate[] = ['ready', 'no_key', 'quota', 'manual'];
@@ -45,6 +60,22 @@ function openOptions(section: OptionsSection) {
 
 type Ui = Awaited<ReturnType<typeof createShadowRootUi<HTMLElement>>>;
 
+/** What the card currently shows, kept to redo the verdict once the image search answers. */
+interface Analysed {
+  listing: Listing;
+  result: AnalysisResult;
+  /** What the background said about the search when the page opened (a display hint). */
+  gate: ImageGate;
+  /** true while a search that can spend is running (not the look in the cache): a second one does not start. */
+  searching: boolean;
+}
+
+/**
+ * auto: the search the card starts by itself once it is shown. click: the button of the image row.
+ * One code path for both: automatic mode is a click nobody has to make.
+ */
+type SearchTrigger = 'auto' | 'click';
+
 /** Owns the card of this page: mounts it, updates it, and replaces it on a new run. */
 function createCardController(ctx: ContentScriptContext) {
   let runId = 0;
@@ -53,14 +84,80 @@ function createCardController(ctx: ContentScriptContext) {
   let ui: Ui | null = null;
   let container: HTMLElement | null = null;
   let keepAttached: MutationObserver | null = null;
+  /** The finished analysis of the current run, null until there is one. */
+  let analysed: Analysed | null = null;
   ctx.onInvalidated(() => stopKeepingAttached());
 
   function show(state: CardState) {
     if (!container) return;
     render(
-      <ListingCard state={state} onRetry={() => void start()} onOpenOptions={openOptions} />,
+      <ListingCard
+        state={state}
+        onRetry={() => void start()}
+        onOpenOptions={openOptions}
+        onRunImageSearch={() => searchImage('click')}
+      />,
       container,
     );
+  }
+
+  /** Starts the image search without waiting for it. Never rejects: a failure must not hurt the page. */
+  function searchImage(trigger: SearchTrigger) {
+    void runImageSearch(trigger).catch((error: unknown) => {
+      console.warn('[Fripon] The image search failed.', error);
+    });
+  }
+
+  /**
+   * Searches the photo, then redoes the verdict from the checks the page already has: no new seller
+   * request, no new photo download, no free check run again.
+   *
+   * What the page asks follows the gate, but the background has the last word on keys and credits:
+   * - ready: the search, started as soon as the card shows (the image row already says it runs).
+   * - no_key, quota: the same request. The background answers the same words without spending, or
+   *   with a result when this photo was searched before.
+   * - manual: by itself only a look in the cache (`cacheOnly`), which costs nothing; the click
+   *   sends the real search.
+   */
+  async function runImageSearch(trigger: SearchTrigger) {
+    const current = analysed;
+    if (!current) return;
+    const { listing, result, gate } = current;
+    const cacheOnly = trigger === 'auto' && gate === 'manual';
+    // A look in the cache is quick and free: it never keeps a click from starting its search.
+    if (!cacheOnly) {
+      if (current.searching) return;
+      current.searching = true;
+    }
+    try {
+      // The row already says "Recherche en cours…" when the search starts by itself; only a click
+      // has to take the button's place.
+      if (trigger === 'click') {
+        show({
+          status: 'done',
+          listing,
+          verdict: result.verdict,
+          checks: result.checks.map((check) =>
+            check.id === 'image' ? imageCheckSearching() : check,
+          ),
+        });
+      }
+      const response = await searchPhoto(listing.photoUrls[0], searchDeps, cacheOnly);
+      // A newer run (new item, bfcache restore) took the card over while the search ran.
+      if (analysed !== current) return;
+      // A look in the cache only ever shows a result: a miss, a failure or a lost message leaves the
+      // "Au clic" row alone (it is not a failed search), and so does a click that got there first.
+      if (cacheOnly && (current.searching || response.status !== 'ok')) return;
+      current.result = withImageSearch(result, response);
+      show({
+        status: 'done',
+        listing,
+        verdict: current.result.verdict,
+        checks: current.result.checks,
+      });
+    } finally {
+      if (!cacheOnly) current.searching = false;
+    }
   }
 
   function stopKeepingAttached() {
@@ -89,6 +186,7 @@ function createCardController(ctx: ContentScriptContext) {
     ui?.remove();
     ui = null;
     container = null;
+    analysed = null;
     // A card left by a previous run of this script (extension reload, bfcache).
     for (const stale of document.querySelectorAll(HOST_TAG)) stale.remove();
   }
@@ -145,13 +243,19 @@ function createCardController(ctx: ContentScriptContext) {
       return;
     }
 
-    const { verdict, checks } = await analyzeListing(listing, analysisDeps, {
-      imageGate: await imageGate,
-      // A superseded run must not spend API calls or downloads.
-      isCancelled: () => id !== runId || ctx.isInvalid,
+    const gate = await imageGate;
+    const isCancelled = () => id !== runId || ctx.isInvalid;
+    const result = await analyzeListing(listing, analysisDeps, {
+      imageGate: gate,
+      // A superseded run must not send further requests or download further photos.
+      isCancelled,
     });
     if (id !== runId) return;
-    show({ status: 'done', listing, verdict, checks });
+    analysed = { listing, result, gate, searching: false };
+    show({ status: 'done', listing, verdict: result.verdict, checks: result.checks });
+    // The card does not wait for Google. The search starts only now, and only for a run that is
+    // still current: a superseded run (new item, bfcache restore, invalidated script) spends nothing.
+    if (!isCancelled()) searchImage('auto');
   }
 
   /** (Re)starts the whole run. Never rejects: the page must not be affected by a failure here. */

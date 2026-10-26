@@ -37,6 +37,19 @@ const PAGE = `
     <div data-testid="item-photo-1"><img data-testid="item-photo-1--img" src="https://images1.vinted.net/t/01_a/f800/main.webp?s=aa"></div>
   </main>`;
 
+const SHEIN_EXACT = {
+  platform: 'Shein',
+  url: 'https://fr.shein.com/Robe-Test-p-1234567-cat-1727.html',
+  exact: true,
+  price: null,
+};
+const TEMU_SIMILAR = {
+  platform: 'Temu',
+  url: 'https://www.temu.com/robe-g-601099512345678.html',
+  exact: false,
+  price: null,
+};
+
 const json = (body: unknown) =>
   new Response(JSON.stringify(body), {
     status: 200,
@@ -105,7 +118,24 @@ async function until(predicate: () => boolean, timeoutMs = 8_000) {
 /** What the background answers to `getImageGate`; an Error makes the message fail. */
 let imageGate: string | Error;
 
-type SentMessage = { type: string; url?: string; section?: string };
+type SentMessage = {
+  type: string;
+  url?: string;
+  photoUrl?: string;
+  cacheOnly?: boolean;
+  section?: string;
+};
+
+/**
+ * What the background answers to `searchImage`; a promise lets a test hold the answer back. By
+ * default it answers as the real one would for the gate: no key, quota, the cache only, or nothing found.
+ */
+let searchAnswer: (message: SentMessage) => Promise<unknown>;
+
+const PHOTO_URL = 'https://images1.vinted.net/t/01_a/f800/main.webp?s=aa';
+
+/** The searches that can spend: not the look in the cache that "Au clic" mode makes by itself. */
+const paidSearches = () => sentMessages('searchImage').filter((message) => !message.cacheOnly);
 
 function sentMessages(type: string): SentMessage[] {
   return vi
@@ -124,6 +154,18 @@ function actionButton(): HTMLButtonElement | null {
   return hostCard()?.shadowRoot?.querySelector('.fripon__action') ?? null;
 }
 
+/** Holds the answer of the real search until the test releases it; the look in the cache answers at once. */
+function holdSearch() {
+  let release: (value: unknown) => void = () => undefined;
+  searchAnswer = (message) =>
+    message.cacheOnly
+      ? Promise.resolve({ status: 'not_cached' })
+      : new Promise((resolve) => {
+          release = resolve;
+        });
+  return (value: unknown) => release(value);
+}
+
 let ctx: ContentScriptContext;
 
 beforeEach(() => {
@@ -132,11 +174,22 @@ beforeEach(() => {
   document.head.innerHTML = '';
   document.body.innerHTML = PAGE;
   imageGate = 'no_key';
+  searchAnswer = (message) =>
+    Promise.resolve(
+      message.cacheOnly
+        ? { status: 'not_cached' }
+        : imageGate === 'quota'
+          ? { status: 'quota' }
+          : imageGate === 'ready' || imageGate === 'manual'
+            ? { status: 'ok', matches: [] }
+            : { status: 'no_key' },
+    );
   vi.spyOn(browser.runtime, 'sendMessage').mockImplementation(((message: SentMessage) => {
     if (message.type === 'getImageGate') {
       return imageGate instanceof Error ? Promise.reject(imageGate) : Promise.resolve(imageGate);
     }
     if (message.type === 'openOptions') return Promise.resolve(undefined);
+    if (message.type === 'searchImage') return searchAnswer(message);
     return Promise.resolve({
       ok: true,
       hash: message.url?.includes('/02/') ? 'ffffffffffffffff' : '0000000000000000',
@@ -236,6 +289,8 @@ describe('listing content script', () => {
       expect(actionButton()?.textContent).toBe('Activer en 2 minutes');
       actionButton()?.click();
       expect(sentMessages('openOptions')).toEqual([{ type: 'openOptions', section: 'guide' }]);
+      // The page asks whatever the gate: the background has the last word on keys and credits.
+      expect(sentMessages('searchImage')).toEqual([{ type: 'searchImage', photoUrl: PHOTO_URL }]);
     }, 15_000);
 
     it('shows the cap reached with a link to the settings on quota', async () => {
@@ -251,18 +306,114 @@ describe('listing content script', () => {
       expect(sentMessages('openOptions')).toEqual([{ type: 'openOptions', section: 'credits' }]);
     }, 15_000);
 
-    it('says the key is ready when the gate is open', async () => {
+    it('searches the main photo when the gate is open, and says nothing was found', async () => {
       imageGate = 'ready';
       stubFetch();
       await script.main(ctx);
       await until(() => shadowText().includes('Voir les 5 vérifications'));
       await expandChecks();
 
-      expect(shadowText()).toContain('Clé prête');
+      await until(() => shadowText().includes('Introuvable'));
+      expect(sentMessages('searchImage')).toEqual([{ type: 'searchImage', photoUrl: PHOTO_URL }]);
+      expect(shadowText()).toContain('Rien de suspect');
+      expect(shadowText()).not.toContain('sans recherche d');
       expect(actionButton()).toBeNull();
     }, 15_000);
 
-    it('runs the free checks and offers no button in manual mode', async () => {
+    it('shows the exact match with its platform, a link and the verdict', async () => {
+      imageGate = 'ready';
+      searchAnswer = () => Promise.resolve({ status: 'ok', matches: [SHEIN_EXACT, TEMU_SIMILAR] });
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Article Shein revendu'));
+      await expandChecks();
+
+      expect(shadowText()).toContain('Trouvée sur Shein');
+      const links = [...(hostCard()?.shadowRoot?.querySelectorAll('a') ?? [])];
+      expect(links.map((a) => a.textContent)).toEqual([
+        'Voir sur Shein',
+        'Photo proche sur Temu',
+        'Chercher moi-même sur Google Lens',
+      ]);
+      expect(links[0]?.getAttribute('href')).toBe(SHEIN_EXACT.url);
+    }, 15_000);
+
+    it('shows why the search was impossible when Google refuses the key', async () => {
+      imageGate = 'ready';
+      searchAnswer = () => Promise.resolve({ status: 'error', reason: 'billing' });
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      await expandChecks();
+      await until(() => shadowText().includes('Recherche impossible'));
+
+      expect(shadowText()).toContain('Google refuse ta clé Vision');
+      expect(actionButton()?.textContent).toBe('Vérifier ma clé');
+      actionButton()?.click();
+      expect(sentMessages('openOptions')).toEqual([{ type: 'openOptions', section: 'keys' }]);
+    }, 15_000);
+
+    it('still shows the free checks when the search cannot reach the background', async () => {
+      imageGate = 'ready';
+      searchAnswer = () => Promise.reject(new Error('Extension context invalidated'));
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      await expandChecks();
+      await until(() => shadowText().includes('Recherche impossible'));
+      expect(shadowText()).toContain('Google ne répond pas');
+    }, 15_000);
+
+    it('offers to search again after a failure that may pass, and searches again on click', async () => {
+      imageGate = 'ready';
+      searchAnswer = () => Promise.resolve({ status: 'error', reason: 'network' });
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      // Collapsed card: the retry button is under the verdict.
+      await until(() => actionButton()?.textContent === 'Réessayer la recherche');
+
+      searchAnswer = () => Promise.resolve({ status: 'ok', matches: [SHEIN_EXACT] });
+      actionButton()?.click();
+      await until(() => shadowText().includes('Article Shein revendu'));
+      expect(paidSearches()).toHaveLength(2);
+      expect(actionButton()).toBeNull();
+    }, 15_000);
+
+    it('shows the card from the free checks before Google answers', async () => {
+      imageGate = 'ready';
+      const answer = holdSearch();
+      const calls = stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+
+      // The verdict is there, the search is still out.
+      expect(shadowText()).toContain('Rien de suspect');
+      expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(2);
+      await expandChecks();
+      expect(shadowText()).toContain('Recherche en cours…');
+      expect(paidSearches()).toHaveLength(1);
+
+      answer({ status: 'ok', matches: [SHEIN_EXACT] });
+      await until(() => shadowText().includes('Trouvée sur Shein'));
+      expect(shadowText()).not.toContain('Recherche en cours…');
+      expect(shadowText()).toContain('Article Shein revendu');
+      // The free checks were not run again.
+      expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(2);
+      expect(paidSearches()).toHaveLength(1);
+    }, 15_000);
+
+    it('shows the cached result of a photo already searched, with no key at all', async () => {
+      imageGate = 'no_key';
+      searchAnswer = () => Promise.resolve({ status: 'ok', matches: [SHEIN_EXACT] });
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Article Shein revendu'));
+      await expandChecks();
+      expect(shadowText()).toContain('Trouvée sur Shein');
+    }, 15_000);
+
+    it('runs the free checks and waits for a click in manual mode', async () => {
       imageGate = 'manual';
       const calls = stubFetch();
       await script.main(ctx);
@@ -270,7 +421,67 @@ describe('listing content script', () => {
       await expandChecks();
 
       expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(2);
+      // By itself it only looks in the cache, which costs nothing.
+      expect(sentMessages('searchImage')).toEqual([
+        { type: 'searchImage', photoUrl: PHOTO_URL, cacheOnly: true },
+      ]);
+      expect(actionButton()?.textContent).toBe("Lancer la recherche d'image");
+      expect(shadowText()).toContain('Au clic');
+    }, 15_000);
+
+    it('puts the search button on the collapsed card in manual mode', async () => {
+      imageGate = 'manual';
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      expect(actionButton()?.textContent).toBe("Lancer la recherche d'image");
+      expect(hostCard()?.shadowRoot?.querySelector('.fripon > .fripon__actions')).not.toBeNull();
+    }, 15_000);
+
+    it.each([
+      ['an error', () => Promise.resolve({ status: 'error', reason: 'network' })],
+      ['a miss', () => Promise.resolve({ status: 'not_cached' })],
+      ['a lost message', () => Promise.reject(new Error('Extension context invalidated'))],
+      ['no answer at all', () => Promise.resolve(undefined)],
+    ])(
+      'leaves the "Au clic" row alone when the look in the cache ends in %s',
+      async (_name, answer) => {
+        imageGate = 'manual';
+        searchAnswer = (message) =>
+          message.cacheOnly ? answer() : Promise.resolve({ status: 'ok', matches: [SHEIN_EXACT] });
+        stubFetch();
+        await script.main(ctx);
+        await until(() => shadowText().includes('Voir les 5 vérifications'));
+        await until(() => sentMessages('searchImage').length === 1);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await expandChecks();
+
+        expect(shadowText()).toContain('Au clic');
+        expect(shadowText()).not.toContain('Recherche impossible');
+        expect(actionButton()?.textContent).toBe("Lancer la recherche d'image");
+        // The button still works.
+        actionButton()?.click();
+        await until(() => shadowText().includes('Trouvée sur Shein'));
+      },
+      15_000,
+    );
+
+    it('shows the cached result in manual mode without a click and without spending', async () => {
+      imageGate = 'manual';
+      searchAnswer = (message) =>
+        Promise.resolve(
+          message.cacheOnly
+            ? { status: 'ok', matches: [SHEIN_EXACT] }
+            : { status: 'error', reason: 'network' },
+        );
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Article Shein revendu'));
+      await expandChecks();
+
+      expect(shadowText()).toContain('Trouvée sur Shein');
       expect(actionButton()).toBeNull();
+      expect(paidSearches()).toEqual([]);
     }, 15_000);
 
     it.each([new Error('background asleep'), 'whatever'])(
@@ -286,6 +497,160 @@ describe('listing content script', () => {
       },
       15_000,
     );
+  });
+
+  describe('image search on click (manual mode)', () => {
+    const apiCalls = (calls: string[]) => calls.filter((url) => url.startsWith('/api/'));
+
+    async function openManualCard() {
+      imageGate = 'manual';
+      const calls = stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      await expandChecks();
+      return calls;
+    }
+
+    it('searches on click, shows the row loading, then the result and a new verdict', async () => {
+      const answer = holdSearch();
+      const calls = await openManualCard();
+      expect(shadowText()).toContain('Rien de suspect');
+      const photoAnalyses = sentMessages('analyzeImage').length;
+      const requests = apiCalls(calls).length;
+
+      actionButton()?.click();
+      await until(() => shadowText().includes('Recherche en cours…'));
+      expect(shadowText()).toContain('En cours');
+      expect(actionButton()).toBeNull();
+      expect(paidSearches()).toHaveLength(1);
+      // The verdict is not touched until the answer comes.
+      expect(shadowText()).toContain('Rien de suspect');
+
+      answer({ status: 'ok', matches: [SHEIN_EXACT] });
+      await until(() => shadowText().includes('Trouvée sur Shein'));
+
+      expect(shadowText()).toContain('Article Shein revendu');
+      expect(shadowText()).not.toContain('Recherche en cours…');
+      expect(
+        hostCard()?.shadowRoot?.querySelector('a[href^="https://fr.shein.com"]'),
+      ).not.toBeNull();
+      // No new free check: neither a Vinted request nor a photo download.
+      expect(apiCalls(calls)).toHaveLength(requests);
+      expect(sentMessages('analyzeImage')).toHaveLength(photoAnalyses);
+      expect(sentMessages('getImageGate')).toHaveLength(1);
+      expect(paidSearches()).toHaveLength(1);
+      // The checks stayed expanded through the updates.
+      expect(shadowText()).toContain('Chercher moi-même sur Google Lens');
+    }, 15_000);
+
+    it('lets a click search even while the look in the cache has not answered', async () => {
+      imageGate = 'manual';
+      searchAnswer = (message) =>
+        message.cacheOnly
+          ? new Promise(() => undefined)
+          : Promise.resolve({ status: 'ok', matches: [SHEIN_EXACT] });
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      expect(sentMessages('searchImage')).toHaveLength(1);
+
+      actionButton()?.click();
+      await until(() => shadowText().includes('Article Shein revendu'));
+      expect(paidSearches()).toHaveLength(1);
+    }, 15_000);
+
+    it('ignores a late cache answer once the click has started its search', async () => {
+      imageGate = 'manual';
+      let cacheAnswer: (value: unknown) => void = () => undefined;
+      const answer = holdSearch();
+      const real = searchAnswer;
+      searchAnswer = (message) =>
+        message.cacheOnly
+          ? new Promise((resolve) => {
+              cacheAnswer = resolve;
+            })
+          : real(message);
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+
+      actionButton()?.click();
+      await until(() => shadowText().includes('Recherche en cours…') || actionButton() === null);
+      cacheAnswer({ status: 'ok', matches: [TEMU_SIMILAR] });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      // The late cache answer did not interrupt the search that is running.
+      expect(shadowText()).not.toContain('À vérifier');
+      expect(shadowText()).toContain('Rien de suspect');
+      answer({ status: 'ok', matches: [SHEIN_EXACT] });
+      await until(() => shadowText().includes('Article Shein revendu'));
+    }, 15_000);
+
+    it('searches once even if the button is clicked twice', async () => {
+      const answer = holdSearch();
+      await openManualCard();
+      const button = actionButton();
+      button?.click();
+      button?.click();
+      await until(() => shadowText().includes('Recherche en cours…'));
+      answer({ status: 'ok', matches: [] });
+      await until(() => shadowText().includes('Introuvable'));
+      expect(paidSearches()).toHaveLength(1);
+    }, 15_000);
+
+    it('shows a failed search on the row, with the verdict still saying it did not run', async () => {
+      searchAnswer = () => Promise.resolve({ status: 'error', reason: 'network' });
+      await openManualCard();
+      actionButton()?.click();
+      await until(() => shadowText().includes('Recherche impossible'));
+      expect(shadowText()).toContain('Google ne répond pas, réessaie plus tard.');
+      expect(shadowText()).toContain('sans recherche d');
+    }, 15_000);
+
+    it('shows the green verdict when nothing is found', async () => {
+      await openManualCard();
+      expect(shadowText()).toContain("Rien de suspect (sans recherche d'image)");
+      actionButton()?.click();
+      await until(() => shadowText().includes('Introuvable'));
+      expect(shadowText()).not.toContain('sans recherche d');
+    }, 15_000);
+
+    it('keeps the answer when Vinted re-renders the sidebar during the search', async () => {
+      const answer = holdSearch();
+      await openManualCard();
+      const card = hostCard();
+      actionButton()?.click();
+      await until(() => shadowText().includes('Recherche en cours…'));
+
+      document.querySelector('.details-list--main-info')?.remove();
+      const fresh = document.createElement('div');
+      fresh.className = 'details-list--main-info';
+      fresh.innerHTML = '<div class="details-list--pricing"><span>12,50 €</span></div>';
+      document.querySelector('main')?.prepend(fresh);
+      await until(() => fresh.querySelector('.details-list--pricing')?.nextElementSibling === card);
+
+      answer({ status: 'ok', matches: [SHEIN_EXACT] });
+      await until(() => shadowText().includes('Trouvée sur Shein'));
+      expect(hostCard()).toBe(card);
+      expect(document.querySelectorAll('fripon-listing-card')).toHaveLength(1);
+    }, 15_000);
+
+    it('drops the answer of a search that a newer run replaced', async () => {
+      const answer = holdSearch();
+      await openManualCard();
+      actionButton()?.click();
+      await until(() => shadowText().includes('Recherche en cours…'));
+
+      // A bfcache restore starts the whole run again, with a fresh card.
+      window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      answer({ status: 'ok', matches: [SHEIN_EXACT] });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // The new card is collapsed: the verdict is where a stale answer would show.
+      expect(shadowText()).not.toContain('Article Shein revendu');
+      expect(shadowText()).toContain("Rien de suspect (sans recherche d'image)");
+      expect(document.querySelectorAll('fripon-listing-card')).toHaveLength(1);
+    }, 15_000);
   });
 
   it('does nothing but warn when there is no anchor', async () => {
@@ -352,6 +717,25 @@ describe('listing content script', () => {
     expect(document.querySelectorAll('fripon-listing-card')).toHaveLength(1);
     expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(2);
     expect(sentMessages('analyzeImage')).toHaveLength(2);
+    // Only the run that finished asks for the search: the superseded ones ask for nothing.
+    expect(sentMessages('searchImage')).toHaveLength(1);
+  }, 15_000);
+
+  it('sends no search for a script that was invalidated during the analysis', async () => {
+    imageGate = 'ready';
+    const calls = stubFetch();
+    const fetchMock = vi.mocked(fetch);
+    const inner = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(((input: string, init?: RequestInit) => {
+      if (String(input).includes('/wardrobe/')) ctx.notifyInvalidated();
+      return inner?.(input, init);
+    }) as never);
+    await script.main(ctx);
+    await until(() => calls.some((url) => url.includes('/wardrobe/')));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(sentMessages('searchImage')).toEqual([]);
+    expect(shadowText()).not.toContain('Voir les 5 vérifications');
   }, 15_000);
 
   describe('navigation without a page load', () => {

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import background from '../entrypoints/background';
+import { getUsage } from '../lib/credits';
 import { PENDING_SECTION_KEY } from '../lib/options-nav';
 import { loadSettings, saveSettings } from '../lib/settings';
 
@@ -117,6 +118,143 @@ describe('background', () => {
       expect(answer).toEqual({ ok: false, reason: 'invalid' });
       expect(headerKey(fetchMock)).toBe('AIzaCandidate');
       expect((await loadSettings()).keys.gemini).toBe('AIzaSaved');
+      vi.unstubAllGlobals();
+    });
+  });
+
+  describe('searchImage', () => {
+    const PHOTO = 'https://images1.vinted.net/t/01_a/f800/main.webp?s=aa';
+    // The background remembers a refused key in memory across tests: each test gets its own key.
+    let KEY = '';
+    let keyCount = 0;
+    beforeEach(() => {
+      KEY = `AIzaSECRETSECRETSECRETSECRETSECRET${String(++keyCount).padStart(4, '0')}`;
+    });
+    const FOUND = {
+      responses: [
+        {
+          webDetection: {
+            pagesWithMatchingImages: [
+              {
+                url: 'https://fr.shein.com/Robe-Test-p-1234567-cat-1727.html',
+                fullMatchingImages: [{ url: 'https://img.example.test/a.jpg' }],
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    /** The Vinted CDN answers with a few bytes, Vision with `visionAnswer`. */
+    function stubWeb(visionAnswer: () => Response) {
+      const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>((url) =>
+        Promise.resolve(
+          String(url).startsWith('https://vision.googleapis.com/')
+            ? visionAnswer()
+            : new Response(new Uint8Array([1, 2, 3]), {
+                status: 200,
+                headers: { 'content-type': 'image/webp' },
+              }),
+        ),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      return fetchMock;
+    }
+    /** Google's answer for a project without billing: the key is refused. */
+    const billingOff = () =>
+      Response.json(
+        {
+          error: {
+            code: 403,
+            status: 'PERMISSION_DENIED',
+            message: 'This API method requires billing to be enabled.',
+          },
+        },
+        { status: 403 },
+      );
+    const visionCalls = (fetchMock: ReturnType<typeof stubWeb>) =>
+      fetchMock.mock.calls.filter(([url]) => String(url).includes('vision.googleapis.com'));
+    const used = async () => (await getUsage('vision', null)).used;
+
+    it('searches the photo with the saved key, spends one credit and answers with the matches only', async () => {
+      const fetchMock = stubWeb(() => Response.json(FOUND));
+      await saveSettings({ keys: { vision: KEY } });
+      const send = start();
+
+      const answer = await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage);
+      expect(answer).toEqual({
+        status: 'ok',
+        matches: [
+          {
+            platform: 'Shein',
+            url: 'https://fr.shein.com/Robe-Test-p-1234567-cat-1727.html',
+            exact: true,
+            price: null,
+          },
+        ],
+      });
+      expect(JSON.stringify(answer)).not.toContain('SECRET');
+
+      const calls = visionCalls(fetchMock);
+      expect(calls).toHaveLength(1);
+      const [url, init] = calls[0] as [string, RequestInit];
+      expect(url).not.toContain('SECRET');
+      expect((init.headers as Record<string, string>)['x-goog-api-key']).toBe(KEY);
+      expect(await used()).toBe(1);
+
+      // The same listing reloaded: no second call, no second credit.
+      expect(await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage)).toEqual(answer);
+      expect(visionCalls(fetchMock)).toHaveLength(1);
+      expect(await used()).toBe(1);
+      vi.unstubAllGlobals();
+    });
+
+    it('forgets a refused key when the key tests fine in the options page', async () => {
+      let vision = billingOff;
+      const fetchMock = stubWeb(() => vision());
+      await saveSettings({ keys: { vision: KEY } });
+      const send = start();
+      const other = 'https://images1.vinted.net/t/2/f800/b.webp';
+
+      const refused = { status: 'error', reason: 'billing' };
+      expect(await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage)).toEqual(refused);
+      expect(await send({ type: 'searchImage', photoUrl: other }, fromPage)).toEqual(refused);
+      expect(visionCalls(fetchMock)).toHaveLength(1);
+
+      // The user fixes the project and tests the key in the options page.
+      vision = () => Response.json({});
+      expect(await send({ type: 'testKey', provider: 'vision', key: KEY }, fromOptions)).toEqual({
+        ok: true,
+      });
+      vision = () => Response.json(FOUND);
+      const probes = visionCalls(fetchMock).length;
+      expect(
+        (await send({ type: 'searchImage', photoUrl: other }, fromPage)) as { status: string },
+      ).toMatchObject({ status: 'ok' });
+      expect(visionCalls(fetchMock)).toHaveLength(probes + 1);
+      vi.unstubAllGlobals();
+    });
+
+    it('forgets a refused key when the stored key changes, even back to the same one', async () => {
+      const fetchMock = stubWeb(billingOff);
+      await saveSettings({ keys: { vision: KEY } });
+      const send = start();
+      const photo = (n: number) => `https://images1.vinted.net/t/${n}/f800/p.webp`;
+
+      await send({ type: 'searchImage', photoUrl: photo(1) }, fromPage);
+      await send({ type: 'searchImage', photoUrl: photo(2) }, fromPage);
+      expect(visionCalls(fetchMock)).toHaveLength(1);
+
+      // Another key, then the first one again: the refusal is no longer remembered.
+      await saveSettings({ keys: { vision: `${KEY}x` } });
+      await saveSettings({ keys: { vision: KEY } });
+      await send({ type: 'searchImage', photoUrl: photo(3) }, fromPage);
+      expect(visionCalls(fetchMock)).toHaveLength(2);
+
+      // Saving something else leaves the memory alone.
+      await saveSettings({ mode: 'click' });
+      await send({ type: 'searchImage', photoUrl: photo(4) }, fromPage);
+      expect(visionCalls(fetchMock)).toHaveLength(2);
       vi.unstubAllGlobals();
     });
   });

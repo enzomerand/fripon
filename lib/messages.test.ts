@@ -35,6 +35,27 @@ describe('sendMessage', () => {
   });
 });
 
+describe('sendMessage (searchImage)', () => {
+  it('sends the photo URL and returns the matches', async () => {
+    const answer = {
+      status: 'ok',
+      matches: [
+        { platform: 'Shein', url: 'https://fr.shein.com/x-p-1.html', exact: true, price: null },
+      ],
+    };
+    const spy = vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue(answer as never);
+    const response = await sendMessage({
+      type: 'searchImage',
+      photoUrl: 'https://images1.vinted.net/a.jpg',
+    });
+    expect(spy).toHaveBeenCalledWith({
+      type: 'searchImage',
+      photoUrl: 'https://images1.vinted.net/a.jpg',
+    });
+    expect(response).toEqual(answer);
+  });
+});
+
 describe('sendMessage (settings messages)', () => {
   it('returns the image gate', async () => {
     const spy = vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue('quota' as never);
@@ -90,6 +111,24 @@ describe('isRuntimeMessage', () => {
     expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: 12 })).toBe(false);
     expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: null })).toBe(false);
     expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: { a: 1 } })).toBe(false);
+  });
+
+  it('accepts a searchImage request with a photoUrl string only', () => {
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl: 'https://x.test/a.jpg' })).toBe(true);
+    expect(isRuntimeMessage({ type: 'searchImage' })).toBe(false);
+    // `url` is the analyzeImage field: not enough here.
+    expect(isRuntimeMessage({ type: 'searchImage', url: 'https://x.test/a.jpg' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl: 12 })).toBe(false);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl: null })).toBe(false);
+  });
+
+  it('accepts cacheOnly on a searchImage request only as a boolean', () => {
+    const photoUrl = 'https://x.test/a.jpg';
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, cacheOnly: true })).toBe(true);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, cacheOnly: false })).toBe(true);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, cacheOnly: 'yes' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, cacheOnly: 1 })).toBe(false);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, cacheOnly: null })).toBe(false);
   });
 
   it('accepts a well-formed analyzeImage request only', () => {

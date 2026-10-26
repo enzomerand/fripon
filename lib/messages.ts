@@ -1,6 +1,8 @@
 import { browser } from 'wxt/browser';
 import type { ImageGate } from './gate';
 import type { KeyCheckResult } from './google/key-check';
+import type { VisionFailure } from './google/vision';
+import type { ImageMatch } from './model';
 import type { Provider } from './settings';
 
 /** Ask the background to fetch a photo and compute its pixel heuristics. */
@@ -18,6 +20,29 @@ export type AnalyzeImageResponse =
       catalogScore: number;
     }
   | { ok: false; error: string };
+
+/**
+ * Ask the background to run the reverse image search (Google Vision) on a listing photo. Costs one
+ * Vision credit unless the same photo was searched in the last 7 days. The key and the raw
+ * answer stay in the background: the page only gets the matches. With `cacheOnly` (the "Au clic"
+ * mode) nothing is ever spent: the answer is the cached result, or `not_cached`.
+ */
+export interface SearchImageRequest {
+  type: 'searchImage';
+  photoUrl: string;
+  cacheOnly?: boolean;
+}
+
+export type SearchImageResponse =
+  | { status: 'ok'; matches: ImageMatch[] }
+  /** No Vision key saved: nothing was sent. */
+  | { status: 'no_key' }
+  /** The Vision cap is reached for this period: nothing was sent. */
+  | { status: 'quota' }
+  /** Only for `cacheOnly`: this photo was not searched in the last 7 days. */
+  | { status: 'not_cached' }
+  /** The search did not complete; no credit was kept for it. */
+  | { status: 'error'; reason: VisionFailure };
 
 /**
  * Ask whether the reverse image search may run. The keys stay in the background: a content script
@@ -50,11 +75,16 @@ export interface TestKeyRequest {
 
 /** Every message the background understands. Add new requests here. */
 export type RuntimeMessage =
-  AnalyzeImageRequest | GetImageGateRequest | OpenOptionsRequest | TestKeyRequest;
+  | AnalyzeImageRequest
+  | SearchImageRequest
+  | GetImageGateRequest
+  | OpenOptionsRequest
+  | TestKeyRequest;
 
 /** Response type of each message, keyed by `type`. */
 export interface RuntimeResponses {
   analyzeImage: AnalyzeImageResponse;
+  searchImage: SearchImageResponse;
   getImageGate: ImageGate;
   openOptions: void;
   testKey: KeyCheckResult;
@@ -68,6 +98,8 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   const message = value as {
     type?: unknown;
     url?: unknown;
+    photoUrl?: unknown;
+    cacheOnly?: unknown;
     section?: unknown;
     provider?: unknown;
     key?: unknown;
@@ -75,6 +107,11 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   switch (message.type) {
     case 'analyzeImage':
       return typeof message.url === 'string';
+    case 'searchImage':
+      return (
+        typeof message.photoUrl === 'string' &&
+        (message.cacheOnly === undefined || typeof message.cacheOnly === 'boolean')
+      );
     case 'getImageGate':
       return true;
     case 'openOptions':

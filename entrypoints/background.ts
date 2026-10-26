@@ -1,10 +1,13 @@
-import { createImageAnalyzer, type PixelResult } from '../lib/image/analyzer';
+import { createImageAnalyzer, fetchGuardedImage, type PixelResult } from '../lib/image/analyzer';
+import { createImageSearcher } from '../lib/image/search';
 import { dHash, catalogScore, hashToHex } from '../lib/image/pixels';
 import { handleMessage, isAllowedSender, type BackgroundDeps } from '../lib/background/handlers';
 import { loadImageGate } from '../lib/gate';
 import { checkKey } from '../lib/google/key-check';
+import { webDetect } from '../lib/google/vision';
 import { isRuntimeMessage } from '../lib/messages';
 import { openOptionsAt } from '../lib/options-nav';
+import { SETTINGS_KEY, parseSettings } from '../lib/settings';
 
 /** Photos are shrunk to this many pixels on their longest side before analysis. */
 const MAX_ANALYSIS_SIDE = 256;
@@ -30,10 +33,21 @@ const analyzeImage = createImageAnalyzer({
   computePixels,
 });
 
+const searchImage = createImageSearcher({
+  fetchPhoto: (url) => fetchGuardedImage((input, init) => fetch(input, init), url),
+  webDetect,
+});
+
 const deps: BackgroundDeps = {
   analyzeImage,
+  searchImage,
   loadImageGate,
-  checkKey,
+  checkKey: async (provider, key) => {
+    const result = await checkKey(provider, key);
+    // A Vision key that tests fine: whatever was wrong is fixed, so stop remembering the refusal.
+    if (provider === 'vision' && result.ok) searchImage.forgetKeyFailure();
+    return result;
+  },
   openOptions: openOptionsAt,
 };
 
@@ -50,6 +64,15 @@ export default defineBackground(() => {
   const toolbarButton = browser.action ?? browser.browserAction;
   toolbarButton?.onClicked.addListener(() => {
     void openOptionsAt().catch(() => undefined);
+  });
+
+  // A refused key is only remembered for as long as it is the stored one: a changed key (even one
+  // that is put back later) starts from a clean slate.
+  browser.storage.onChanged.addListener((changes, area) => {
+    const change = area === 'local' ? changes[SETTINGS_KEY] : undefined;
+    if (!change) return;
+    const before = parseSettings(change.oldValue).keys.vision;
+    if (before !== parseSettings(change.newValue).keys.vision) searchImage.forgetKeyFailure();
   });
 
   browser.runtime.onInstalled.addListener(({ reason }) => {

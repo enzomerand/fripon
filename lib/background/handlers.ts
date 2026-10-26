@@ -1,12 +1,18 @@
 import type { ImageGate } from '../gate';
 import type { KeyCheckResult } from '../google/key-check';
 import type { PendingSection } from '../options-nav';
-import type { AnalyzeImageResponse, ResponseFor, RuntimeMessage } from '../messages';
+import type {
+  AnalyzeImageResponse,
+  ResponseFor,
+  RuntimeMessage,
+  SearchImageResponse,
+} from '../messages';
 import type { Provider } from '../settings';
 
 /** Everything the background does with the outside world, injected so it can be tested. */
 export interface BackgroundDeps {
   analyzeImage(url: string): Promise<AnalyzeImageResponse>;
+  searchImage(photoUrl: string, cacheOnly: boolean): Promise<SearchImageResponse>;
   loadImageGate(): Promise<ImageGate>;
   checkKey(provider: Provider, key: string): Promise<KeyCheckResult>;
   openOptions(section?: PendingSection): Promise<void>;
@@ -54,6 +60,11 @@ async function respond(message: RuntimeMessage, deps: BackgroundDeps) {
   switch (message.type) {
     case 'analyzeImage':
       return deps.analyzeImage(message.url);
+    case 'searchImage':
+      // The searcher never rejects; this is the last net before the page gets nothing at all.
+      return deps
+        .searchImage(message.photoUrl, message.cacheOnly === true)
+        .catch((): SearchImageResponse => ({ status: 'error', reason: 'network' }));
     case 'getImageGate':
       // When storage cannot be read, behave as if there were no key: nothing is spent.
       return deps.loadImageGate().catch((): ImageGate => 'no_key');
