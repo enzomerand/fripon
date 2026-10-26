@@ -171,6 +171,61 @@ describe('listing content script', () => {
     expect(sentMessages('getImageGate')).toEqual([{ type: 'getImageGate' }]);
   }, 15_000);
 
+  describe('when Vinted re-renders the item sidebar', () => {
+    const rerenderPriceBlock = () => {
+      document.querySelector('.details-list--main-info')?.remove();
+      const fresh = document.createElement('div');
+      fresh.className = 'details-list--main-info';
+      fresh.innerHTML = '<div class="details-list--pricing"><span>12,50 €</span></div>';
+      document.querySelector('main')?.prepend(fresh);
+      return fresh.querySelector('.details-list--pricing');
+    };
+
+    it('puts the same card back after the new price block, without a new analysis', async () => {
+      const calls = stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      await expandChecks();
+      const card = hostCard();
+      const apiCalls = calls.filter((url) => url.startsWith('/api/')).length;
+
+      const pricing = rerenderPriceBlock();
+
+      await until(() => pricing?.nextElementSibling === card);
+      expect(document.querySelectorAll('fripon-listing-card')).toHaveLength(1);
+      // Same shadow tree: the verdict and the expanded checks survive.
+      expect(shadowText()).toContain('Chercher moi-même sur Google Lens');
+      expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(apiCalls);
+      expect(sentMessages('getImageGate')).toHaveLength(1);
+    }, 15_000);
+
+    it('waits for the price block to come back when it is removed alone', async () => {
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      const card = hostCard();
+
+      document.querySelector('.details-list--main-info')?.remove();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(card?.isConnected).toBe(false);
+      const pricing = rerenderPriceBlock();
+
+      await until(() => pricing?.nextElementSibling === card);
+    }, 15_000);
+
+    it('does not bring the card back once the script is invalidated', async () => {
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+
+      ctx.notifyInvalidated();
+      rerenderPriceBlock();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(hostCard()).toBeNull();
+    }, 15_000);
+  });
+
   describe('image search gate', () => {
     it('offers the guide without a key, and the button opens it', async () => {
       stubFetch();
