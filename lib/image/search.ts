@@ -7,7 +7,7 @@ import { isAllowedImageUrl } from './analyzer';
 import { readVisionCache, visionCacheKey, writeVisionCache } from './search-cache';
 
 /** Everything the search does with the outside world, injected so it can be tested. */
-export interface ImageSearcherDeps {
+interface ImageSearcherDeps {
   /** Downloads the photo with the guards of the image analyzer (`fetchGuardedImage`). */
   fetchPhoto(url: string): Promise<Blob>;
   /** The paid call: one Vision unit. */
@@ -33,7 +33,7 @@ const NETWORK_ERROR: SearchImageResponse = { status: 'error', reason: 'network' 
 export const KEY_FAILURE_MEMO_MS = 10 * 60 * 1000;
 
 /** What `createImageSearcher` returns: the `searchImage` handler, and a way to forget a refused key. */
-export interface ImageSearcher {
+interface ImageSearcher {
   /** With `cacheOnly` nothing is ever spent: the answer is the cached result or `not_cached`. */
   (photoUrl: string, cacheOnly?: boolean): Promise<SearchImageResponse>;
   /** Forgets a remembered key failure: the user just fixed something (their key tested fine). */

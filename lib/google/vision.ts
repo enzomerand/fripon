@@ -1,3 +1,4 @@
+import type { FetchLike } from '../fetch';
 import { isRecord } from '../json';
 import {
   classifyKnown,
@@ -30,19 +31,15 @@ interface WebImage {
   url?: string;
 }
 
-/** A page where Google found the photo (or a piece of it). Every field may be missing. */
+/** A page where Google found the photo. `fullMatchingImages` is there when it holds the whole photo. */
 export interface WebPage {
   url?: string;
-  pageTitle?: string;
   fullMatchingImages?: WebImage[];
-  partialMatchingImages?: WebImage[];
 }
 
 /** The part of Vision's `webDetection` Fripon reads. The rest of the answer is dropped. */
 export interface WebDetection {
   pagesWithMatchingImages?: WebPage[];
-  fullMatchingImages?: WebImage[];
-  partialMatchingImages?: WebImage[];
 }
 
 export type WebDetectResult =
@@ -58,8 +55,6 @@ export type WebDetectResult =
        */
       refundable: boolean;
     };
-
-type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 /** gRPC codes of a per-image error (`google.rpc.Status`) that need a word of their own. */
 const GRPC_INVALID_ARGUMENT = 3;
@@ -118,11 +113,8 @@ function recordList(value: unknown): Array<Record<string, unknown>> | undefined 
 function sanitizePage(page: Record<string, unknown>): WebPage {
   const clean: WebPage = {};
   if (typeof page.url === 'string') clean.url = page.url;
-  if (typeof page.pageTitle === 'string') clean.pageTitle = page.pageTitle;
   const full = recordList(page.fullMatchingImages);
   if (full) clean.fullMatchingImages = full.map(sanitizeImage);
-  const partial = recordList(page.partialMatchingImages);
-  if (partial) clean.partialMatchingImages = partial.map(sanitizeImage);
   return clean;
 }
 
@@ -136,10 +128,6 @@ function sanitizeWebDetection(value: unknown): WebDetection {
   const clean: WebDetection = {};
   const pages = recordList(value.pagesWithMatchingImages);
   if (pages) clean.pagesWithMatchingImages = pages.map(sanitizePage);
-  const full = recordList(value.fullMatchingImages);
-  if (full) clean.fullMatchingImages = full.map(sanitizeImage);
-  const partial = recordList(value.partialMatchingImages);
-  if (partial) clean.partialMatchingImages = partial.map(sanitizeImage);
   return clean;
 }
 

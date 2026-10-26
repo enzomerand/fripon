@@ -5,9 +5,9 @@ import { MAX_IMAGE_MATCHES, parseWebDetection, platformOfHost } from './image-ma
 const IMG = [{ url: 'https://img.example.test/a.jpg' }];
 
 /** A page Google found the whole photo on. */
-const full = (url: string) => ({ url, pageTitle: 'Titre', fullMatchingImages: IMG });
-/** A page that only shares a piece of the photo. */
-const partial = (url: string) => ({ url, pageTitle: 'Titre', partialMatchingImages: IMG });
+const full = (url: string) => ({ url, fullMatchingImages: IMG });
+/** A page that only shares a piece of the photo: no full match. */
+const partial = (url: string) => ({ url });
 
 const detect = (...pages: WebPage[]): WebDetection => ({
   pagesWithMatchingImages: pages,
@@ -154,7 +154,7 @@ describe('parseWebDetection platforms', () => {
         full('javascript://fr.shein.com/%0Aalert(1)-p-1'),
         full('ftp://fr.shein.com/Robe-p-1.html'),
         full('not a url'),
-        { pageTitle: 'sans lien', fullMatchingImages: IMG },
+        { fullMatchingImages: IMG },
         full('http://fr.shein.com/Robe-p-2.html'),
       ],
     });
@@ -209,14 +209,6 @@ describe('parseWebDetection exact matches', () => {
 
   it('looks at the path, not at the query string', () => {
     const matches = parseWebDetection(detect(full('https://fr.shein.com/category?ref=x-p-12345')));
-    expect(matches[0]?.exact).toBe(false);
-  });
-
-  it('reads the whole-photo flag of the page, not the top-level image lists', () => {
-    const matches = parseWebDetection({
-      fullMatchingImages: IMG,
-      pagesWithMatchingImages: [{ url: 'https://fr.shein.com/Robe-p-1.html' }],
-    });
     expect(matches[0]?.exact).toBe(false);
   });
 });

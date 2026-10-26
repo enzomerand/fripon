@@ -33,9 +33,6 @@ export interface SearchImageRequest {
   cacheOnly?: boolean;
 }
 
-/** Why a search failed (see `VisionFailure`); `photo` blames the image, not the key or Google. */
-export type SearchImageFailure = VisionFailure;
-
 export type SearchImageResponse =
   | { status: 'ok'; matches: ImageMatch[] }
   /** No Vision key saved: nothing was sent. */
@@ -45,7 +42,7 @@ export type SearchImageResponse =
   /** Only for `cacheOnly`: this photo was not searched in the last 7 days. */
   | { status: 'not_cached' }
   /** The search did not complete; no credit was kept for it. */
-  | { status: 'error'; reason: SearchImageFailure };
+  | { status: 'error'; reason: VisionFailure };
 
 /**
  * Ask whether the reverse image search may run. The keys stay in the background: a content script

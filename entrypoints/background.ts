@@ -35,7 +35,7 @@ const analyzeImage = createImageAnalyzer({
 
 const searchImage = createImageSearcher({
   fetchPhoto: (url) => fetchGuardedImage((input, init) => fetch(input, init), url),
-  webDetect: (base64, key) => webDetect(base64, key),
+  webDetect,
 });
 
 const deps: BackgroundDeps = {

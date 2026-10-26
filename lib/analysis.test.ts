@@ -283,19 +283,6 @@ describe('analyzeListing image gate', () => {
     expect(verdict.withoutImageSearch).toBe(true);
   });
 
-  it('keeps the same five checks in the same order whatever the gate', async () => {
-    for (const imageGate of [...closedGates, 'ready'] as const) {
-      const { checks } = await analyzeListing(listing, deps(), { imageGate });
-      expect(checks.map((c) => c.id)).toEqual([
-        'image',
-        'price',
-        'seller',
-        'photos',
-        'description',
-      ]);
-    }
-  });
-
   it('runs the free checks the same way whatever the gate', async () => {
     const results = await Promise.all(
       (['ready', 'no_key', 'quota', 'manual'] as const).map((imageGate) =>

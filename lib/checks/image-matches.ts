@@ -1,4 +1,4 @@
-import type { WebDetection, WebPage } from '../google/vision';
+import type { WebDetection } from '../google/vision';
 import type { ImageMatch } from '../model';
 
 /** At most this many matches are kept (exact ones first). */
@@ -58,7 +58,7 @@ const onlyTlds =
  * Romwe run one site per country; the others are `.com` (AliExpress also `.ru` and `.us`), so a
  * look-alike such as `wish.it` or `dhgate.xx` is not them.
  */
-export const PLATFORMS: readonly Platform[] = [
+const PLATFORMS: readonly Platform[] = [
   { name: 'Shein', label: 'shein', tld: isCountryTld, product: /-p-\d+/ },
   { name: 'Romwe', label: 'romwe', tld: isCountryTld, product: /-p-\d+/ },
   { name: 'Temu', label: 'temu', tld: onlyTlds('com'), product: /-g-\d+\.html|\/goods\.html/ },
@@ -99,10 +99,6 @@ export function platformOfHost(hostname: string): Platform | undefined {
   return undefined;
 }
 
-function hasFullMatch(page: WebPage): boolean {
-  return (page.fullMatchingImages ?? []).length > 0;
-}
-
 /**
  * Turns what Vision found into the matches Fripon cares about: pages of the listed platforms.
  * A match is `exact` when Google found the whole photo on a product page; a platform page that
@@ -126,7 +122,7 @@ export function parseWebDetection(webDetection: WebDetection): ImageMatch[] {
     if (!platform) continue;
 
     url.hash = '';
-    const exact = hasFullMatch(page) && platform.product.test(url.pathname);
+    const exact = (page.fullMatchingImages?.length ?? 0) > 0 && platform.product.test(url.pathname);
     const known = byUrl.get(url.href);
     if (known) known.exact ||= exact;
     else byUrl.set(url.href, { platform: platform.name, url: url.href, exact, price: null });

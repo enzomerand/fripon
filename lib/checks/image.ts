@@ -1,5 +1,5 @@
-import { isKeyFailure } from '../google/vision';
-import type { SearchImageFailure, SearchImageResponse } from '../messages';
+import { isKeyFailure, type VisionFailure } from '../google/vision';
+import type { SearchImageResponse } from '../messages';
 import type { CheckAction, CheckResult, ImageMatch } from '../model';
 
 /** Why the reverse image search did not run. */
@@ -83,7 +83,7 @@ export function imageCheckForMatches(matches: ImageMatch[]): CheckResult {
 
 const KEY_REFUSED = 'Google refuse ta clé Vision : vérifie-la dans les réglages.';
 
-const FAILURE_DETAILS: Record<SearchImageFailure, string> = {
+const FAILURE_DETAILS: Record<VisionFailure, string> = {
   invalid: KEY_REFUSED,
   restricted: KEY_REFUSED,
   disabled: KEY_REFUSED,
@@ -94,10 +94,10 @@ const FAILURE_DETAILS: Record<SearchImageFailure, string> = {
 };
 
 /** What the retry button of a failed search says: the action is the one of the "Au clic" button. */
-export const RETRY_SEARCH_LABEL = 'Réessayer la recherche';
+const RETRY_SEARCH_LABEL = 'Réessayer la recherche';
 
 /** Failures that may pass: trying again is worth a click (and a credit). */
-const RETRYABLE_FAILURES: readonly SearchImageFailure[] = ['network', 'quota'];
+const RETRYABLE_FAILURES: readonly VisionFailure[] = ['network', 'quota'];
 
 /**
  * The image row when the search was tried and failed. A problem with the key sends the user to
@@ -105,7 +105,7 @@ const RETRYABLE_FAILURES: readonly SearchImageFailure[] = ['network', 'quota'];
  * search again. A photo that could not be read does not: it fails the same way every time, and
  * each attempt would cost a credit.
  */
-export function imageCheckFailed(reason: SearchImageFailure): CheckResult {
+export function imageCheckFailed(reason: VisionFailure): CheckResult {
   const row: CheckResult = {
     id: 'image',
     status: 'off',
@@ -124,9 +124,7 @@ export function imageCheckFailed(reason: SearchImageFailure): CheckResult {
 export function imageCheckForSearch(response: SearchImageResponse): CheckResult {
   switch (response.status) {
     case 'ok':
-      return Array.isArray(response.matches)
-        ? imageCheckForMatches(response.matches)
-        : imageCheckFailed('network');
+      return imageCheckForMatches(response.matches);
     case 'no_key':
       return imageCheckOff('no_key');
     case 'quota':
@@ -136,8 +134,5 @@ export function imageCheckForSearch(response: SearchImageResponse): CheckResult 
       return imageCheckOff('manual');
     case 'error':
       return imageCheckFailed(response.reason);
-    default:
-      // An answer this version does not know: the safest reading is "did not work".
-      return imageCheckFailed('network');
   }
 }

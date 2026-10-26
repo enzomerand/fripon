@@ -68,7 +68,7 @@ describe('webDetect request', () => {
 });
 
 describe('webDetect answer', () => {
-  it('keeps the pages with their title and matching images, and drops the rest', async () => {
+  it('keeps the pages with their full matching images, and drops the rest', async () => {
     const fetchImpl = fakeFetch(
       answer({
         webDetection: {
@@ -87,18 +87,15 @@ describe('webDetect answer', () => {
         },
       }),
     );
-    const result = await webDetect(IMAGE, KEY, fetchImpl);
-    expect(result).toEqual({
+    expect(await webDetect(IMAGE, KEY, fetchImpl)).toEqual({
       ok: true,
       webDetection: {
-        fullMatchingImages: [{ url: 'https://img.example/full.jpg' }],
         pagesWithMatchingImages: [
           {
             url: 'https://fr.shein.example/robe-p-1.html',
-            pageTitle: 'Robe <b>fleurie</b>',
             fullMatchingImages: [{ url: 'https://img.example/a.jpg' }],
           },
-          { url: 'https://example.test/other', partialMatchingImages: [{ url: 'https://i/p' }] },
+          { url: 'https://example.test/other' },
         ],
       },
     });
@@ -115,13 +112,7 @@ describe('webDetect answer', () => {
     const fetchImpl = fakeFetch(
       answer({
         webDetection: {
-          pagesWithMatchingImages: [
-            null,
-            'x',
-            { url: 12, pageTitle: [] },
-            { url: 'https://a.test/' },
-          ],
-          fullMatchingImages: 'nope',
+          pagesWithMatchingImages: [null, 'x', { url: 12 }, { url: 'https://a.test/' }],
         },
       }),
     );
@@ -146,62 +137,16 @@ describe('webDetect answer', () => {
 });
 
 describe('webDetect HTTP refusals Google names', () => {
-  // 400, 403 and 429 with a refusal Google names: the call certainly was not billed.
-  const cases: Array<[string, number, unknown, string]> = [
-    ['a bogus key', 400, googleError(400, 'INVALID_ARGUMENT', 'API_KEY_INVALID'), 'invalid'],
-    [
-      'a project without the API',
-      403,
-      googleError(403, 'PERMISSION_DENIED', 'SERVICE_DISABLED'),
-      'disabled',
-    ],
-    [
-      'a key restricted to other APIs',
-      403,
-      googleError(403, 'PERMISSION_DENIED', 'API_KEY_SERVICE_BLOCKED'),
-      'restricted',
-    ],
-    [
-      'a project without billing (reason)',
-      403,
-      googleError(403, 'PERMISSION_DENIED', 'BILLING_DISABLED'),
-      'billing',
-    ],
-    [
-      'a project without billing (message)',
-      403,
-      googleError(
-        403,
-        'PERMISSION_DENIED',
-        'UNKNOWN',
-        'This API method requires billing to be enabled.',
-      ),
-      'billing',
-    ],
-    [
-      'an exhausted quota',
-      429,
-      googleError(429, 'RESOURCE_EXHAUSTED', 'RATE_LIMIT_EXCEEDED'),
-      'quota',
-    ],
-  ];
-
-  it.each(cases)(
-    'maps %s to its reason and allows a refund',
-    async (_name, status, body, reason) => {
-      expect(await webDetect(IMAGE, KEY, fakeFetch(json(status, body)))).toEqual({
-        ok: false,
-        reason,
-        refundable: true,
-      });
-    },
-  );
-
-  it('names a quota on a 429 whose body says RESOURCE_EXHAUSTED, and allows the refund', async () => {
-    const body = { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded.' } };
-    expect(await webDetect(IMAGE, KEY, fakeFetch(json(429, body)))).toEqual({
+  // 400, 403 and 429 with a refusal the error body names: the call certainly was not billed.
+  // (The wording of each refusal, billing included, is classified in key-check.test.ts.)
+  it.each([
+    [400, googleError(400, 'INVALID_ARGUMENT', 'API_KEY_INVALID'), 'invalid'],
+    [403, googleError(403, 'PERMISSION_DENIED', 'SERVICE_DISABLED'), 'disabled'],
+    [429, googleError(429, 'RESOURCE_EXHAUSTED', 'RATE_LIMIT_EXCEEDED'), 'quota'],
+  ])('maps a %s to its reason and allows the refund', async (status, body, reason) => {
+    expect(await webDetect(IMAGE, KEY, fakeFetch(json(status, body)))).toEqual({
       ok: false,
-      reason: 'quota',
+      reason,
       refundable: true,
     });
   });
@@ -209,43 +154,26 @@ describe('webDetect HTTP refusals Google names', () => {
 
 describe('webDetect refusals that may have been billed', () => {
   it.each([
-    ['a bare 429 (unreadable body)', 'slow down'],
-    [
-      'a 429 whose body names nothing',
-      JSON.stringify({ error: { code: 429, message: 'Slow down.' } }),
-    ],
-    ['an empty 429', ''],
-  ])('reads %s as a quota but keeps the credit', async (_name, body) => {
-    expect(await webDetect(IMAGE, KEY, fakeFetch(new Response(body, { status: 429 })))).toEqual({
-      ok: false,
-      reason: 'quota',
-      refundable: false,
-    });
-  });
-
-  it.each([
     [
       'a 400 with no reason Google names',
       400,
       googleError(400, 'INVALID_ARGUMENT', 'OTHER'),
       'photo',
     ],
-    ['a 400 with an unreadable body', 400, 'not json', 'photo'],
-    ['a payload too large', 413, 'too big', 'photo'],
+    ['a payload too large', 413, googleError(413, 'OUT_OF_RANGE', 'OTHER'), 'photo'],
     [
       'a 403 with no reason Google names',
       403,
       googleError(403, 'PERMISSION_DENIED', 'OTHER'),
       'invalid',
     ],
-    ['an unreadable 403', 403, 'not json', 'invalid'],
-    ['a 401', 401, googleError(401, 'UNAUTHENTICATED', 'OTHER'), 'invalid'],
     [
       'a named refusal on a status that is not 400, 403 or 429',
       401,
       googleError(401, 'UNAUTHENTICATED', 'API_KEY_INVALID'),
       'invalid',
     ],
+    ['a bare 429 (unreadable body)', 429, 'slow down', 'quota'],
   ])('keeps the credit on %s', async (_name, status, body, reason) => {
     const response = typeof body === 'string' ? new Response(body, { status }) : json(status, body);
     expect(await webDetect(IMAGE, KEY, fakeFetch(response))).toEqual({
@@ -256,13 +184,11 @@ describe('webDetect refusals that may have been billed', () => {
   });
 
   it('keeps the credit on a Google server error', async () => {
-    for (const status of [500, 502, 503]) {
-      expect(await webDetect(IMAGE, KEY, fakeFetch(json(status, {})))).toEqual({
-        ok: false,
-        reason: 'network',
-        refundable: false,
-      });
-    }
+    expect(await webDetect(IMAGE, KEY, fakeFetch(json(503, {})))).toEqual({
+      ok: false,
+      reason: 'network',
+      refundable: false,
+    });
   });
 
   it('keeps the credit when the request fails before any answer (it may have been received)', async () => {

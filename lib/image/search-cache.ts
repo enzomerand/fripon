@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import { isRecord } from '../json';
 import { withLock } from '../lock';
-import type { ImageMatch, Money } from '../model';
+import type { ImageMatch } from '../model';
 
 /**
  * `storage.local` key of a search: `fripon:vision:v1:<origin + path of the photo>`.
@@ -16,7 +16,7 @@ export const VISION_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** The cache never keeps more entries than this (the oldest go first). */
 export const VISION_CACHE_MAX_ENTRIES = 200;
 /** Name of the lock that serialises the cache writes. */
-export const VISION_CACHE_LOCK = 'fripon:vision-cache';
+const VISION_CACHE_LOCK = 'fripon:vision-cache';
 
 /** What is stored: the matches only, never Google's raw answer. */
 interface CacheEntry {
@@ -34,26 +34,16 @@ export function visionCacheKey(photoUrl: string): string {
   return `${VISION_CACHE_PREFIX}${url.origin}${url.pathname}`;
 }
 
-function parseMoney(value: unknown): Money | null | undefined {
-  if (value === null) return null;
-  if (!isRecord(value)) return undefined;
-  return typeof value.amount === 'number' &&
-    Number.isFinite(value.amount) &&
-    typeof value.currency === 'string'
-    ? { amount: value.amount, currency: value.currency }
-    : undefined;
-}
-
 function parseMatch(value: unknown): ImageMatch | undefined {
   if (!isRecord(value)) return undefined;
-  const { platform, url, exact } = value;
-  const price = parseMoney(value.price);
+  const { platform, url, exact, price } = value;
   if (typeof platform !== 'string' || typeof url !== 'string' || typeof exact !== 'boolean') {
     return undefined;
   }
-  // The URL ends up in a link of the card.
-  if (!/^https?:\/\//i.test(url) || price === undefined) return undefined;
-  return { platform, url, exact, price };
+  // The URL ends up in a link of the card. Prices come with lot 3b (and a new cache key): until
+  // then a stored price is not something this version wrote.
+  if (!/^https?:\/\//i.test(url) || price !== null) return undefined;
+  return { platform, url, exact, price: null };
 }
 
 /** null for anything that does not look like what `writeVisionCache` stores. */

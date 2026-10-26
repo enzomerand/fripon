@@ -16,7 +16,7 @@ const FOUND: WebDetectResult = {
   ok: true,
   webDetection: {
     pagesWithMatchingImages: [
-      { url: 'https://fr.shein.com/style/Robes-sc-1.html', partialMatchingImages: [{ url: 'u' }] },
+      { url: 'https://fr.shein.com/style/Robes-sc-1.html' },
       {
         url: 'https://fr.shein.com/Robe-Test-p-1234567-cat-1727.html',
         fullMatchingImages: [{ url: 'u' }],

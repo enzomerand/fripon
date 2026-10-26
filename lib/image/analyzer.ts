@@ -1,3 +1,4 @@
+import type { FetchLike } from '../fetch';
 import type { AnalyzeImageResponse } from '../messages';
 
 /** Photos are only fetched from Vinted's image CDN (`images1.vinted.net`...). */
@@ -67,8 +68,6 @@ async function readLimited(response: Response): Promise<Blob> {
   }
   return new Blob(chunks, { type });
 }
-
-export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
 /**
  * Downloads a Vinted photo with every guard: an allowed URL, no redirect, no cookies, a timeout,

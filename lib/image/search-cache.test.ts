@@ -107,11 +107,11 @@ describe('readVisionCache / writeVisionCache', () => {
     expect(await readVisionCache(key, NOW)).toBeNull();
   });
 
-  it('accepts a priced match (lot 3b will write them)', async () => {
+  it('treats an entry that holds a price as a miss: this version never wrote one', async () => {
     const key = visionCacheKey(PHOTO);
-    const priced: ImageMatch = { ...MATCHES[0]!, price: { amount: 9.5, currency: 'EUR' } };
-    await writeVisionCache(key, [priced], NOW);
-    expect(await readVisionCache(key, NOW)).toEqual([priced]);
+    const priced = { ...MATCHES[0], price: { amount: 9.5, currency: 'EUR' } };
+    await browser.storage.local.set({ [key]: { matches: [priced], at: NOW } });
+    expect(await readVisionCache(key, NOW)).toBeNull();
   });
 });
 

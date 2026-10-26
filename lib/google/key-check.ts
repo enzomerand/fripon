@@ -1,3 +1,4 @@
+import type { FetchLike } from '../fetch';
 import { isRecord } from '../json';
 import type { Provider } from '../settings';
 
@@ -17,9 +18,7 @@ export type KeyCheckFailure =
 
 export type KeyCheckResult = { ok: true } | { ok: false; reason: KeyCheckFailure };
 
-type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
-
-export interface GoogleErrorInfo {
+interface GoogleErrorInfo {
   status: string;
   message: string;
   /** Normalised `google.rpc.ErrorInfo` reasons, plus the legacy `errors[].reason` ones. */
@@ -111,7 +110,7 @@ export function classifyKnown(status: number, info: GoogleErrorInfo): KeyCheckFa
 }
 
 /** An HTTP refusal: API_KEY_INVALID (400 INVALID_ARGUMENT) and every other one are `invalid`. */
-export function classify(status: number, info: GoogleErrorInfo): KeyCheckFailure {
+function classify(status: number, info: GoogleErrorInfo): KeyCheckFailure {
   return classifyKnown(status, info) ?? 'invalid';
 }
 

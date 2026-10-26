@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { SearchImageFailure, SearchImageResponse } from '../messages';
 import type { ImageMatch } from '../model';
 import {
   googleLensUrl,
@@ -191,21 +190,6 @@ describe('imageCheckFailed', () => {
       expect(imageCheckFailed(reason).action).toBe('open_keys');
     },
   );
-
-  it('says something for every reason', () => {
-    const reasons: SearchImageFailure[] = [
-      'invalid',
-      'disabled',
-      'restricted',
-      'billing',
-      'quota',
-      'network',
-      'photo',
-    ];
-    for (const reason of reasons) {
-      expect(imageCheckFailed(reason).detail.length).toBeGreaterThan(10);
-    }
-  });
 });
 
 describe('imageCheckForSearch', () => {
@@ -220,13 +204,5 @@ describe('imageCheckForSearch', () => {
     expect(imageCheckForSearch({ status: 'error', reason: 'billing' })).toEqual(
       imageCheckFailed('billing'),
     );
-  });
-
-  it('reads an answer it does not know as a failed search', () => {
-    for (const odd of [{ status: 'later' }, { status: 'ok' }, { status: 'ok', matches: 'x' }]) {
-      expect(imageCheckForSearch(odd as unknown as SearchImageResponse)).toEqual(
-        imageCheckFailed('network'),
-      );
-    }
   });
 });

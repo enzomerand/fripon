@@ -129,10 +129,10 @@ function createCardController(ctx: ContentScriptContext) {
       if (current.searching) return;
       current.searching = true;
     }
-    // The row already says what is going on, unless a click asks for the search just now.
-    const showProgress = trigger === 'click' || gate === 'ready';
     try {
-      if (showProgress) {
+      // The row already says "Recherche en cours…" when the search starts by itself; only a click
+      // has to take the button's place.
+      if (trigger === 'click') {
         show({
           status: 'done',
           listing,
