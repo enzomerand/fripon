@@ -52,6 +52,8 @@ function createCardController(ctx: ContentScriptContext) {
   let currentItemId: string | null = null;
   let ui: Ui | null = null;
   let container: HTMLElement | null = null;
+  let keepAttached: MutationObserver | null = null;
+  ctx.onInvalidated(() => stopKeepingAttached());
 
   function show(state: CardState) {
     if (!container) return;
@@ -61,7 +63,29 @@ function createCardController(ctx: ContentScriptContext) {
     );
   }
 
+  function stopKeepingAttached() {
+    keepAttached?.disconnect();
+  }
+
+  /**
+   * Vinted re-renders the item sidebar after load (seen ~0.3 s and ~2 s in), which drops the card
+   * with it: move the same host, shadow tree and state included, next to the new anchor.
+   */
+  function keepCardAttached(host: HTMLElement) {
+    keepAttached = new MutationObserver(() => {
+      // A card moved onto another item's page before `wxt:locationchange` disposes it would lie.
+      if (host.isConnected || itemIdFromUrl(location.href) !== currentItemId) return;
+      const anchor = findAnchor(document);
+      if (!anchor) return;
+      if (anchor.position === 'after') anchor.element.after(host);
+      else anchor.element.before(host);
+    });
+    keepAttached.observe(document.body, { childList: true, subtree: true });
+  }
+
   function dispose() {
+    // First, or removing the card below would put it straight back.
+    stopKeepingAttached();
     ui?.remove();
     ui = null;
     container = null;
@@ -91,6 +115,7 @@ function createCardController(ctx: ContentScriptContext) {
     }
     ui = created;
     created.mount();
+    keepCardAttached(created.shadowHost);
     return true;
   }
 
