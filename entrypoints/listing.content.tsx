@@ -1,8 +1,17 @@
 import { render } from 'preact';
 import type { ContentScriptContext } from 'wxt/utils/content-script-context';
-import { AnalysisCancelledError, analyzeListing, type AnalysisDeps } from '../lib/analysis';
+import {
+  AnalysisCancelledError,
+  analyzeListing,
+  searchPhoto,
+  withImageSearch,
+  type AnalysisDeps,
+  type AnalysisResult,
+} from '../lib/analysis';
+import { imageCheckSearching } from '../lib/checks/image';
 import type { ImageGate } from '../lib/gate';
 import { sendMessage, type OptionsSection } from '../lib/messages';
+import type { Listing } from '../lib/model';
 import { waitFor } from '../lib/wait';
 import { fetchSeller } from '../lib/vinted/api';
 import { findAnchor } from '../lib/vinted/anchor';
@@ -22,6 +31,7 @@ const HOST_CSS = ':host { display: block !important; margin: 12px 0 !important; 
 const analysisDeps: AnalysisDeps = {
   fetchSeller,
   analyzeImage: (url) => sendMessage({ type: 'analyzeImage', url }),
+  searchImage: (photoUrl) => sendMessage({ type: 'searchImage', photoUrl }),
 };
 
 const IMAGE_GATES: readonly ImageGate[] = ['ready', 'no_key', 'quota', 'manual'];
@@ -45,6 +55,14 @@ function openOptions(section: OptionsSection) {
 
 type Ui = Awaited<ReturnType<typeof createShadowRootUi<HTMLElement>>>;
 
+/** What the card currently shows, kept to redo the verdict after the "Au clic" image search. */
+interface Analysed {
+  listing: Listing;
+  result: AnalysisResult;
+  /** true while the image search of a click is running: a second click does nothing. */
+  searching: boolean;
+}
+
 /** Owns the card of this page: mounts it, updates it, and replaces it on a new run. */
 function createCardController(ctx: ContentScriptContext) {
   let runId = 0;
@@ -53,14 +71,58 @@ function createCardController(ctx: ContentScriptContext) {
   let ui: Ui | null = null;
   let container: HTMLElement | null = null;
   let keepAttached: MutationObserver | null = null;
+  /** The finished analysis of the current run, null until there is one. */
+  let analysed: Analysed | null = null;
   ctx.onInvalidated(() => stopKeepingAttached());
 
   function show(state: CardState) {
     if (!container) return;
     render(
-      <ListingCard state={state} onRetry={() => void start()} onOpenOptions={openOptions} />,
+      <ListingCard
+        state={state}
+        onRetry={() => void start()}
+        onOpenOptions={openOptions}
+        onRunImageSearch={() =>
+          void runImageSearch().catch((error: unknown) => {
+            console.warn('[Fripon] The image search failed.', error);
+          })
+        }
+      />,
       container,
     );
+  }
+
+  /**
+   * The "Au clic" button: searches the photo, then redoes the verdict from the checks the page
+   * already has. No new seller request, no new photo download, no free check run again.
+   */
+  async function runImageSearch() {
+    const current = analysed;
+    if (!current || current.searching) return;
+    current.searching = true;
+    const { listing, result } = current;
+    try {
+      show({
+        status: 'done',
+        listing,
+        verdict: result.verdict,
+        checks: result.checks.map((check) =>
+          check.id === 'image' ? imageCheckSearching() : check,
+        ),
+      });
+      const response = await searchPhoto(listing.photoUrls[0], analysisDeps);
+      // A newer run (new item, bfcache restore) took the card over while the search ran.
+      if (analysed !== current) return;
+      current.result = withImageSearch(result, response);
+      show({
+        status: 'done',
+        listing,
+        verdict: current.result.verdict,
+        checks: current.result.checks,
+      });
+    } finally {
+      current.searching = false;
+    }
   }
 
   function stopKeepingAttached() {
@@ -89,6 +151,7 @@ function createCardController(ctx: ContentScriptContext) {
     ui?.remove();
     ui = null;
     container = null;
+    analysed = null;
     // A card left by a previous run of this script (extension reload, bfcache).
     for (const stale of document.querySelectorAll(HOST_TAG)) stale.remove();
   }
@@ -145,13 +208,14 @@ function createCardController(ctx: ContentScriptContext) {
       return;
     }
 
-    const { verdict, checks } = await analyzeListing(listing, analysisDeps, {
+    const result = await analyzeListing(listing, analysisDeps, {
       imageGate: await imageGate,
       // A superseded run must not spend API calls or downloads.
       isCancelled: () => id !== runId || ctx.isInvalid,
     });
     if (id !== runId) return;
-    show({ status: 'done', listing, verdict, checks });
+    analysed = { listing, result, searching: false };
+    show({ status: 'done', listing, verdict: result.verdict, checks: result.checks });
   }
 
   /** (Re)starts the whole run. Never rejects: the page must not be affected by a failure here. */

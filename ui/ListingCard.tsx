@@ -6,6 +6,7 @@ import type {
   CheckId,
   CheckResult,
   CheckStatus,
+  ImageMatch,
   Listing,
   Verdict,
   VerdictLevel,
@@ -25,13 +26,26 @@ export interface ListingCardProps {
    * such a check shows no button.
    */
   onOpenOptions?: (section: OptionsSection) => void;
+  /**
+   * Called by the "Lancer la recherche d'image" button of the image row in "Au clic" mode. Without
+   * it, that row shows no button.
+   */
+  onRunImageSearch?: () => void;
 }
 
-/** Where each check action leads, and what its button says. */
-const ACTIONS: Record<CheckAction, { section: OptionsSection; label: string }> = {
+/** Where each check action that opens the options page leads, and what its button says. */
+const OPTIONS_ACTIONS: Record<
+  Exclude<CheckAction, 'run_image_search'>,
+  { section: OptionsSection; label: string }
+> = {
   open_guide: { section: 'guide', label: 'Activer en 2 minutes' },
   open_settings: { section: 'credits', label: 'Voir mes réglages' },
+  open_keys: { section: 'keys', label: 'Vérifier ma clé' },
 };
+
+const RUN_IMAGE_SEARCH_LABEL = "Lancer la recherche d'image";
+/** The row links to the first few matches only: the card is not a results page. */
+const MAX_MATCH_LINKS = 3;
 
 export const CHECK_LABELS: Record<CheckId, string> = {
   image: "Recherche de l'image",
@@ -64,15 +78,30 @@ function Tag({ check }: { check: CheckResult }) {
   return <span class={`fripon__tag fripon__tag--${TAG_COLOUR[check.status]}`}>{check.tag}</span>;
 }
 
+/** The matches the row links to: exact ones first, and only real http(s) links. */
+function linkedMatches(check: CheckResult): ImageMatch[] {
+  if (check.id !== 'image') return [];
+  return [...(check.matches ?? [])]
+    .filter((match) => /^https?:\/\//i.test(match.url))
+    .sort((a, b) => Number(b.exact) - Number(a.exact))
+    .slice(0, MAX_MATCH_LINKS);
+}
+
 interface CheckRowProps {
   check: CheckResult;
   listing: Listing;
   onOpenOptions?: (section: OptionsSection) => void;
+  onRunImageSearch?: () => void;
 }
 
-function CheckRow({ check, listing, onOpenOptions }: CheckRowProps) {
+function CheckRow({ check, listing, onOpenOptions, onRunImageSearch }: CheckRowProps) {
   const photoUrl = listing.photoUrls[0];
-  const action = check.action && onOpenOptions ? ACTIONS[check.action] : null;
+  const runSearch = check.action === 'run_image_search' && onRunImageSearch;
+  const action =
+    check.action && check.action !== 'run_image_search' && onOpenOptions
+      ? OPTIONS_ACTIONS[check.action]
+      : null;
+  const matches = linkedMatches(check);
   const showLens = check.id === 'image' && photoUrl;
   return (
     <li class="fripon__check">
@@ -81,7 +110,7 @@ function CheckRow({ check, listing, onOpenOptions }: CheckRowProps) {
         <Tag check={check} />
       </div>
       <p class="fripon__detail">{check.detail}</p>
-      {(action || showLens) && (
+      {(action || runSearch || matches.length > 0 || showLens) && (
         <div class="fripon__actions">
           {action && (
             <button
@@ -92,6 +121,22 @@ function CheckRow({ check, listing, onOpenOptions }: CheckRowProps) {
               {action.label}
             </button>
           )}
+          {runSearch && (
+            <button type="button" class="fripon__action" onClick={runSearch}>
+              {RUN_IMAGE_SEARCH_LABEL}
+            </button>
+          )}
+          {matches.map((match) => (
+            <a
+              key={match.url}
+              class="fripon__link"
+              href={match.url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Voir sur {match.platform}
+            </a>
+          ))}
           {showLens && (
             <a
               class="fripon__link"
@@ -108,9 +153,10 @@ function CheckRow({ check, listing, onOpenOptions }: CheckRowProps) {
   );
 }
 
-type ResultProps = Extract<CardState, { status: 'done' }> & Pick<ListingCardProps, 'onOpenOptions'>;
+type ResultProps = Extract<CardState, { status: 'done' }> &
+  Pick<ListingCardProps, 'onOpenOptions' | 'onRunImageSearch'>;
 
-function Result({ listing, verdict, checks, onOpenOptions }: ResultProps) {
+function Result({ listing, verdict, checks, onOpenOptions, onRunImageSearch }: ResultProps) {
   const [expanded, setExpanded] = useState(false);
   return (
     <section
@@ -144,6 +190,7 @@ function Result({ listing, verdict, checks, onOpenOptions }: ResultProps) {
                 check={check}
                 listing={listing}
                 onOpenOptions={onOpenOptions}
+                onRunImageSearch={onRunImageSearch}
               />
             ))}
           </ul>
@@ -154,7 +201,7 @@ function Result({ listing, verdict, checks, onOpenOptions }: ResultProps) {
   );
 }
 
-export function ListingCard({ state, onRetry, onOpenOptions }: ListingCardProps) {
+export function ListingCard({ state, onRetry, onOpenOptions, onRunImageSearch }: ListingCardProps) {
   if (state.status === 'loading') {
     return (
       <section class="fripon fripon--neutral" role="status">
@@ -175,5 +222,5 @@ export function ListingCard({ state, onRetry, onOpenOptions }: ListingCardProps)
       </section>
     );
   }
-  return <Result {...state} onOpenOptions={onOpenOptions} />;
+  return <Result {...state} onOpenOptions={onOpenOptions} onRunImageSearch={onRunImageSearch} />;
 }
