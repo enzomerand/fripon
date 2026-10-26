@@ -197,10 +197,9 @@ describe('webDetect HTTP refusals Google names', () => {
     },
   );
 
-  it('allows a refund on a 429 even when the body cannot be read', async () => {
-    expect(
-      await webDetect(IMAGE, KEY, fakeFetch(new Response('slow down', { status: 429 }))),
-    ).toEqual({
+  it('names a quota on a 429 whose body says RESOURCE_EXHAUSTED, and allows the refund', async () => {
+    const body = { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded.' } };
+    expect(await webDetect(IMAGE, KEY, fakeFetch(json(429, body)))).toEqual({
       ok: false,
       reason: 'quota',
       refundable: true,
@@ -209,6 +208,21 @@ describe('webDetect HTTP refusals Google names', () => {
 });
 
 describe('webDetect refusals that may have been billed', () => {
+  it.each([
+    ['a bare 429 (unreadable body)', 'slow down'],
+    [
+      'a 429 whose body names nothing',
+      JSON.stringify({ error: { code: 429, message: 'Slow down.' } }),
+    ],
+    ['an empty 429', ''],
+  ])('reads %s as a quota but keeps the credit', async (_name, body) => {
+    expect(await webDetect(IMAGE, KEY, fakeFetch(new Response(body, { status: 429 })))).toEqual({
+      ok: false,
+      reason: 'quota',
+      refundable: false,
+    });
+  });
+
   it.each([
     [
       'a 400 with no reason Google names',

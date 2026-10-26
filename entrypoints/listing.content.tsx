@@ -145,8 +145,9 @@ function createCardController(ctx: ContentScriptContext) {
       const response = await searchPhoto(listing.photoUrls[0], searchDeps, cacheOnly);
       // A newer run (new item, bfcache restore) took the card over while the search ran.
       if (analysed !== current) return;
-      // Nothing cached, or a click got there first: the row stays as it is.
-      if (cacheOnly && (current.searching || response.status === 'not_cached')) return;
+      // A look in the cache only ever shows a result: a miss, a failure or a lost message leaves the
+      // "Au clic" row alone (it is not a failed search), and so does a click that got there first.
+      if (cacheOnly && (current.searching || response.status !== 'ok')) return;
       current.result = withImageSearch(result, response);
       show({
         status: 'done',

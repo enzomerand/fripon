@@ -7,6 +7,7 @@ import { checkKey } from '../lib/google/key-check';
 import { webDetect } from '../lib/google/vision';
 import { isRuntimeMessage } from '../lib/messages';
 import { openOptionsAt } from '../lib/options-nav';
+import { SETTINGS_KEY, parseSettings } from '../lib/settings';
 
 /** Photos are shrunk to this many pixels on their longest side before analysis. */
 const MAX_ANALYSIS_SIDE = 256;
@@ -63,6 +64,15 @@ export default defineBackground(() => {
   const toolbarButton = browser.action ?? browser.browserAction;
   toolbarButton?.onClicked.addListener(() => {
     void openOptionsAt().catch(() => undefined);
+  });
+
+  // A refused key is only remembered for as long as it is the stored one: a changed key (even one
+  // that is put back later) starts from a clean slate.
+  browser.storage.onChanged.addListener((changes, area) => {
+    const change = area === 'local' ? changes[SETTINGS_KEY] : undefined;
+    if (!change) return;
+    const before = parseSettings(change.oldValue).keys.vision;
+    if (before !== parseSettings(change.newValue).keys.vision) searchImage.forgetKeyFailure();
   });
 
   browser.runtime.onInstalled.addListener(({ reason }) => {

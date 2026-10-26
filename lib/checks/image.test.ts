@@ -164,11 +164,11 @@ describe('imageCheckFailed', () => {
       'Google a atteint le quota de ta clé Vision, réessaie plus tard.',
     );
     expect(imageCheckFailed('photo').detail).toBe(
-      "La photo de l'annonce n'a pas pu être analysée, réessaie plus tard.",
+      "La photo de l'annonce n'a pas pu être analysée.",
     );
   });
 
-  it.each(['network', 'photo', 'quota'] as const)(
+  it.each(['network', 'quota'] as const)(
     'offers to search again when the failure may pass (%s)',
     (reason) => {
       expect(imageCheckFailed(reason)).toMatchObject({
@@ -177,6 +177,12 @@ describe('imageCheckFailed', () => {
       });
     },
   );
+
+  it('offers nothing for a photo that failed: it would fail again, at a credit a click', () => {
+    const row = imageCheckFailed('photo');
+    expect(row).not.toHaveProperty('action');
+    expect(row).not.toHaveProperty('actionLabel');
+  });
 
   it.each(['invalid', 'restricted', 'disabled', 'billing'] as const)(
     'does not offer to search again when the key is the problem (%s)',

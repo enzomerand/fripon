@@ -52,8 +52,8 @@ export type WebDetectResult =
       reason: VisionFailure;
       /**
        * true only when Google certainly did not bill the call: it was never sent, or Google
-       * answered 400, 403 or 429 with a refusal it names (invalid key, API blocked or disabled,
-       * billing off, quota). Anything else (a timeout, a 5xx, an unreadable answer, an error on
+       * answered 400, 403 or 429 with a refusal its error body names (invalid key, API blocked or
+       * disabled, billing off, quota). Anything else (a timeout, a 5xx, an unreadable answer, an error on
        * the image) may have been processed, so the credit stays spent.
        */
       refundable: boolean;
@@ -86,14 +86,22 @@ function perImageFailure(error: unknown): VisionFailure {
 const UNBILLED_REFUSALS: ReadonlySet<number> = new Set([400, 403, 429]);
 
 /**
- * An HTTP refusal. A recognised one is the key's or the project's problem, and free of charge on
- * the statuses of `UNBILLED_REFUSALS`. An unrecognised 400 or 413 blames the image, any other
- * unrecognised refusal reads as a bad key; neither is known to be free of charge.
+ * An HTTP refusal. One that Google's error body names is the key's or the project's problem, and
+ * free of charge on the statuses of `UNBILLED_REFUSALS`. A bare 429 (nothing readable in the body)
+ * still reads as a quota, but proves nothing about billing, so it keeps the credit. An unrecognised
+ * 400 or 413 blames the image, any other unrecognised refusal reads as a bad key; neither is known
+ * to be free of charge.
  */
 async function refusal(response: Response): Promise<WebDetectResult> {
-  const known = classifyKnown(response.status, await readError(response));
+  // Status 0: only what the body says counts, not the HTTP status.
+  const named = classifyKnown(0, await readError(response));
+  const known = named ?? (response.status === 429 ? 'quota' : null);
   if (known) {
-    return { ok: false, reason: known, refundable: UNBILLED_REFUSALS.has(response.status) };
+    return {
+      ok: false,
+      reason: known,
+      refundable: named !== null && UNBILLED_REFUSALS.has(response.status),
+    };
   }
   const imageProblem = response.status === 400 || response.status === 413;
   return { ok: false, reason: imageProblem ? 'photo' : 'invalid', refundable: false };

@@ -90,16 +90,20 @@ const FAILURE_DETAILS: Record<SearchImageFailure, string> = {
   billing: KEY_REFUSED,
   quota: 'Google a atteint le quota de ta clé Vision, réessaie plus tard.',
   network: 'Google ne répond pas, réessaie plus tard.',
-  photo: "La photo de l'annonce n'a pas pu être analysée, réessaie plus tard.",
+  photo: "La photo de l'annonce n'a pas pu être analysée.",
 };
 
 /** What the retry button of a failed search says: the action is the one of the "Au clic" button. */
 export const RETRY_SEARCH_LABEL = 'Réessayer la recherche';
 
+/** Failures that may pass: trying again is worth a click (and a credit). */
+const RETRYABLE_FAILURES: readonly SearchImageFailure[] = ['network', 'quota'];
+
 /**
  * The image row when the search was tried and failed. A problem with the key sends the user to
- * the keys; anything else (Google not answering, a photo that could not be read, a quota used up
- * at Google) may pass, so the row offers to search again.
+ * the keys; Google not answering or a quota used up at Google may pass, so the row offers to
+ * search again. A photo that could not be read does not: it fails the same way every time, and
+ * each attempt would cost a credit.
  */
 export function imageCheckFailed(reason: SearchImageFailure): CheckResult {
   const row: CheckResult = {
@@ -110,7 +114,10 @@ export function imageCheckFailed(reason: SearchImageFailure): CheckResult {
     signals: [],
   };
   if (isKeyFailure(reason)) return { ...row, action: 'open_keys' };
-  return { ...row, action: 'run_image_search', actionLabel: RETRY_SEARCH_LABEL };
+  if (RETRYABLE_FAILURES.includes(reason)) {
+    return { ...row, action: 'run_image_search', actionLabel: RETRY_SEARCH_LABEL };
+  }
+  return row;
 }
 
 /** The image row for the answer of the background to a `searchImage` request. */

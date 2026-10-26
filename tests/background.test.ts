@@ -304,6 +304,40 @@ describe('background', () => {
       vi.unstubAllGlobals();
     });
 
+    it('forgets a refused key as soon as the stored key changes, even back to the same one', async () => {
+      const fetchMock = stubWeb(() =>
+        Response.json(
+          {
+            error: {
+              code: 403,
+              status: 'PERMISSION_DENIED',
+              message: 'This API method requires billing to be enabled.',
+            },
+          },
+          { status: 403 },
+        ),
+      );
+      await saveSettings({ keys: { vision: KEY } });
+      const send = start();
+      const photo = (n: number) => `https://images1.vinted.net/t/${n}/f800/p.webp`;
+
+      await send({ type: 'searchImage', photoUrl: photo(1) }, fromPage);
+      await send({ type: 'searchImage', photoUrl: photo(2) }, fromPage);
+      expect(visionCalls(fetchMock)).toHaveLength(1);
+
+      // Another key, then the first one again: the refusal is no longer remembered.
+      await saveSettings({ keys: { vision: `${KEY}x` } });
+      await saveSettings({ keys: { vision: KEY } });
+      await send({ type: 'searchImage', photoUrl: photo(3) }, fromPage);
+      expect(visionCalls(fetchMock)).toHaveLength(2);
+
+      // Saving something else leaves the memory alone.
+      await saveSettings({ mode: 'click' });
+      await send({ type: 'searchImage', photoUrl: photo(4) }, fromPage);
+      expect(visionCalls(fetchMock)).toHaveLength(2);
+      vi.unstubAllGlobals();
+    });
+
     it('refuses a photo that is not on the Vinted CDN, and a sender that is not ours', async () => {
       const fetchMock = stubWeb(() => Response.json(FOUND));
       await saveSettings({ keys: { vision: KEY } });

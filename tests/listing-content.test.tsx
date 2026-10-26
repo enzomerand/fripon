@@ -438,6 +438,34 @@ describe('listing content script', () => {
       expect(hostCard()?.shadowRoot?.querySelector('.fripon > .fripon__actions')).not.toBeNull();
     }, 15_000);
 
+    it.each([
+      ['an error', () => Promise.resolve({ status: 'error', reason: 'network' })],
+      ['a miss', () => Promise.resolve({ status: 'not_cached' })],
+      ['a lost message', () => Promise.reject(new Error('Extension context invalidated'))],
+      ['no answer at all', () => Promise.resolve(undefined)],
+    ])(
+      'leaves the "Au clic" row alone when the look in the cache ends in %s',
+      async (_name, answer) => {
+        imageGate = 'manual';
+        searchAnswer = (message) =>
+          message.cacheOnly ? answer() : Promise.resolve({ status: 'ok', matches: [SHEIN_EXACT] });
+        stubFetch();
+        await script.main(ctx);
+        await until(() => shadowText().includes('Voir les 5 vérifications'));
+        await until(() => sentMessages('searchImage').length === 1);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await expandChecks();
+
+        expect(shadowText()).toContain('Au clic');
+        expect(shadowText()).not.toContain('Recherche impossible');
+        expect(actionButton()?.textContent).toBe("Lancer la recherche d'image");
+        // The button still works.
+        actionButton()?.click();
+        await until(() => shadowText().includes('Trouvée sur Shein'));
+      },
+      15_000,
+    );
+
     it('shows the cached result in manual mode without a click and without spending', async () => {
       imageGate = 'manual';
       searchAnswer = (message) =>
