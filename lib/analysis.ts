@@ -1,5 +1,5 @@
 import { checkDescription } from './checks/description';
-import { imageCheckForSearch, imageCheckOff } from './checks/image';
+import { imageCheckForSearch, imageCheckOff, imageCheckSearching } from './checks/image';
 import { checkPhotos } from './checks/photos';
 import { priceCheckOff } from './checks/price';
 import { checkSeller } from './checks/seller';
@@ -26,8 +26,16 @@ export const IMAGE_CONCURRENCY = 4;
 export interface AnalysisDeps {
   fetchSeller(sellerId: string): Promise<Seller>;
   analyzeImage(url: string): Promise<AnalyzeImageResponse>;
-  /** The reverse image search (paid): only called when the gate is "ready", or on a click. */
-  searchImage(photoUrl: string): Promise<SearchImageResponse>;
+}
+
+/**
+ * The reverse image search, apart from `AnalysisDeps` on purpose: it is not part of the analysis.
+ * The card is shown from the free checks first, then the search runs on its own (see
+ * `searchPhoto` and `withImageSearch`), automatically or on a click.
+ */
+export interface SearchDeps {
+  /** With `cacheOnly` the background never spends: the cached result, or `not_cached`. */
+  searchImage(photoUrl: string, cacheOnly?: boolean): Promise<SearchImageResponse>;
 }
 
 export interface AnalysisOptions {
@@ -82,16 +90,18 @@ export function capLocalHeuristics(
 }
 
 /**
- * Searches the listing's main photo (a paid call). Never rejects: a photo that is missing, a
- * background that does not answer or a context that was invalidated all count as a failed search.
+ * Searches the listing's main photo (a paid call, unless `cacheOnly`). Never rejects: a photo that
+ * is missing, a background that does not answer or a context that was invalidated all count as a
+ * failed search.
  */
 export async function searchPhoto(
   photoUrl: string | undefined,
-  deps: Pick<AnalysisDeps, 'searchImage'>,
+  deps: SearchDeps,
+  cacheOnly = false,
 ): Promise<SearchImageResponse> {
   if (!photoUrl) return { status: 'error', reason: 'photo' };
   try {
-    const response = await deps.searchImage(photoUrl);
+    const response = await deps.searchImage(photoUrl, cacheOnly);
     // A background that did not answer at all resolves with `undefined`.
     return typeof response?.status === 'string' ? response : { status: 'error', reason: 'network' };
   } catch {
@@ -99,7 +109,12 @@ export async function searchPhoto(
   }
 }
 
-/** Caps the local rows by what the image row found, then decides the verdict. */
+/**
+ * Caps the local rows by what the image row found, then decides the verdict. This is the one path
+ * both `analyzeListing` and `withImageSearch` end in, so the price comparison of lot 3b belongs
+ * here: the price row and `priceRatio` depend on the original price of the exact match, and
+ * building them anywhere else would leave the "Au clic" path with the old row and a null ratio.
+ */
 function assemble(rawChecks: CheckResult[]): AnalysisResult {
   const imageMatches = rawChecks.find((check) => check.id === 'image')?.matches ?? [];
   const checks = capLocalHeuristics(rawChecks, imageMatches);
@@ -185,9 +200,10 @@ function guarded(id: CheckId, run: () => CheckResult): CheckResult {
  * Runs every check on a listing and combines them into a verdict. A step that cannot run (seller
  * request refused, photo unreachable) turns its own check `off` and leaves the others intact.
  *
- * With the gate "ready" the image search starts at once, alongside the seller request and the
- * photo downloads; in the other gates its row says why it did not run. The price comparison is
- * not wired yet: it is reported as off, and the verdict says so when it would otherwise be green.
+ * The image search is not part of it: it is a paid call that must not hold the card back. The
+ * image row says "Recherche en cours…" when the gate is "ready" (the caller then runs the search),
+ * and why it does not run in the other gates. The price comparison is not wired yet: it is
+ * reported as off, and the verdict says so when it would otherwise be green.
  *
  * @throws {AnalysisCancelledError} when `options.isCancelled` turns true before the end.
  */
@@ -203,13 +219,6 @@ export async function analyzeListing(
   };
 
   ensureActive();
-  const mainUrl = listing.photoUrls[0];
-  // Started before anything else so it overlaps the seller request. It never rejects, so an
-  // analysis abandoned in the middle leaves nothing unhandled behind.
-  const imageRow: Promise<CheckResult> =
-    imageGate === 'ready'
-      ? searchPhoto(mainUrl, deps).then(imageCheckForSearch)
-      : Promise.resolve(imageCheckOff(imageGate));
   let seller: Seller | null = null;
   let sellerError: unknown;
   try {
@@ -219,6 +228,7 @@ export async function analyzeListing(
   }
   ensureActive();
 
+  const mainUrl = listing.photoUrls[0];
   const otherItems: SellerItem[] = (seller?.items ?? [])
     .filter((item) => item.id !== listing.id && item.photoUrl !== null)
     .slice(0, MAX_OTHER_PHOTOS);
@@ -239,10 +249,8 @@ export async function analyzeListing(
     return analysis ? [{ itemId: item.id, hash: analysis.hash }] : [];
   });
 
-  const image = await imageRow;
-  ensureActive();
   return assemble([
-    image,
+    imageGate === 'ready' ? imageCheckSearching() : imageCheckOff(imageGate),
     priceCheckOff(),
     seller ? guarded('seller', () => checkSeller(seller, others)) : sellerCheckOff(sellerError),
     guarded('photos', () => checkPhotos({ main, others })),

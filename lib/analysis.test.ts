@@ -8,8 +8,9 @@ import {
   searchPhoto,
   withImageSearch,
   type AnalysisDeps,
+  type SearchDeps,
 } from './analysis';
-import { imageCheckOff } from './checks/image';
+import { imageCheckOff, imageCheckSearching } from './checks/image';
 import { hashToHex } from './image/pixels';
 import type { SearchImageResponse } from './messages';
 import type { CheckResult, ImageMatch, Listing, Seller, SellerItem } from './model';
@@ -58,7 +59,6 @@ function deps(overrides: Partial<AnalysisDeps> = {}): AnalysisDeps {
         catalogScore: 0.2,
       }),
     ),
-    searchImage: vi.fn(() => Promise.resolve<SearchImageResponse>({ status: 'ok', matches: [] })),
     ...overrides,
   };
 }
@@ -257,26 +257,30 @@ describe('analyzeListing image gate', () => {
   const closedGates = ['no_key', 'quota', 'manual'] as const;
 
   it('is "no key" when the gate is not given', async () => {
-    const d = deps();
-    const { checks } = await analyzeListing(listing, d);
+    const { checks } = await analyzeListing(listing, deps());
     expect(checks[0]).toEqual(imageCheckOff('no_key'));
-    expect(d.searchImage).not.toHaveBeenCalled();
   });
 
-  it.each(closedGates)(
-    'puts the off row of the "%s" gate first and searches nothing',
-    async (imageGate) => {
-      const d = deps();
-      const { checks, verdict } = await analyzeListing(listing, d, { imageGate });
-      expect(checks[0]).toEqual(imageCheckOff(imageGate));
-      expect(d.searchImage).not.toHaveBeenCalled();
-      expect(verdict.withoutImageSearch).toBe(true);
-    },
-  );
+  it.each(closedGates)('puts the off row of the "%s" gate first', async (imageGate) => {
+    const { checks, verdict } = await analyzeListing(listing, deps(), { imageGate });
+    expect(checks[0]).toEqual(imageCheckOff(imageGate));
+    expect(verdict.withoutImageSearch).toBe(true);
+  });
 
   it('gives the manual row the button that runs the search', async () => {
     const { checks } = await analyzeListing(listing, deps(), { imageGate: 'manual' });
     expect(checks[0]).toMatchObject({ status: 'off', action: 'run_image_search' });
+  });
+
+  it('shows the search as running when the gate is ready, without searching by itself', async () => {
+    const d = deps();
+    const { checks, verdict } = await analyzeListing(listing, d, { imageGate: 'ready' });
+    expect(checks[0]).toEqual(imageCheckSearching());
+    expect(checks[0]).toMatchObject({ status: 'off', detail: 'Recherche en cours…' });
+    expect(checks[0]).not.toHaveProperty('action');
+    // The card is shown from the free checks: the search is the caller's business.
+    expect(Object.keys(d).sort()).toEqual(['analyzeImage', 'fetchSeller']);
+    expect(verdict.withoutImageSearch).toBe(true);
   });
 
   it('keeps the same five checks in the same order whatever the gate', async () => {
@@ -291,200 +295,71 @@ describe('analyzeListing image gate', () => {
       ]);
     }
   });
-});
 
-describe('analyzeListing image search', () => {
-  const ready = { imageGate: 'ready' } as const;
-
-  it('searches the main photo once when the gate is ready', async () => {
-    const d = deps();
-    await analyzeListing(listing, d, ready);
-    expect(d.searchImage).toHaveBeenCalledOnce();
-    expect(d.searchImage).toHaveBeenCalledWith(listing.photoUrls[0]);
-  });
-
-  it('says nothing was found, and the verdict no longer needs its "without image search" note', async () => {
-    const { checks, verdict } = await analyzeListing(listing, deps(), ready);
-    expect(checks[0]).toMatchObject({ id: 'image', status: 'ok', tag: 'Introuvable' });
-    expect(verdict.level).toBe('clean');
-    expect(verdict.withoutImageSearch).toBe(false);
-    expect(verdict.title).toBe('Rien de suspect');
-  });
-
-  it('calls an exact match red and the verdict an honest resale without other signals', async () => {
-    const d = deps({ searchImage: () => Promise.resolve(found(exactMatch, similarMatch)) });
-    const { checks, verdict } = await analyzeListing(listing, d, ready);
-    expect(checks[0]).toMatchObject({ status: 'bad', tag: 'Trouvée sur Shein' });
-    expect(checks[0]?.matches).toEqual([exactMatch, similarMatch]);
-    expect(verdict).toMatchObject({ level: 'resold', title: 'Article Shein revendu' });
-    expect(verdict.withoutImageSearch).toBe(false);
-  });
-
-  it('calls it dropshipping when an exact match comes with a strong signal, and keeps the local rows red', async () => {
-    const copies = Array.from({ length: 12 }, (_, i) =>
-      item(i + 1, { condition: 'new_with_tags' }),
+  it('runs the free checks the same way whatever the gate', async () => {
+    const results = await Promise.all(
+      (['ready', 'no_key', 'quota', 'manual'] as const).map((imageGate) =>
+        analyzeListing(listing, deps(), { imageGate }),
+      ),
     );
-    const d = deps({
-      fetchSeller: () => Promise.resolve(seller(copies)),
-      searchImage: () => Promise.resolve(found(exactMatch)),
-    });
-    const { checks, verdict } = await analyzeListing(listing, d, ready);
-    expect(verdict.level).toBe('dropshipping');
-    // The exact match backs the heuristics, so the cap on local rows does not apply.
-    expect(checks.find((c) => c.id === 'seller')?.status).toBe('bad');
-  });
-
-  it('calls a similar photo orange and the verdict "to verify"', async () => {
-    const d = deps({ searchImage: () => Promise.resolve(found(similarMatch)) });
-    const { checks, verdict } = await analyzeListing(listing, d, ready);
-    expect(checks[0]).toMatchObject({ status: 'warn', tag: 'Photo proche' });
-    expect(verdict).toMatchObject({ level: 'review', title: 'À vérifier' });
-    expect(verdict.lines).toContain('Photo ressemblante sur Temu');
-  });
-
-  it('caps the local rows at orange while only a similar photo is found', async () => {
-    const copies = Array.from({ length: 12 }, (_, i) =>
-      item(i + 1, { condition: 'new_with_tags' }),
-    );
-    const d = deps({
-      fetchSeller: () => Promise.resolve(seller(copies)),
-      searchImage: () => Promise.resolve(found(similarMatch)),
-    });
-    const { checks } = await analyzeListing(listing, d, ready);
-    expect(checks.find((c) => c.id === 'seller')?.status).toBe('warn');
-  });
-
-  it.each([
-    [{ status: 'no_key' }, 'Désactivée'],
-    [{ status: 'quota' }, 'Plafond atteint'],
-  ] as const)('shows the off row when the background says %j', async (response, tag) => {
-    const d = deps({ searchImage: () => Promise.resolve(response) });
-    const { checks, verdict } = await analyzeListing(listing, d, ready);
-    expect(checks[0]).toMatchObject({ status: 'off', tag });
-    expect(verdict.withoutImageSearch).toBe(true);
-  });
-
-  it('shows "search impossible" when the search fails, and still analyses the rest', async () => {
-    const d = deps({
-      searchImage: () => Promise.resolve({ status: 'error', reason: 'billing' }),
-    });
-    const { checks, verdict } = await analyzeListing(listing, d, ready);
-    expect(checks[0]).toMatchObject({
-      status: 'off',
-      tag: 'Recherche impossible',
-      action: 'open_keys',
-    });
-    expect(checks[2]?.status).toBe('ok');
-    expect(verdict.withoutImageSearch).toBe(true);
-  });
-
-  it('survives a searchImage that throws', async () => {
-    const d = deps({ searchImage: () => Promise.reject(new Error('context invalidated')) });
-    const { checks } = await analyzeListing(listing, d, ready);
-    expect(checks[0]).toMatchObject({ status: 'off', tag: 'Recherche impossible' });
-    expect(checks[0]?.detail).toBe('Google ne répond pas, réessaie plus tard.');
-  });
-
-  it('survives an answer it does not understand', async () => {
-    const odd = { status: 'ok' } as unknown as SearchImageResponse;
-    const { checks } = await analyzeListing(
-      listing,
-      deps({ searchImage: () => Promise.resolve(odd) }),
-      ready,
-    );
-    expect(checks[0]).toMatchObject({ status: 'off', tag: 'Recherche impossible' });
-  });
-
-  it('does not search a listing without a photo', async () => {
-    const d = deps();
-    const { checks } = await analyzeListing({ ...listing, photoUrls: [] }, d, ready);
-    expect(d.searchImage).not.toHaveBeenCalled();
-    expect(checks[0]).toMatchObject({ status: 'off', tag: 'Recherche impossible' });
-  });
-
-  it('starts the search without waiting for the seller request', async () => {
-    let releaseSeller: (value: Seller) => void = () => undefined;
-    const d = deps({
-      fetchSeller: () =>
-        new Promise<Seller>((resolve) => {
-          releaseSeller = resolve;
-        }),
-    });
-    const running = analyzeListing(listing, d, ready);
-    await vi.waitFor(() => expect(d.searchImage).toHaveBeenCalledOnce());
-    expect(d.analyzeImage).not.toHaveBeenCalled();
-    releaseSeller(seller([item(1)]));
-    expect((await running).checks[0]?.status).toBe('ok');
-  });
-
-  it('does not search when cancelled before the start', async () => {
-    const d = deps();
-    await expect(
-      analyzeListing(listing, d, { ...ready, isCancelled: () => true }),
-    ).rejects.toBeInstanceOf(AnalysisCancelledError);
-    expect(d.searchImage).not.toHaveBeenCalled();
-  });
-
-  it('drops the run when cancelled while the search is still going', async () => {
-    let cancelled = false;
-    const d = deps({
-      searchImage: () => {
-        cancelled = true;
-        return Promise.resolve(found(exactMatch));
-      },
-    });
-    await expect(
-      analyzeListing(listing, d, { ...ready, isCancelled: () => cancelled }),
-    ).rejects.toBeInstanceOf(AnalysisCancelledError);
+    for (const { checks } of results) expect(checks.slice(1)).toEqual(results[0]?.checks.slice(1));
   });
 });
 
 describe('searchPhoto', () => {
+  const searching = (searchImage: SearchDeps['searchImage']): SearchDeps => ({ searchImage });
+
   it('passes the answer of the background through', async () => {
-    const d = deps({ searchImage: () => Promise.resolve(found(exactMatch)) });
+    const d = searching(() => Promise.resolve(found(exactMatch)));
     expect(await searchPhoto('https://images1.vinted.net/a.webp', d)).toEqual(found(exactMatch));
+  });
+
+  it('asks for the search, or for the cache alone', async () => {
+    const searchImage = vi.fn(() => Promise.resolve<SearchImageResponse>({ status: 'not_cached' }));
+    await searchPhoto('https://images1.vinted.net/a.webp', searching(searchImage));
+    expect(searchImage).toHaveBeenLastCalledWith('https://images1.vinted.net/a.webp', false);
+    await searchPhoto('https://images1.vinted.net/a.webp', searching(searchImage), true);
+    expect(searchImage).toHaveBeenLastCalledWith('https://images1.vinted.net/a.webp', true);
   });
 
   it('turns a missing photo and a rejection into failures, never into an exception', async () => {
     const searchImage = vi.fn(() => Promise.reject(new Error('gone')));
-    const d = deps({ searchImage });
-    expect(await searchPhoto(undefined, d)).toEqual({ status: 'error', reason: 'photo' });
+    expect(await searchPhoto(undefined, searching(searchImage))).toEqual({
+      status: 'error',
+      reason: 'photo',
+    });
     expect(searchImage).not.toHaveBeenCalled();
-    expect(await searchPhoto('https://images1.vinted.net/a.webp', d)).toEqual({
+    expect(await searchPhoto('https://images1.vinted.net/a.webp', searching(searchImage))).toEqual({
       status: 'error',
       reason: 'network',
     });
   });
 
   it('reads no answer at all (a background that did not reply) as a failed search', async () => {
-    const nothing = deps({
-      searchImage: () => Promise.resolve(undefined as unknown as SearchImageResponse),
-    });
+    const nothing = searching(() => Promise.resolve(undefined as unknown as SearchImageResponse));
     expect(await searchPhoto('https://images1.vinted.net/a.webp', nothing)).toEqual({
       status: 'error',
       reason: 'network',
     });
-    const { checks } = await analyzeListing(listing, nothing, { imageGate: 'ready' });
-    expect(checks[0]).toMatchObject({ status: 'off', tag: 'Recherche impossible' });
   });
 });
 
 describe('withImageSearch', () => {
   const copies = Array.from({ length: 12 }, (_, i) => item(i + 1, { condition: 'new_with_tags' }));
-  const manual = () =>
-    analyzeListing(listing, deps({ fetchSeller: () => Promise.resolve(seller(copies)) }), {
-      imageGate: 'manual',
-    });
+  const withCopies = () => deps({ fetchSeller: () => Promise.resolve(seller(copies)) });
+  const analysed = (imageGate: 'ready' | 'manual', d = withCopies()) =>
+    analyzeListing(listing, d, { imageGate });
 
   it('replaces the image row and redoes the verdict, nothing else', async () => {
-    const before = await manual();
+    const before = await analysed('manual');
     expect(before.verdict.level).toBe('review');
     expect(before.checks[0]).toMatchObject({ action: 'run_image_search' });
 
     const after = withImageSearch(before, found(exactMatch));
     expect(after.checks[0]).toMatchObject({ status: 'bad', tag: 'Trouvée sur Shein' });
     expect(after.verdict.level).toBe('dropshipping');
-    expect(after.checks.slice(1).map((c) => c.id)).toEqual([
+    expect(after.checks.map((c) => c.id)).toEqual([
+      'image',
       'price',
       'seller',
       'photos',
@@ -494,18 +369,36 @@ describe('withImageSearch', () => {
     expect(after.checks[4]).toEqual(before.checks[4]);
   });
 
+  it('replaces the "searching" row of the ready gate the same way', async () => {
+    const before = await analysed('ready');
+    expect(before.checks[0]).toEqual(imageCheckSearching());
+    const after = withImageSearch(before, found(exactMatch));
+    expect(after.checks[0]).toMatchObject({ status: 'bad', tag: 'Trouvée sur Shein' });
+    expect(after.verdict.withoutImageSearch).toBe(false);
+  });
+
+  it('calls an exact match red and the verdict an honest resale without other signals', async () => {
+    const before = await analyzeListing(listing, deps(), { imageGate: 'ready' });
+    const after = withImageSearch(before, found(exactMatch, similarMatch));
+    expect(after.checks[0]).toMatchObject({ status: 'bad', tag: 'Trouvée sur Shein' });
+    expect(after.checks[0]?.matches).toEqual([exactMatch, similarMatch]);
+    expect(after.verdict).toMatchObject({ level: 'resold', title: 'Article Shein revendu' });
+    expect(after.verdict.withoutImageSearch).toBe(false);
+  });
+
   it('gives the local rows back their red once an exact match backs them', async () => {
-    const before = await manual();
+    const before = await analysed('manual');
     expect(before.checks.find((c) => c.id === 'seller')?.status).toBe('warn');
     const after = withImageSearch(before, found(exactMatch));
     expect(after.checks.find((c) => c.id === 'seller')?.status).toBe('bad');
   });
 
-  it('keeps the cap on the local rows when only a similar photo is found', async () => {
-    const after = withImageSearch(await manual(), found(similarMatch));
+  it('calls a similar photo orange, keeps the cap on the local rows and the verdict "to verify"', async () => {
+    const after = withImageSearch(await analysed('manual'), found(similarMatch));
     expect(after.checks[0]).toMatchObject({ status: 'warn', tag: 'Photo proche' });
     expect(after.checks.find((c) => c.id === 'seller')?.status).toBe('warn');
-    expect(after.verdict.level).toBe('review');
+    expect(after.verdict).toMatchObject({ level: 'review', title: 'À vérifier' });
+    expect(after.verdict.lines).toContain('Photo ressemblante sur Temu');
   });
 
   it('turns a clean listing green when nothing is found', async () => {
@@ -513,20 +406,37 @@ describe('withImageSearch', () => {
     expect(before.verdict.withoutImageSearch).toBe(true);
     const after = withImageSearch(before, found());
     expect(after.checks[0]).toMatchObject({ status: 'ok', tag: 'Introuvable' });
-    expect(after.verdict).toMatchObject({ level: 'clean', withoutImageSearch: false });
+    expect(after.verdict).toMatchObject({
+      level: 'clean',
+      title: 'Rien de suspect',
+      withoutImageSearch: false,
+    });
   });
 
-  it('shows the failure on the row and can be run again from the same result', async () => {
-    const before = await manual();
-    const failed = withImageSearch(before, { status: 'error', reason: 'network' });
-    expect(failed.checks[0]).toMatchObject({ status: 'off', tag: 'Recherche impossible' });
+  it.each([
+    [{ status: 'no_key' }, 'Désactivée'],
+    [{ status: 'quota' }, 'Plafond atteint'],
+  ] as const)('shows the off row when the background says %j', async (response, tag) => {
+    const after = withImageSearch(await analysed('ready'), response);
+    expect(after.checks[0]).toMatchObject({ status: 'off', tag });
+    expect(after.verdict.withoutImageSearch).toBe(true);
+  });
+
+  it('shows the failure on the row, and can be run again from the same result', async () => {
+    const before = await analysed('manual');
+    const failed = withImageSearch(before, { status: 'error', reason: 'billing' });
+    expect(failed.checks[0]).toMatchObject({
+      status: 'off',
+      tag: 'Recherche impossible',
+      action: 'open_keys',
+    });
     expect(failed.verdict.withoutImageSearch).toBe(true);
     // Another attempt starts from the same raw rows.
     expect(withImageSearch(failed, found(exactMatch)).verdict.level).toBe('dropshipping');
   });
 
   it('does not change the result it is given', async () => {
-    const before = await manual();
+    const before = await analysed('manual');
     const snapshot = structuredClone(before);
     withImageSearch(before, found(exactMatch));
     expect(before).toEqual(snapshot);
