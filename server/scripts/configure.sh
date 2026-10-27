@@ -122,6 +122,28 @@ ask_default() {
   set_value "$key" "${value:-$default}"
 }
 
+# `--smtp`: host, port, login and password arrive on stdin, one per line (for instance read from
+# another app's .env on the same server); surrounding quotes are dropped. Nothing else is asked.
+if [[ ${1:-} == --smtp ]]; then
+  parts=()
+  for _ in 1 2 3 4; do
+    IFS= read -r line || true
+    line=${line#[\"\']}
+    line=${line%[\"\']}
+    parts+=("$line")
+  done
+  if [[ -z ${parts[0]} || ! ${parts[1]} =~ ^[0-9]+$ || -z ${parts[2]} || -z ${parts[3]} ]]; then
+    echo "Quatre lignes attendues sur l'entrée standard : serveur, port, identifiant, mot de passe." >&2
+    exit 1
+  fi
+  scheme=smtp
+  [[ ${parts[1]} == 465 ]] && scheme=smtps
+  set_value SMTP_URL "$scheme://$(urlencode "${parts[2]}"):$(urlencode "${parts[3]}")@${parts[0]}:${parts[1]}"
+  unset parts line
+  echo "Envoi des e-mails enregistré dans $ENV_FILE."
+  exit 0
+fi
+
 # `--google-keys`: the two Google keys arrive on stdin (Vision, then Gemini), piped from gcloud on
 # the owner's machine, so nobody copies them by hand. Nothing else is asked.
 if [[ ${1:-} == --google-keys ]]; then
