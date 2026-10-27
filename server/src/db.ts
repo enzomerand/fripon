@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
+import { canonicalEmail } from './email';
 
 export type Db = Database.Database;
 
@@ -21,13 +22,21 @@ export interface Account {
   /** Stripe's own word: `active`, `trialing`, `past_due`, `canceled`... */
   subscription_status: string | null;
   period_end: number | null;
+  /**
+   * The address without its cosmetic variants (see `canonicalEmail`): what tells that two accounts
+   * are one mailbox. Not unique: a second account is allowed, it just gets no trial.
+   */
+  canonical_email: string;
 }
+
+/** A migration: SQL, or a function when it also has to compute (a backfill). */
+type Migration = string | ((db: Db) => void);
 
 /**
  * The schema, one entry per version: `PRAGMA user_version` holds how many have run. Never edit an
  * entry that shipped, add a new one. Each entry runs in its own transaction.
  */
-const MIGRATIONS: string[] = [
+const MIGRATIONS: Migration[] = [
   `
   CREATE TABLE accounts (
     id TEXT PRIMARY KEY,
@@ -104,15 +113,53 @@ const MIGRATIONS: string[] = [
     count INTEGER NOT NULL DEFAULT 0
   );
   `,
+  (db) => {
+    db.exec(`
+    -- The address without its cosmetic variants (+tag, Gmail dots): one trial per mailbox.
+    ALTER TABLE accounts ADD COLUMN canonical_email TEXT NOT NULL DEFAULT '';
+    CREATE INDEX accounts_by_canonical_email ON accounts (canonical_email);
+
+    -- Wrong guesses of a sign-in code, one row each: the per-address cap over a rolling day.
+    CREATE TABLE login_failures (
+      email TEXT NOT NULL,
+      at INTEGER NOT NULL
+    );
+    CREATE INDEX login_failures_by_email ON login_failures (email, at);
+
+    -- Accounts created, one row each, by a keyed hash of the client address (never the address).
+    CREATE TABLE signups (
+      ip_hash TEXT NOT NULL,
+      at INTEGER NOT NULL
+    );
+    CREATE INDEX signups_by_ip ON signups (ip_hash, at);
+
+    -- Paid Gemini calls per day, all accounts together: the global ceiling.
+    CREATE TABLE gemini_calls (
+      day TEXT PRIMARY KEY,
+      count INTEGER NOT NULL DEFAULT 0
+    );
+    `);
+    const update = db.prepare('UPDATE accounts SET canonical_email = ? WHERE id = ?');
+    for (const row of db.prepare('SELECT id, email FROM accounts').all() as {
+      id: string;
+      email: string;
+    }[]) {
+      update.run(canonicalEmail(row.email), row.id);
+    }
+  },
 ];
 
-/** Brings the schema up to date; safe to call on every start. */
-export function migrate(db: Db): void {
+/**
+ * Brings the schema up to date; safe to call on every start. `upTo` stops at an older version, so a
+ * test can build the database of an earlier release, fill it, and upgrade it.
+ */
+export function migrate(db: Db, upTo: number = MIGRATIONS.length): void {
   const current = Number(db.pragma('user_version', { simple: true }));
-  for (let version = current; version < MIGRATIONS.length; version++) {
-    const sql = MIGRATIONS[version] as string;
+  for (let version = current; version < Math.min(upTo, MIGRATIONS.length); version++) {
+    const migration = MIGRATIONS[version] as Migration;
     db.transaction(() => {
-      db.exec(sql);
+      if (typeof migration === 'string') db.exec(migration);
+      else migration(db);
       // PRAGMA takes no bound parameter: `version` is a loop counter, never user input.
       db.pragma(`user_version = ${version + 1}`);
     })();

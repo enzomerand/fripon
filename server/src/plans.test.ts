@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { PLANS, TRIAL_ANALYSES, entitlement, isPlanName, planForLookupKey } from './plans';
+import {
+  PERIOD_GRACE_MS,
+  PLANS,
+  TRIAL_ANALYSES,
+  entitlement as entitlementAt,
+  isPlanName,
+  planForLookupKey,
+} from './plans';
+
+const NOW = new Date('2026-10-20T12:00:00Z');
+/** What an account may use at `NOW` unless a test moves the clock. */
+const entitlement = (fields: Parameters<typeof entitlementAt>[0]) => entitlementAt(fields, NOW);
 
 const account = (
-  fields: Partial<{ plan: string | null; subscription_status: string | null; trial_left: number }>,
-) => ({ plan: null, subscription_status: null, trial_left: 15, ...fields });
+  fields: Partial<{
+    plan: string | null;
+    subscription_status: string | null;
+    trial_left: number;
+    period_end: number | null;
+  }>,
+) => ({ plan: null, subscription_status: null, trial_left: 15, period_end: null, ...fields });
 
 describe('PLANS', () => {
   it('maps the Stripe price lookup keys to their plan and caps', () => {
@@ -86,5 +102,38 @@ describe('entitlement', () => {
       entitlement(account({ trial_left: 9, plan: 'essentiel', subscription_status: 'active' }))
         .kind,
     ).toBe('plan');
+  });
+});
+
+describe('entitlement and the end of the period', () => {
+  const subscriber = (periodEnd: number | null, status = 'active') =>
+    account({ plan: 'essentiel', subscription_status: status, period_end: periodEnd });
+
+  it('keeps the plan when the period end is unknown, ahead, or just past inside the grace', () => {
+    expect(entitlement(subscriber(null)).kind).toBe('plan');
+    expect(entitlement(subscriber(NOW.getTime() + 1)).kind).toBe('plan');
+    expect(entitlement(subscriber(NOW.getTime() - 1)).kind).toBe('plan');
+    expect(entitlement(subscriber(NOW.getTime() - PERIOD_GRACE_MS + 1)).kind).toBe('plan');
+  });
+
+  it('drops an active status whose period ended more than 3 days ago: a lost end event', () => {
+    expect(PERIOD_GRACE_MS).toBe(3 * 24 * 60 * 60 * 1000);
+    expect(entitlement(subscriber(NOW.getTime() - PERIOD_GRACE_MS))).toEqual({
+      kind: 'trial',
+      left: 15,
+    });
+    expect(entitlement(subscriber(0))).toEqual({ kind: 'trial', left: 15 });
+    expect(entitlement({ ...subscriber(0), trial_left: 0 })).toEqual({ kind: 'none' });
+  });
+
+  it.each(['trialing', 'past_due'])('applies to a %s subscription too', (status) => {
+    expect(entitlement(subscriber(0, status)).kind).toBe('trial');
+  });
+
+  it('follows the clock it is given', () => {
+    const periodEnd = NOW.getTime();
+    const later = new Date(NOW.getTime() + PERIOD_GRACE_MS + 1);
+    expect(entitlementAt(subscriber(periodEnd), NOW).kind).toBe('plan');
+    expect(entitlementAt(subscriber(periodEnd), later).kind).toBe('trial');
   });
 });

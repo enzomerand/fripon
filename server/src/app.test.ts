@@ -172,6 +172,65 @@ describe('POST /v1/auth/verify', () => {
     expect(response.status).toBe(400);
   });
 
+  it('locks the address after 10 wrong tries over several codes, and answers the same invalid_code', async () => {
+    const t = createTestApp();
+    const wrongBody = { error: 'invalid_code' };
+    for (let round = 0; round < 2; round++) {
+      await post(t.app, '/v1/auth/code', { email: EMAIL });
+      const code = t.mailer.sent.at(-1)!.code;
+      for (let i = 0; i < 5; i++) {
+        await post(t.app, '/v1/auth/verify', { email: EMAIL, code: wrongCode(code) });
+      }
+    }
+    await post(t.app, '/v1/auth/code', { email: EMAIL });
+    const fresh = t.mailer.sent.at(-1)!.code;
+
+    const locked = await post(t.app, '/v1/auth/verify', { email: EMAIL, code: fresh });
+    const wrong = await post(t.app, '/v1/auth/verify', { email: EMAIL, code: wrongCode(fresh) });
+
+    // The right code and a wrong one are told apart by nothing.
+    expect(locked.status).toBe(400);
+    expect(await locked.json()).toEqual(wrongBody);
+    expect(wrong.status).toBe(400);
+    expect(await wrong.json()).toEqual(wrongBody);
+    expect(t.db.prepare('SELECT COUNT(*) AS n FROM sessions').get()).toEqual({ n: 0 });
+
+    // A day later the address can sign in again.
+    t.clock.advance(24 * 60 * 60 * 1000);
+    await post(t.app, '/v1/auth/code', { email: EMAIL });
+    const later = await post(t.app, '/v1/auth/verify', {
+      email: EMAIL,
+      code: t.mailer.sent.at(-1)!.code,
+    });
+    expect(later.status).toBe(200);
+  });
+
+  it('starts a 4th account created from the same client address without a trial, and signs it in', async () => {
+    const t = createTestApp([], testConfig({ trustProxy: true }));
+    const signInFrom = async (email: string, ip: string) => {
+      await post(t.app, '/v1/auth/code', { email }, { 'x-forwarded-for': ip });
+      const response = await post(
+        t.app,
+        '/v1/auth/verify',
+        { email, code: t.mailer.sent.at(-1)!.code },
+        { 'x-forwarded-for': ip },
+      );
+      expect(response.status).toBe(200);
+      const { token } = (await response.json()) as { token: string };
+      return (await (await t.app.request('/v1/me', { headers: bearer(token) })).json()) as {
+        trialLeft: number;
+      };
+    };
+
+    for (let i = 1; i <= 3; i++) {
+      expect((await signInFrom(`n${i}@example.com`, '203.0.113.50')).trialLeft).toBe(15);
+    }
+    expect((await signInFrom('n4@example.com', '203.0.113.50')).trialLeft).toBe(0);
+    expect((await signInFrom('n5@example.com', '203.0.113.51')).trialLeft).toBe(15);
+    // The same mailbox under another address, from a fresh client address: no trial either.
+    expect((await signInFrom('n1+again@example.com', '203.0.113.52')).trialLeft).toBe(0);
+  });
+
   it.each([
     ['no code', { email: EMAIL }],
     ['a numeric code', { email: EMAIL, code: 123456 }],

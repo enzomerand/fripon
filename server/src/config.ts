@@ -47,8 +47,11 @@ export function loadConfig(env: Env = process.env) {
     return fallback;
   }
 
-  const rawNodeEnv = text(env, 'NODE_ENV') ?? 'development';
-  const nodeEnv = NODE_ENVS.find((name) => name === rawNodeEnv) ?? 'development';
+  // A missing NODE_ENV is production, never development: development has a public AUTH_SECRET, a
+  // mailer that prints the sign-in codes in the logs and no Stripe, so it must be asked for by
+  // name (`npm run dev` does). An unknown value is refused, and counts as production meanwhile.
+  const rawNodeEnv = text(env, 'NODE_ENV') ?? 'production';
+  const nodeEnv = NODE_ENVS.find((name) => name === rawNodeEnv) ?? 'production';
   if (nodeEnv !== rawNodeEnv) {
     problems.push(`NODE_ENV must be development, production or test (got "${rawNodeEnv}")`);
   }
@@ -75,10 +78,15 @@ export function loadConfig(env: Env = process.env) {
     /** `null` in development means "print the code in the console" (see `createMailer`). */
     smtpUrl: text(env, 'SMTP_URL') ?? null,
     mailFrom: requiredInProduction('MAIL_FROM', 'Fripon <no-reply@localhost>'),
-    /** Read the client address from `X-Forwarded-For`: only right behind the reverse proxy. */
-    trustProxy: flag('TRUST_PROXY', production),
-    /** Vision calls per day, all accounts together, on top of the Google Cloud quota. */
+    /**
+     * Read the client address from `X-Forwarded-For`: only right behind the reverse proxy, so it is
+     * off unless asked for (the deployment sets `TRUST_PROXY=true`, see `.env.example`).
+     */
+    trustProxy: flag('TRUST_PROXY', false),
+    /** Vision calls per day (Pacific time), all accounts together, on top of the Google Cloud quota. */
     globalDailyVisionCap: integer('GLOBAL_DAILY_VISION_CAP', 3_000, 1, 1_000_000),
+    /** Gemini reviews per day, all accounts together, on top of the Google quota. */
+    globalDailyGeminiCap: integer('GLOBAL_DAILY_GEMINI_CAP', 5_000, 1, 1_000_000),
     /** The owner's Google keys behind the paid steps. Empty in development: Google then refuses. */
     googleVisionKey: requiredInProduction('GOOGLE_VISION_KEY', ''),
     geminiKey: requiredInProduction('GEMINI_KEY', ''),

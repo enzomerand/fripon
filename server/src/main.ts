@@ -10,6 +10,14 @@ import { registerProxyRoutes } from './routes/proxy';
 import { realStripe } from './stripe';
 
 const config = loadConfig();
+if (config.production && !config.trustProxy) {
+  // Behind Caddy every client then looks like the proxy's own address: the per-address limits and
+  // the cap on accounts per address would hit everybody at once.
+  console.warn(
+    '[config] TRUST_PROXY is not true: the client address is read from the socket, not from ' +
+      'X-Forwarded-For. Set TRUST_PROXY=true when the server runs behind the reverse proxy.',
+  );
+}
 const db = openDb(config.databasePath);
 const now = () => new Date();
 

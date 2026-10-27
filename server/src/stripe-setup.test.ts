@@ -4,6 +4,7 @@ import { PLANS } from './plans';
 import { STRIPE_API_VERSION, WEBHOOK_EVENTS } from './stripe';
 import {
   PRICE_SPECS,
+  PRODUCT_SPECS,
   checkedKey,
   parseArgs,
   runSetup,
@@ -153,22 +154,36 @@ const run = (account: ReturnType<typeof fakeAccount>, webhookUrl: string | null 
   }));
 };
 
+/** The product id a plan's prices live on. */
+const productOf = (summary: SetupSummary, plan: 'essentiel' | 'revendeur') =>
+  summary.products.find((product) => product.plan === plan)?.id as string;
+
 const outcomes = (summary: SetupSummary) =>
   Object.fromEntries(summary.prices.map((price) => [price.lookupKey, price.outcome]));
 
 describe('runSetup', () => {
-  it('creates the product, the three prices and the portal on an empty account', async () => {
+  it('creates one product per plan, the three prices and the portal on an empty account', async () => {
     const account = fakeAccount();
 
     const { summary, lines } = await run(account);
 
-    expect(account.calls.productCreates).toHaveLength(1);
+    // « Fripon Essentiel » and « Fripon Revendeur »: what the portal and the invoices will say.
+    expect(account.calls.productCreates).toHaveLength(2);
     expect(account.calls.productCreates[0]).toMatchObject({
-      name: 'Fripon',
-      metadata: { fripon: 'cloud' },
+      name: 'Fripon Essentiel',
+      metadata: { fripon: 'cloud', plan: 'essentiel' },
     });
-    const productId = summary.product.id;
-    expect(summary.product.outcome).toBe('created');
+    expect(account.calls.productCreates[1]).toMatchObject({
+      name: 'Fripon Revendeur',
+      metadata: { fripon: 'cloud', plan: 'revendeur' },
+    });
+    expect(summary.products.map(({ plan, outcome }) => [plan, outcome])).toEqual([
+      ['essentiel', 'created'],
+      ['revendeur', 'created'],
+    ]);
+    const productId = productOf(summary, 'essentiel');
+    const revendeurId = productOf(summary, 'revendeur');
+    expect(productId).not.toBe(revendeurId);
 
     expect(account.calls.priceCreates).toEqual([
       expect.objectContaining({
@@ -188,7 +203,7 @@ describe('runSetup', () => {
         tax_behavior: 'inclusive',
       }),
       expect.objectContaining({
-        product: productId,
+        product: revendeurId,
         currency: 'eur',
         unit_amount: 699,
         recurring: { interval: 'month' },
@@ -209,8 +224,12 @@ describe('runSetup', () => {
     expect(lines.join('\n')).toContain(summary.portal.id);
   });
 
-  it('sells exactly the prices plans.ts knows', () => {
+  it("sells exactly the prices plans.ts knows, each on its plan's product", () => {
     expect(Object.keys(PRICE_SPECS).sort()).toEqual(Object.keys(PLANS).sort());
+    for (const [key, spec] of Object.entries(PRICE_SPECS)) {
+      expect(spec.plan).toBe(PLANS[key as keyof typeof PLANS].plan);
+    }
+    expect(Object.keys(PRODUCT_SPECS).sort()).toEqual(['essentiel', 'revendeur']);
   });
 
   it('changes nothing the second time', async () => {
@@ -219,48 +238,90 @@ describe('runSetup', () => {
 
     const { summary } = await run(account);
 
-    expect(account.calls.productCreates).toHaveLength(1);
+    expect(account.calls.productCreates).toHaveLength(2);
     expect(account.calls.priceCreates).toHaveLength(3);
     expect(account.calls.portalCreates).toHaveLength(1);
     expect(account.calls.portalUpdates).toHaveLength(1);
-    expect(summary.product.outcome).toBe('found');
+    expect(summary.products.map((product) => product.outcome)).toEqual(['found', 'found']);
     expect(outcomes(summary)).toEqual({
       essentiel_monthly: 'found',
       essentiel_yearly: 'found',
       revendeur_monthly: 'found',
     });
     expect(summary.portal.outcome).toBe('updated');
-    expect(account.state.products).toHaveLength(1);
+    expect(account.state.products).toHaveLength(2);
     expect(account.state.prices).toHaveLength(3);
     expect(account.state.portals).toHaveLength(1);
   });
 
-  it('reuses an active product called Fripon, even among many', async () => {
+  it("reuses active products that have the plans' names, even among many", async () => {
     const account = fakeAccount();
     for (const name of ['A', 'B', 'C', 'D']) {
       account.state.products.push({ id: `prod_${name}`, name, metadata: {} });
     }
-    account.state.products.push({ id: 'prod_mine', name: 'Fripon', metadata: {} });
+    account.state.products.push({ id: 'prod_ess', name: 'Fripon Essentiel', metadata: {} });
 
     const { summary } = await run(account);
 
-    expect(summary.product).toEqual({ id: 'prod_mine', outcome: 'found' });
-    expect(account.calls.productCreates).toHaveLength(0);
-    expect(account.calls.priceCreates[0]).toMatchObject({ product: 'prod_mine' });
+    expect(summary.products).toEqual([
+      { plan: 'essentiel', id: 'prod_ess', outcome: 'found' },
+      { plan: 'revendeur', id: expect.any(String), outcome: 'created' },
+    ]);
+    expect(account.calls.productCreates).toHaveLength(1);
+    expect(account.calls.priceCreates[0]).toMatchObject({ product: 'prod_ess' });
+    expect(account.calls.priceCreates[2]).toMatchObject({
+      product: productOf(summary, 'revendeur'),
+    });
   });
 
   it('prefers the product its own tag names over one that only shares the name', async () => {
     const account = fakeAccount();
-    account.state.products.push({ id: 'prod_same_name', name: 'Fripon', metadata: {} });
+    account.state.products.push({ id: 'prod_same_name', name: 'Fripon Revendeur', metadata: {} });
     account.state.products.push({
       id: 'prod_tagged',
-      name: 'Fripon Cloud (renamed)',
-      metadata: { fripon: 'cloud' },
+      name: 'Fripon Revendeur (renamed)',
+      metadata: { fripon: 'cloud', plan: 'revendeur' },
     });
 
     const { summary } = await run(account);
 
-    expect(summary.product.id).toBe('prod_tagged');
+    expect(productOf(summary, 'revendeur')).toBe('prod_tagged');
+  });
+
+  it('leaves an old single « Fripon » product alone, and moves the prices to the new products', async () => {
+    const account = fakeAccount();
+    account.state.products.push({ id: 'prod_old', name: 'Fripon', metadata: { fripon: 'cloud' } });
+    for (const [key, spec] of Object.entries(PRICE_SPECS)) {
+      account.state.prices.push({
+        id: `price_old_${key}`,
+        active: true,
+        lookup_key: key,
+        unit_amount: spec.amount,
+        currency: 'eur',
+        tax_behavior: 'inclusive',
+        recurring: { interval: spec.interval, interval_count: 1 },
+        product: 'prod_old',
+      });
+    }
+
+    const { summary } = await run(account);
+
+    expect(summary.products.map((product) => product.outcome)).toEqual(['created', 'created']);
+    expect(outcomes(summary)).toEqual({
+      essentiel_monthly: 'replaced',
+      essentiel_yearly: 'replaced',
+      revendeur_monthly: 'replaced',
+    });
+    expect(account.state.products.find((product) => product.id === 'prod_old')).toEqual({
+      id: 'prod_old',
+      name: 'Fripon',
+      metadata: { fripon: 'cloud' },
+    });
+    // The prices now live on the new products, and the old ones keep serving their subscribers.
+    const held = (key: string) =>
+      account.state.prices.find((price) => price.lookup_key === key) as StoredPrice;
+    expect(held('essentiel_yearly').product).toBe(productOf(summary, 'essentiel'));
+    expect(held('revendeur_monthly').product).toBe(productOf(summary, 'revendeur'));
   });
 
   it('moves a lookup key to a new price when the amount differs, and keeps the others', async () => {
@@ -324,6 +385,8 @@ describe('runSetup', () => {
     const { summary } = await run(account);
 
     const features = account.calls.portalCreates[0]?.features;
+    const priceOf = (key: string) =>
+      summary.prices.find((price) => price.lookupKey === key)?.id as string;
     expect(features).toMatchObject({
       invoice_history: { enabled: true },
       payment_method_update: { enabled: true },
@@ -331,17 +394,16 @@ describe('runSetup', () => {
       subscription_update: {
         enabled: true,
         default_allowed_updates: ['price'],
+        // Each product with its own prices: the plans' names show in the portal.
         products: [
-          { product: summary.product.id, prices: summary.prices.map((price) => price.id) },
+          {
+            product: productOf(summary, 'essentiel'),
+            prices: [priceOf('essentiel_monthly'), priceOf('essentiel_yearly')],
+          },
+          { product: productOf(summary, 'revendeur'), prices: [priceOf('revendeur_monthly')] },
         ],
       },
     });
-    expect(features?.subscription_update?.products?.[0]).toMatchObject({
-      prices: expect.arrayContaining([]),
-    });
-    expect(
-      (features?.subscription_update?.products as Array<{ prices: string[] }>)[0]?.prices,
-    ).toHaveLength(3);
   });
 
   it('points the portal at a replaced price when it is updated', async () => {
@@ -352,9 +414,15 @@ describe('runSetup', () => {
     const { summary } = await run(account);
 
     const updated = account.calls.portalUpdates[0]?.params.features?.subscription_update
-      ?.products as Array<{ prices: string[] }>;
-    expect(updated[0]?.prices).toEqual(summary.prices.map((price) => price.id));
-    expect(updated[0]?.prices).not.toContain(account.state.prices[0]?.id);
+      ?.products as Array<{ product: string; prices: string[] }>;
+    expect(updated.flatMap((entry) => entry.prices).sort()).toEqual(
+      summary.prices.map((price) => price.id).sort(),
+    );
+    expect(updated.flatMap((entry) => entry.prices)).not.toContain(account.state.prices[0]?.id);
+    expect(updated.map((entry) => entry.product)).toEqual([
+      productOf(summary, 'essentiel'),
+      productOf(summary, 'revendeur'),
+    ]);
   });
 
   describe('webhook endpoint', () => {

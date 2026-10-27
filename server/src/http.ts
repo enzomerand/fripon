@@ -34,10 +34,13 @@ export function bearerToken(c: Context): string | null {
   return match?.[1] ?? null;
 }
 
+/** What `clientIp` answers when the request carries no address (a test, an unreadable socket). */
+export const UNKNOWN_IP = 'unknown';
+
 /**
  * Who is calling. Behind the reverse proxy (`trustProxy`) it is the last address of
  * `X-Forwarded-For`, the one the proxy itself appended: what a client wrote before it is not
- * trusted. Otherwise it is the socket's address, or "unknown" where there is none (tests).
+ * trusted. Otherwise it is the socket's address, or `UNKNOWN_IP` where there is none (tests).
  */
 export function clientIp(c: Context, trustProxy: boolean): string {
   if (trustProxy) {
@@ -45,9 +48,9 @@ export function clientIp(c: Context, trustProxy: boolean): string {
     if (last) return last;
   }
   try {
-    return getConnInfo(c).remote.address ?? 'unknown';
+    return getConnInfo(c).remote.address ?? UNKNOWN_IP;
   } catch {
-    return 'unknown';
+    return UNKNOWN_IP;
   }
 }
 

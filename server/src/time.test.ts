@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { periodIds } from './time';
+import { GOOGLE_TIME_ZONE, periodIds } from './time';
 
 const ids = (iso: string) => periodIds(new Date(iso));
 
@@ -46,5 +46,28 @@ describe('periodIds', () => {
     // The 26th starts at UTC+1: 23:00Z, an hour later than the 25th's 22:00Z start.
     expect(ids('2026-10-25T22:59:59Z').day).toBe('2026-10-25');
     expect(ids('2026-10-25T23:00:00Z').day).toBe('2026-10-26');
+  });
+});
+
+describe('periodIds in Pacific time (Google quotas)', () => {
+  const pacific = (iso: string) => periodIds(new Date(iso), GOOGLE_TIME_ZONE);
+
+  it('changes the day at Pacific midnight, not at Paris midnight (summer time, UTC-7)', () => {
+    expect(pacific('2026-10-20T06:59:59Z').day).toBe('2026-10-19');
+    expect(pacific('2026-10-20T07:00:00Z').day).toBe('2026-10-20');
+    // The same instants on the Paris calendar are already on the 20th.
+    expect(ids('2026-10-20T06:59:59Z').day).toBe('2026-10-20');
+  });
+
+  it('changes the day at Pacific midnight in winter (UTC-8)', () => {
+    expect(pacific('2026-12-10T07:59:59Z').day).toBe('2026-12-09');
+    expect(pacific('2026-12-10T08:00:00Z').day).toBe('2026-12-10');
+  });
+
+  it('changes the month and the year on the Pacific calendar', () => {
+    expect(pacific('2026-11-01T06:59:59Z')).toEqual({ month: '2026-10', day: '2026-10-31' });
+    expect(pacific('2026-11-01T07:00:00Z')).toEqual({ month: '2026-11', day: '2026-11-01' });
+    expect(pacific('2027-01-01T07:59:59Z')).toEqual({ month: '2026-12', day: '2026-12-31' });
+    expect(pacific('2027-01-01T08:00:00Z')).toEqual({ month: '2027-01', day: '2027-01-01' });
   });
 });

@@ -32,7 +32,11 @@ export interface StripeApi {
       create(params: Stripe.BillingPortal.SessionCreateParams): Promise<{ url: string }>;
     };
   };
-  subscriptions: { retrieve(id: string): Promise<StripeSubscription> };
+  subscriptions: {
+    retrieve(id: string): Promise<StripeSubscription>;
+    /** A customer's subscriptions, the canceled ones left out (Stripe's default). */
+    list(params: { customer: string; limit?: number }): Promise<{ data: StripeSubscription[] }>;
+  };
   webhooks: {
     constructEventAsync(
       payload: string | Uint8Array,
@@ -47,6 +51,8 @@ export interface StripeSubscription {
   id: string;
   /** Stripe's own word: `active`, `trialing`, `past_due`, `canceled`... */
   status: string;
+  /** Seconds. Tells which of two subscriptions of one account is the most recent. */
+  created: number;
   customer: string | { id: string };
   metadata: Record<string, string>;
   items: {

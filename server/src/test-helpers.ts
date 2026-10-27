@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createApp, type RouteModule } from './app';
 import { loadConfig, type Config } from './config';
 import { openDb, type Account, type Db } from './db';
+import { canonicalEmail } from './email';
 import type { Mailer } from './mailer';
 
 /** Shared by the server's tests: an in-memory database, a clock to move, a mailer to read. */
@@ -55,9 +56,10 @@ let counter = 0;
 
 /** An account with the trial untouched; `overrides` sets any column. */
 export function insertAccount(db: Db, overrides: Partial<Account> = {}): Account {
+  const email = overrides.email ?? `user-${++counter}@example.com`;
   const account: Account = {
     id: randomUUID(),
-    email: `user-${++counter}@example.com`,
+    email,
     created_at: 0,
     trial_left: 15,
     stripe_customer_id: null,
@@ -65,13 +67,14 @@ export function insertAccount(db: Db, overrides: Partial<Account> = {}): Account
     plan: null,
     subscription_status: null,
     period_end: null,
+    canonical_email: canonicalEmail(email),
     ...overrides,
   };
   db.prepare(
     `INSERT INTO accounts (id, email, created_at, trial_left, stripe_customer_id, subscription_id,
-       plan, subscription_status, period_end)
+       plan, subscription_status, period_end, canonical_email)
      VALUES (@id, @email, @created_at, @trial_left, @stripe_customer_id, @subscription_id,
-       @plan, @subscription_status, @period_end)`,
+       @plan, @subscription_status, @period_end, @canonical_email)`,
   ).run(account);
   return account;
 }

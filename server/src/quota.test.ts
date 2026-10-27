@@ -206,6 +206,43 @@ describe('reserveAnalysis: plan caps', () => {
   });
 });
 
+describe('reserveAnalysis: an active status nobody renewed', () => {
+  it('keeps the plan inside the 3-day grace after the period end, then falls back to the trial', () => {
+    const { id } = insertSubscriber(db, 'essentiel', { period_end: clock.ms() - 2 * DAY_MS });
+    const first = charged(reserve(id, photo(1)));
+    expect(first.ok).toBe(true);
+    expect(db.prepare('SELECT kind FROM usage WHERE account_id = ?').get(id)).toEqual({
+      kind: 'plan',
+    });
+    expect(trialLeft(id)).toBe(15);
+
+    // The lost renewal event is now more than 3 days old: the quota stops, the trial takes over.
+    clock.advance(2 * DAY_MS);
+    charged(reserve(id, photo(2)));
+    expect(trialLeft(id)).toBe(14);
+    expect(usageSummary(db, getAccount(db, id)!, clock.now())).toMatchObject({ kind: 'trial' });
+  });
+
+  it('refuses once the trial is used up too, as for any account without a subscription', () => {
+    const { id } = insertSubscriber(db, 'essentiel', {
+      period_end: clock.ms() - 4 * DAY_MS,
+      trial_left: 0,
+    });
+    // It subscribed once, so the reason is "none", not "trial".
+    expect(reserve(id)).toEqual({ ok: false, reason: 'none' });
+  });
+
+  it('lets a renewal (a later period end) bring the plan back', () => {
+    const { id } = insertSubscriber(db, 'essentiel', { period_end: clock.ms() - 10 * DAY_MS });
+    expect(usageSummary(db, getAccount(db, id)!, clock.now())).toMatchObject({ kind: 'trial' });
+    db.prepare('UPDATE accounts SET period_end = ? WHERE id = ?').run(clock.ms() + 20 * DAY_MS, id);
+    expect(usageSummary(db, getAccount(db, id)!, clock.now())).toMatchObject({
+      kind: 'plan',
+      plan: 'essentiel',
+    });
+  });
+});
+
 describe('reserveAnalysis: the free trial', () => {
   it('takes one trial analysis per new photo, 15 in all', () => {
     const { id } = insertAccount(db);

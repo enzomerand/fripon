@@ -73,7 +73,7 @@ export function reserveAnalysis(
       Account | undefined;
     if (!account) return { ok: false, reason: 'none' };
 
-    const rights = entitlement(account);
+    const rights = entitlement(account, now);
     if (rights.kind === 'none') {
       // The trial is the first thing an account has: with no plan ever, the trial ran out.
       const everSubscribed = account.plan !== null || account.subscription_id !== null;
@@ -202,7 +202,7 @@ export interface UsageSummary {
  */
 export function usageSummary(db: Db, account: Account, now: Date): UsageSummary {
   const { month, day } = periodIds(now);
-  const rights = entitlement(account);
+  const rights = entitlement(account, now);
   const planOnly = rights.kind === 'plan';
   return {
     kind: rights.kind,

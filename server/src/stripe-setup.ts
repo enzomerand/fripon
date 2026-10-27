@@ -1,26 +1,54 @@
 import type Stripe from 'stripe';
-import type { PriceLookupKey } from './plans';
+import type { PlanName, PriceLookupKey } from './plans';
 import { STRIPE_API_VERSION, WEBHOOK_EVENTS } from './stripe';
 
 /**
- * Sets a Stripe account up for Fripon Cloud, once or again: the product, the three prices (found
- * by their lookup key), the customer portal and, when asked, the webhook endpoint. Every step looks
- * before it creates, so running it twice changes nothing. Run by `npm run stripe:setup`.
+ * Sets a Stripe account up for Fripon Cloud, once or again: one product per plan, the three prices
+ * (found by their lookup key), the customer portal and, when asked, the webhook endpoint. Every
+ * step looks before it creates, so running it twice changes nothing. Run by `npm run stripe:setup`.
+ *
+ * One product per plan, not one « Fripon » for all: the portal and the invoices show the product's
+ * name, and « Fripon Essentiel » tells the subscriber what they pay for.
  */
 
-export const PRODUCT_NAME = 'Fripon';
+/** The products: one per plan, named as the portal and the invoices show them. */
+export const PRODUCT_SPECS: Record<PlanName, { name: string; description: string }> = {
+  essentiel: {
+    name: 'Fripon Essentiel',
+    description: "Analyses d'annonces Vinted : recherche d'image et avis IA (300 par mois).",
+  },
+  revendeur: {
+    name: 'Fripon Revendeur',
+    description: "Analyses d'annonces Vinted : recherche d'image et avis IA (1 000 par mois).",
+  },
+};
 /** Marks what this script made, so a renamed product or portal is still found. */
-const PRODUCT_TAG = { fripon: 'cloud' };
+const PRODUCT_TAG = 'cloud';
 const PORTAL_TAG = { fripon: 'portal' };
 
 /** The prices: what the owner decided, in cents, tax included. The keys are the ones `plans.ts` reads. */
 export const PRICE_SPECS: Record<
   PriceLookupKey,
-  { amount: number; interval: 'month' | 'year'; nickname: string }
+  { plan: PlanName; amount: number; interval: 'month' | 'year'; nickname: string }
 > = {
-  essentiel_monthly: { amount: 299, interval: 'month', nickname: 'Essentiel mensuel' },
-  essentiel_yearly: { amount: 2999, interval: 'year', nickname: 'Essentiel annuel' },
-  revendeur_monthly: { amount: 699, interval: 'month', nickname: 'Revendeur mensuel' },
+  essentiel_monthly: {
+    plan: 'essentiel',
+    amount: 299,
+    interval: 'month',
+    nickname: 'Essentiel mensuel',
+  },
+  essentiel_yearly: {
+    plan: 'essentiel',
+    amount: 2999,
+    interval: 'year',
+    nickname: 'Essentiel annuel',
+  },
+  revendeur_monthly: {
+    plan: 'revendeur',
+    amount: 699,
+    interval: 'month',
+    nickname: 'Revendeur mensuel',
+  },
 };
 
 const CURRENCY = 'eur';
@@ -93,7 +121,7 @@ export interface SetupApi {
 export type Outcome = 'created' | 'found' | 'updated' | 'replaced';
 
 export interface SetupSummary {
-  product: { id: string; outcome: 'created' | 'found' };
+  products: Array<{ plan: PlanName; id: string; outcome: 'created' | 'found' }>;
   prices: Array<{ lookupKey: string; id: string; outcome: Outcome; replaced?: string }>;
   portal: { id: string; outcome: 'created' | 'updated' };
   webhook: null | { id: string; outcome: 'created' | 'updated' | 'found'; secret: string | null };
@@ -140,27 +168,38 @@ export async function runSetup(
   options: SetupOptions,
   log: (line: string) => void,
 ): Promise<SetupSummary> {
-  // The product: ours by its tag, else any active one called "Fripon", else a new one.
-  const products = await all((after) =>
+  // The products, one per plan: ours by their tag, else any active one with the plan's name, else
+  // a new one. (An old single « Fripon » product is neither: it is left alone, see the guide.)
+  const existingProducts = await all((after) =>
     stripe.products.list({ active: true, limit: 100, starting_after: after }),
   );
-  const existing =
-    products.find((product) => product.metadata.fripon === PRODUCT_TAG.fripon) ??
-    products.find((product) => product.name === PRODUCT_NAME);
-  const product =
-    existing ??
-    (await stripe.products.create({
-      name: PRODUCT_NAME,
-      description: "Analyses d'annonces Vinted : recherche d'image et avis IA.",
-      metadata: PRODUCT_TAG,
-    }));
-  const productOutcome = existing ? 'found' : 'created';
-  log(`product ${PRODUCT_NAME}: ${product.id} (${productOutcome})`);
+  const products = new Map<PlanName, { id: string }>();
+  const productSummaries: SetupSummary['products'] = [];
+  for (const [plan, spec] of Object.entries(PRODUCT_SPECS) as Array<
+    [PlanName, (typeof PRODUCT_SPECS)[PlanName]]
+  >) {
+    const existing =
+      existingProducts.find(
+        (product) => product.metadata.fripon === PRODUCT_TAG && product.metadata.plan === plan,
+      ) ?? existingProducts.find((product) => product.name === spec.name);
+    const product =
+      existing ??
+      (await stripe.products.create({
+        name: spec.name,
+        description: spec.description,
+        metadata: { fripon: PRODUCT_TAG, plan },
+      }));
+    const outcome = existing ? 'found' : 'created';
+    products.set(plan, product);
+    productSummaries.push({ plan, id: product.id, outcome });
+    log(`product ${spec.name}: ${product.id} (${outcome})`);
+  }
 
   // The prices, one lookup key each. A key held by a price that is not what the spec says (another
   // amount, archived...) moves to a new price: the old one keeps serving the subscriptions on it.
   const prices: SetupSummary['prices'] = [];
   for (const [lookupKey, spec] of Object.entries(PRICE_SPECS)) {
+    const product = products.get(spec.plan) as { id: string };
     const { data } = await stripe.prices.list({ lookup_keys: [lookupKey], limit: 10 });
     const held = data.find((price) => price.lookup_key === lookupKey);
     if (held && matches(held, spec, product.id)) {
@@ -214,7 +253,13 @@ export async function runSetup(
         enabled: true,
         default_allowed_updates: ['price'],
         proration_behavior: 'create_prorations',
-        products: [{ product: product.id, prices: prices.map((price) => price.id) }],
+        // The portal lists each plan's product with the prices of that product only.
+        products: productSummaries.map(({ plan, id }) => ({
+          product: id,
+          prices: prices
+            .filter(({ lookupKey }) => PRICE_SPECS[lookupKey as PriceLookupKey].plan === plan)
+            .map((price) => price.id),
+        })),
       },
     },
   };
@@ -232,7 +277,7 @@ export async function runSetup(
     options.webhookUrl === null ? null : await ensureWebhook(stripe, options.webhookUrl, log);
 
   return {
-    product: { id: product.id, outcome: productOutcome },
+    products: productSummaries,
     prices,
     portal: { id: portal.id, outcome: portalOutcome },
     webhook,

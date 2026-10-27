@@ -17,6 +17,8 @@ const WEBHOOK_SECRET = 'whsec_test_secret_0001';
 const PUBLIC_URL = 'https://cloud.fripon.test';
 /** 2026-11-20T12:00:00Z, in seconds as Stripe says it. */
 const PERIOD_END_SECONDS = 1_795_176_000;
+/** 2026-10-20T12:00:00Z, in seconds: when a subscription was made, unless a test says otherwise. */
+const CREATED_SECONDS = 1_792_497_600;
 
 /** A real client, only to sign test payloads and to verify them: the one thing the fake does not fake. */
 const signer = new Stripe('sk_test_signer');
@@ -27,10 +29,12 @@ interface FakeStripe extends StripeApi {
   portalCreated: Stripe.BillingPortal.SessionCreateParams[];
   priceLookups: string[][];
   retrieved: string[];
+  /** The customers whose subscriptions were listed. */
+  listed: string[];
   /** The subscriptions Stripe "has", by id. */
   subscriptionsById: Map<string, StripeSubscription>;
   /** The next call of that kind rejects with this. */
-  failWith: Partial<Record<'checkout' | 'portal' | 'customer' | 'retrieve', Error>>;
+  failWith: Partial<Record<'checkout' | 'portal' | 'customer' | 'retrieve' | 'list', Error>>;
   /** Lookup keys that have no active price. */
   missingPrices: Set<string>;
 }
@@ -43,6 +47,7 @@ function fakeStripe(): FakeStripe {
     portalCreated: [],
     priceLookups: [],
     retrieved: [],
+    listed: [],
     subscriptionsById: new Map(),
     failWith: {},
     missingPrices: new Set(),
@@ -92,6 +97,18 @@ function fakeStripe(): FakeStripe {
           });
         return found;
       },
+      // Like Stripe: a customer's subscriptions, the canceled ones left out.
+      async list(params) {
+        stripe.listed.push(params.customer);
+        if (stripe.failWith.list) throw stripe.failWith.list;
+        return {
+          data: [...stripe.subscriptionsById.values()].filter(
+            (found) =>
+              (typeof found.customer === 'string' ? found.customer : found.customer.id) ===
+                params.customer && found.status !== 'canceled',
+          ),
+        };
+      },
     },
     webhooks: signer.webhooks,
   };
@@ -103,6 +120,7 @@ function subscription(overrides: Partial<StripeSubscription> = {}): StripeSubscr
   return {
     id: 'sub_1',
     status: 'active',
+    created: CREATED_SECONDS,
     customer: 'cus_1',
     metadata: {},
     items: {
@@ -355,6 +373,163 @@ describe('POST /v1/billing/checkout', () => {
       expect(t.stripe.portalCreated).toHaveLength(0);
     },
   );
+
+  describe('a subscription Stripe has that the account row does not show yet', () => {
+    /** A buyer whose webhook has not arrived: no plan, no status, but a customer. */
+    async function buyerWithCustomer(t: ReturnType<typeof setup>) {
+      return signedInAccount(t, { stripe_customer_id: 'cus_race' });
+    }
+
+    it.each(['active', 'trialing', 'past_due', 'incomplete'])(
+      'sends the account to the portal when Stripe lists a %s subscription for its customer',
+      async (status) => {
+        const t = setup();
+        const buyer = await buyerWithCustomer(t);
+        t.stripe.subscriptionsById.set(
+          'sub_paid',
+          subscription({ id: 'sub_paid', status, customer: 'cus_race' }),
+        );
+
+        const response = await post(
+          t.app,
+          '/v1/billing/checkout',
+          { price: 'revendeur_monthly' },
+          bearer(buyer.token),
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({
+          url: 'https://billing.stripe.test/p/session/test_1',
+        });
+        expect(t.stripe.listed).toEqual(['cus_race']);
+        expect(t.stripe.portalCreated).toHaveLength(1);
+        expect(t.stripe.portalCreated[0]).toMatchObject({ customer: 'cus_race' });
+        expect(t.stripe.checkoutCreated).toHaveLength(0);
+        // Only the webhook writes the row.
+        expect(row(t, buyer.id).subscription_status).toBeNull();
+      },
+    );
+
+    it("stops a second Checkout opened before the first one's webhook arrived", async () => {
+      const t = setup();
+      const buyer = await signedInAccount(t);
+
+      const first = await post(
+        t.app,
+        '/v1/billing/checkout',
+        { price: 'essentiel_monthly' },
+        bearer(buyer.token),
+      );
+      expect(await first.json()).toEqual({ url: 'https://checkout.stripe.test/c/pay/cs_test_1' });
+      // The buyer pays: Stripe has the subscription, the webhook is still on its way.
+      t.stripe.subscriptionsById.set(
+        'sub_first',
+        subscription({ id: 'sub_first', customer: 'cus_new_1' }),
+      );
+
+      const second = await post(
+        t.app,
+        '/v1/billing/checkout',
+        { price: 'revendeur_monthly' },
+        bearer(buyer.token),
+      );
+
+      expect(await second.json()).toEqual({ url: 'https://billing.stripe.test/p/session/test_1' });
+      expect(t.stripe.checkoutCreated).toHaveLength(1);
+    });
+
+    it.each(['incomplete_expired', 'unpaid', 'paused', 'canceled'])(
+      'lets the account subscribe when Stripe only has a %s one',
+      async (status) => {
+        const t = setup();
+        const buyer = await buyerWithCustomer(t);
+        t.stripe.subscriptionsById.set(
+          'sub_dead',
+          subscription({ id: 'sub_dead', status, customer: 'cus_race' }),
+        );
+
+        await post(
+          t.app,
+          '/v1/billing/checkout',
+          { price: 'essentiel_monthly' },
+          bearer(buyer.token),
+        );
+
+        expect(t.stripe.checkoutCreated).toHaveLength(1);
+        expect(t.stripe.portalCreated).toHaveLength(0);
+      },
+    );
+
+    it('ignores the subscriptions of other customers', async () => {
+      const t = setup();
+      const buyer = await buyerWithCustomer(t);
+      t.stripe.subscriptionsById.set(
+        'sub_other',
+        subscription({ id: 'sub_other', customer: 'cus_someone_else' }),
+      );
+
+      await post(
+        t.app,
+        '/v1/billing/checkout',
+        { price: 'essentiel_monthly' },
+        bearer(buyer.token),
+      );
+
+      expect(t.stripe.checkoutCreated).toHaveLength(1);
+    });
+
+    it('asks Stripe nothing for an account that never had a customer', async () => {
+      const t = setup();
+      const buyer = await signedInAccount(t);
+
+      await post(
+        t.app,
+        '/v1/billing/checkout',
+        { price: 'essentiel_monthly' },
+        bearer(buyer.token),
+      );
+
+      expect(t.stripe.listed).toEqual([]);
+      expect(t.stripe.checkoutCreated).toHaveLength(1);
+    });
+
+    it('does not even ask when the row already shows a live subscription: the portal at once', async () => {
+      const t = setup();
+      const buyer = await signedInAccount(t, {
+        stripe_customer_id: 'cus_paying',
+        subscription_id: 'sub_paying',
+        plan: 'essentiel',
+        subscription_status: 'active',
+      });
+
+      await post(
+        t.app,
+        '/v1/billing/checkout',
+        { price: 'essentiel_monthly' },
+        bearer(buyer.token),
+      );
+
+      expect(t.stripe.listed).toEqual([]);
+      expect(t.stripe.portalCreated).toHaveLength(1);
+    });
+
+    it('answers 502 and creates no Checkout when the list cannot be read', async () => {
+      const t = setup();
+      const buyer = await buyerWithCustomer(t);
+      t.stripe.failWith.list = new Error('Stripe is down');
+
+      const response = await post(
+        t.app,
+        '/v1/billing/checkout',
+        { price: 'essentiel_monthly' },
+        bearer(buyer.token),
+      );
+
+      expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({ error: 'upstream' });
+      expect(t.stripe.checkoutCreated).toHaveLength(0);
+    });
+  });
 
   it('asks for the terms only when the configuration says so', async () => {
     const without = setup();
@@ -690,6 +865,68 @@ describe('POST /v1/stripe/webhook', () => {
       expect((await deliver(t, event)).status).toBe(200);
       expect(row(t, buyer.id).subscription_status).toBe('active');
       expect(eventCount(t)).toBe(1);
+    });
+
+    it('records an event only once it was handled, not before', async () => {
+      const t = setup();
+      const buyer = await signedInAccount(t);
+      const seenWhileHandling: number[] = [];
+      const retrieve = t.stripe.subscriptions.retrieve;
+      t.stripe.subscriptions.retrieve = async (id) => {
+        seenWhileHandling.push(eventCount(t));
+        return retrieve(id);
+      };
+      t.stripe.subscriptionsById.set('sub_1', subscription({ metadata: { account_id: buyer.id } }));
+
+      await deliver(t, stripeEvent('customer.subscription.created', { id: 'sub_1' }, 'evt_after'));
+
+      expect(seenWhileHandling).toEqual([0]);
+      expect(eventCount(t)).toBe(1);
+    });
+
+    it('handles the redelivery of an event whose handling died before it was recorded', async () => {
+      const t = setup();
+      const buyer = await signedInAccount(t);
+      t.stripe.subscriptionsById.set('sub_1', subscription({ metadata: { account_id: buyer.id } }));
+      const event = stripeEvent('customer.subscription.created', { id: 'sub_1' }, 'evt_crash');
+
+      // The process died after writing the row and before recording the event: nothing recorded.
+      t.stripe.failWith.retrieve = new Error('process killed');
+      expect((await deliver(t, event)).status).toBe(500);
+      delete t.stripe.failWith.retrieve;
+      expect(eventCount(t)).toBe(0);
+
+      expect((await deliver(t, event)).status).toBe(200);
+      expect(row(t, buyer.id).subscription_status).toBe('active');
+      expect(eventCount(t)).toBe(1);
+    });
+
+    it('is harmless when the same event arrives twice at once: handled twice, recorded once', async () => {
+      const t = setup();
+      const buyer = await signedInAccount(t);
+      t.stripe.subscriptionsById.set('sub_1', subscription({ metadata: { account_id: buyer.id } }));
+      const event = stripeEvent('customer.subscription.created', { id: 'sub_1' }, 'evt_twice');
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let waiting = 0;
+      const retrieve = t.stripe.subscriptions.retrieve;
+      t.stripe.subscriptions.retrieve = async (id) => {
+        waiting++;
+        await gate;
+        return retrieve(id);
+      };
+
+      const both = Promise.all([deliver(t, event), deliver(t, event)]);
+      await vi.waitFor(() => expect(waiting).toBe(2));
+      release();
+      const [one, two] = await both;
+
+      expect([one.status, two.status]).toEqual([200, 200]);
+      expect(eventCount(t)).toBe(1);
+      expect(row(t, buyer.id)).toMatchObject({
+        subscription_id: 'sub_1',
+        subscription_status: 'active',
+      });
     });
 
     it('forgets events after a month, no sooner', () => {
@@ -1044,6 +1281,139 @@ describe('POST /v1/stripe/webhook', () => {
         subscription_id: 'sub_new',
         plan: 'revendeur',
         subscription_status: 'active',
+      });
+    });
+
+    describe('a second live subscription on an account that already has one', () => {
+      /** An account paying `sub_old`, with Stripe holding it (made earlier than `sub_new`). */
+      async function payingOld(t: ReturnType<typeof setup>, oldStatus = 'active') {
+        const buyer = await signedInAccount(t, {
+          stripe_customer_id: 'cus_1',
+          subscription_id: 'sub_old',
+          plan: 'essentiel',
+          subscription_status: 'active',
+        });
+        t.stripe.subscriptionsById.set(
+          'sub_old',
+          subscription({ id: 'sub_old', status: oldStatus, created: CREATED_SECONDS }),
+        );
+        return buyer;
+      }
+
+      it('keeps the most recent one, logs an error line naming both, and cancels nothing', async () => {
+        const t = setup();
+        const buyer = await payingOld(t);
+        t.stripe.subscriptionsById.set(
+          'sub_new',
+          subscription({
+            id: 'sub_new',
+            created: CREATED_SECONDS + 3600,
+            items: withLookupKey('revendeur_monthly'),
+          }),
+        );
+
+        const response = await deliver(
+          t,
+          stripeEvent('customer.subscription.created', { id: 'sub_new' }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(row(t, buyer.id)).toMatchObject({
+          subscription_id: 'sub_new',
+          plan: 'revendeur',
+          subscription_status: 'active',
+        });
+        expect(errorLog).toHaveBeenCalledTimes(1);
+        const line = String(errorLog.mock.calls[0]?.[0]);
+        expect(line).toContain('DOUBLE SUBSCRIPTION');
+        expect(line).toContain(buyer.id);
+        expect(line).toContain('sub_new (kept');
+        expect(line).toContain('sub_old');
+        expect(line).not.toContain(buyer.email);
+        // The only calls to Stripe are reads: nothing was cancelled or refunded.
+        expect(t.stripe.retrieved).toEqual(['sub_new', 'sub_old']);
+      });
+
+      it('keeps the stored one when the event is about an older subscription, and logs it too', async () => {
+        const t = setup();
+        const buyer = await payingOld(t);
+        t.stripe.subscriptionsById.set(
+          'sub_older',
+          subscription({
+            id: 'sub_older',
+            created: CREATED_SECONDS - 3600,
+            items: withLookupKey('revendeur_monthly'),
+          }),
+        );
+
+        await deliver(t, stripeEvent('customer.subscription.updated', { id: 'sub_older' }));
+
+        expect(row(t, buyer.id)).toMatchObject({
+          subscription_id: 'sub_old',
+          plan: 'essentiel',
+          subscription_status: 'active',
+        });
+        expect(errorLog).toHaveBeenCalledTimes(1);
+        const line = String(errorLog.mock.calls[0]?.[0]);
+        expect(line).toContain('DOUBLE SUBSCRIPTION');
+        expect(line).toContain('sub_old (kept');
+        expect(line).toContain('sub_older');
+      });
+
+      it('replaces the stored one without a fuss when Stripe says it already ended', async () => {
+        const t = setup();
+        const buyer = await payingOld(t, 'canceled');
+        t.stripe.subscriptionsById.set(
+          'sub_new',
+          subscription({ id: 'sub_new', created: CREATED_SECONDS - 3600 }),
+        );
+
+        await deliver(t, stripeEvent('customer.subscription.created', { id: 'sub_new' }));
+
+        expect(row(t, buyer.id).subscription_id).toBe('sub_new');
+        expect(errorLog).not.toHaveBeenCalled();
+      });
+
+      it('replaces the stored one without a fuss when Stripe does not know it any more', async () => {
+        const t = setup();
+        const buyer = await payingOld(t);
+        t.stripe.subscriptionsById.delete('sub_old');
+        t.stripe.subscriptionsById.set('sub_new', subscription({ id: 'sub_new' }));
+
+        await deliver(t, stripeEvent('customer.subscription.created', { id: 'sub_new' }));
+
+        expect(row(t, buyer.id).subscription_id).toBe('sub_new');
+        expect(errorLog).not.toHaveBeenCalled();
+      });
+
+      it('lets Stripe retry the event when the stored subscription cannot be read', async () => {
+        const t = setup();
+        await payingOld(t);
+        t.stripe.subscriptionsById.set('sub_new', subscription({ id: 'sub_new' }));
+        const retrieve = t.stripe.subscriptions.retrieve;
+        t.stripe.subscriptions.retrieve = async (id) => {
+          if (id === 'sub_old') throw new Error('Stripe is down');
+          return retrieve(id);
+        };
+
+        const response = await deliver(
+          t,
+          stripeEvent('customer.subscription.created', { id: 'sub_new' }, 'evt_unread'),
+        );
+
+        expect(response.status).toBe(500);
+        expect(eventCount(t)).toBe(0);
+      });
+
+      it('does not log anything for an update of the subscription the account already holds', async () => {
+        const t = setup();
+        const buyer = await payingOld(t);
+
+        await deliver(t, stripeEvent('customer.subscription.updated', { id: 'sub_old' }));
+
+        expect(row(t, buyer.id).subscription_id).toBe('sub_old');
+        expect(errorLog).not.toHaveBeenCalled();
+        expect(t.stripe.retrieved).toEqual(['sub_old']);
       });
     });
 

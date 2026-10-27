@@ -33,9 +33,12 @@ describe('openDb', () => {
     expect(tables(memory())).toEqual([
       'accounts',
       'cache',
+      'gemini_calls',
       'login_codes',
+      'login_failures',
       'reviews',
       'sessions',
+      'signups',
       'stripe_events',
       'usage',
       'vision_calls',
@@ -98,7 +101,41 @@ describe('schema', () => {
       plan: null,
       subscription_status: null,
       period_end: null,
+      canonical_email: '',
     });
+  });
+
+  it('upgrades the database of the first release: canonical emails are filled in, data stays', () => {
+    const raw = new Database(':memory:');
+    migrate(raw, 1);
+    expect(raw.pragma('user_version', { simple: true })).toBe(1);
+    const insert = raw.prepare(
+      'INSERT INTO accounts (id, email, created_at, trial_left) VALUES (?, ?, 5, ?)',
+    );
+    insert.run('a', 'Jo.Doe+x@googlemail.com', 7);
+    insert.run('b', 'plain@example.com', 15);
+
+    migrate(raw);
+
+    expect(
+      raw.prepare('SELECT id, email, trial_left, canonical_email FROM accounts ORDER BY id').all(),
+    ).toEqual([
+      {
+        id: 'a',
+        email: 'Jo.Doe+x@googlemail.com',
+        trial_left: 7,
+        canonical_email: 'jodoe@gmail.com',
+      },
+      { id: 'b', email: 'plain@example.com', trial_left: 15, canonical_email: 'plain@example.com' },
+    ]);
+    expect(
+      raw
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'accounts_by_canonical_email'",
+        )
+        .all(),
+    ).toHaveLength(1);
+    raw.close();
   });
 
   it('keeps emails and Stripe customers unique', () => {

@@ -1,6 +1,6 @@
 import { normalizeEmail } from '../auth';
 import type { RouteModule } from '../context';
-import { bearerToken, limitBody, readJsonObject, tooManyRequests } from '../http';
+import { UNKNOWN_IP, bearerToken, limitBody, readJsonObject, tooManyRequests } from '../http';
 import { createRateLimiter } from '../rate-limit';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -56,7 +56,9 @@ export const registerAuthRoutes: RouteModule = (app, ctx) => {
       return c.json({ error: 'invalid_request' }, 400);
     }
 
-    const session = ctx.auth.verifyCode(email, body.code);
+    // An address that cannot be told is not counted in the cap on accounts per address.
+    const ip = ctx.ip(c);
+    const session = ctx.auth.verifyCode(email, body.code, ip === UNKNOWN_IP ? null : ip);
     if (!session) return c.json({ error: 'invalid_code' }, 400);
     return c.json({ token: session.token });
   });

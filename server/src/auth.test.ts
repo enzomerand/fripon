@@ -5,8 +5,12 @@ import {
   CODE_SENDS_PER_WINDOW,
   CODE_TTL_MS,
   CODE_WINDOW_MS,
+  LOGIN_FAILURES_PER_WINDOW,
+  LOGIN_FAILURE_WINDOW_MS,
   MAX_SESSIONS,
   SESSION_IDLE_MS,
+  SIGNUPS_PER_IP_PER_WINDOW,
+  SIGNUP_WINDOW_MS,
   createAuth,
   normalizeEmail,
   type Auth,
@@ -285,6 +289,203 @@ describe('verifyCode', () => {
     auth.verifyCode(EMAIL, wrongCode(code));
     const row = db.prepare('SELECT attempts FROM login_codes').get() as { attempts: number };
     expect(row.attempts).toBe(2);
+  });
+});
+
+describe('the cap on wrong guesses per address', () => {
+  /** `n` wrong guesses, on as many fresh codes as the throttle allows (5 guesses per code). */
+  async function guessWrong(n: number, email = EMAIL): Promise<string> {
+    let code = await codeFor(email);
+    for (let i = 1; i <= n; i++) {
+      auth.verifyCode(email, wrongCode(code));
+      if (i % CODE_MAX_ATTEMPTS === 0 && i < n) code = await codeFor(email);
+    }
+    return code;
+  }
+
+  it('is not reset by a new code: 10 wrong guesses lock the address, whatever the codes', async () => {
+    expect(LOGIN_FAILURES_PER_WINDOW).toBe(10);
+    await guessWrong(LOGIN_FAILURES_PER_WINDOW);
+    expect(count('login_failures')).toBe(10);
+
+    // A third, fresh code has all its 5 attempts, and the right code is still refused.
+    const fresh = await codeFor();
+    expect(auth.verifyCode(EMAIL, fresh)).toBeNull();
+    expect(count('sessions')).toBe(0);
+    expect(count('accounts')).toBe(0);
+  });
+
+  it('stays quiet about it: the right code and a wrong one both answer null, nothing more is counted', async () => {
+    await guessWrong(LOGIN_FAILURES_PER_WINDOW);
+    const fresh = await codeFor();
+
+    expect(auth.verifyCode(EMAIL, wrongCode(fresh))).toBeNull();
+    expect(auth.verifyCode(EMAIL, fresh)).toBeNull();
+    expect(count('login_failures')).toBe(10);
+    // The locked attempts did not even spend the code's own attempts.
+    const row = db.prepare('SELECT attempts FROM login_codes').get() as { attempts: number };
+    expect(row.attempts).toBe(0);
+  });
+
+  it('lets the 10th guess be the right one', async () => {
+    const code = await guessWrong(LOGIN_FAILURES_PER_WINDOW - 1);
+    expect(auth.verifyCode(EMAIL, code)).not.toBeNull();
+  });
+
+  it('is rolling: the lock ends when the oldest guesses leave the day, not at a fixed hour', async () => {
+    await guessWrong(LOGIN_FAILURES_PER_WINDOW);
+
+    clock.advance(LOGIN_FAILURE_WINDOW_MS - 1);
+    expect(auth.verifyCode(EMAIL, await codeFor())).toBeNull();
+
+    clock.advance(1);
+    expect(auth.verifyCode(EMAIL, await codeFor())).not.toBeNull();
+  });
+
+  it('counts guesses spread over the day: the 11th inside 24 hours is locked, one that aged out frees a place', async () => {
+    for (let hour = 0; hour < LOGIN_FAILURES_PER_WINDOW; hour++) {
+      const code = await codeFor();
+      auth.verifyCode(EMAIL, wrongCode(code));
+      clock.advance(60 * 60 * 1000);
+    }
+    // 10 hours in, 10 guesses in the last 24 hours.
+    expect(auth.verifyCode(EMAIL, await codeFor())).toBeNull();
+
+    // The first guess is now 24 hours old: it is out, 9 remain, the right code opens a session.
+    clock.advance(14 * 60 * 60 * 1000);
+    expect(auth.verifyCode(EMAIL, await codeFor())).not.toBeNull();
+  });
+
+  it('does not count what was no guess: no code asked, an expired code, a locked code', async () => {
+    for (let i = 0; i < 20; i++) auth.verifyCode(EMAIL, '123456');
+    expect(count('login_failures')).toBe(0);
+
+    const expired = await codeFor();
+    clock.advance(CODE_TTL_MS);
+    expect(auth.verifyCode(EMAIL, wrongCode(expired))).toBeNull();
+    expect(count('login_failures')).toBe(0);
+  });
+
+  it('counts each address on its own, and the right code of another address still works', async () => {
+    await guessWrong(LOGIN_FAILURES_PER_WINDOW);
+    expect(auth.verifyCode('other@example.com', await codeFor('other@example.com'))).not.toBeNull();
+  });
+
+  it('is dropped by the maintenance once a day old, not before', async () => {
+    await guessWrong(3);
+    clock.advance(LOGIN_FAILURE_WINDOW_MS - 1);
+    purgeExpired(db, clock.ms());
+    expect(count('login_failures')).toBe(3);
+    clock.advance(1);
+    purgeExpired(db, clock.ms());
+    expect(count('login_failures')).toBe(0);
+  });
+});
+
+describe('the free trial of a new account', () => {
+  const trialOf = (email: string) =>
+    (
+      db.prepare('SELECT trial_left FROM accounts WHERE email = ?').get(email) as {
+        trial_left: number;
+      }
+    ).trial_left;
+
+  async function verify(email: string, ip: string | null = null) {
+    return auth.verifyCode(email, await codeFor(email), ip);
+  }
+
+  it.each([
+    ['sam+promo@example.com', 'a +tag'],
+    ['Sam+a+b@Example.com', 'several tags'],
+  ])('is not given again to %s, an alias of an address that has an account (%s)', async (alias) => {
+    await verify(EMAIL);
+
+    const session = await verify(alias);
+
+    expect(session?.account).toMatchObject({ trial_left: 0, canonical_email: EMAIL });
+    expect(count('accounts')).toBe(2);
+  });
+
+  it('knows the Gmail variants: dots, +tag and googlemail.com are one mailbox', async () => {
+    await verify('j.doe@gmail.com');
+    for (const alias of ['jdoe@gmail.com', 'j.d.o.e+x@gmail.com', 'jdoe@googlemail.com']) {
+      expect((await verify(alias))?.account.trial_left).toBe(0);
+    }
+  });
+
+  it('does not take the dots of another provider for noise, nor an unrelated address for an alias', async () => {
+    await verify('a.b@example.com');
+    expect((await verify('ab@example.com'))?.account.trial_left).toBe(15);
+    expect((await verify('a.b@gmail.com'))?.account.trial_left).toBe(15);
+  });
+
+  it('signs in with the exact address typed: the alias has its own account, and keeps it', async () => {
+    const first = await verify(EMAIL);
+    const alias = await verify('sam+promo@example.com');
+    expect(alias?.account.id).not.toBe(first?.account.id);
+
+    const again = await verify('sam+promo@example.com');
+    expect(again?.account.id).toBe(alias?.account.id);
+    expect(count('accounts')).toBe(2);
+    // The first account is untouched.
+    expect(trialOf(EMAIL)).toBe(15);
+  });
+
+  it('gives the trial to the first account of a mailbox, whichever alias comes first', async () => {
+    expect((await verify('sam+first@example.com'))?.account.trial_left).toBe(15);
+    expect((await verify(EMAIL))?.account.trial_left).toBe(0);
+  });
+
+  it('creates at most 3 accounts with a trial per client address and day', async () => {
+    expect(SIGNUPS_PER_IP_PER_WINDOW).toBe(3);
+    for (let i = 1; i <= SIGNUPS_PER_IP_PER_WINDOW; i++) {
+      expect((await verify(`u${i}@example.com`, '203.0.113.7'))?.account.trial_left).toBe(15);
+    }
+
+    const fourth = await verify('u4@example.com', '203.0.113.7');
+    // The code was sent and the sign-in works: only the trial is gone.
+    expect(fourth?.token).toBeTruthy();
+    expect(fourth?.account).toMatchObject({ email: 'u4@example.com', trial_left: 0 });
+  });
+
+  it('lets an existing account sign in from a busy address, trial untouched', async () => {
+    await verify('known@example.com', '198.51.100.1');
+    for (let i = 1; i <= 4; i++) await verify(`u${i}@example.com`, '198.51.100.1');
+
+    const back = await verify('known@example.com', '198.51.100.1');
+
+    expect(back?.account.trial_left).toBe(15);
+    expect(count('accounts')).toBe(5);
+  });
+
+  it('counts each address on its own, and starts again after a day', async () => {
+    for (let i = 1; i <= 4; i++) await verify(`a${i}@example.com`, '192.0.2.1');
+    expect(trialOf('a4@example.com')).toBe(0);
+    expect((await verify('b1@example.com', '192.0.2.2'))?.account.trial_left).toBe(15);
+
+    clock.advance(SIGNUP_WINDOW_MS - 1);
+    expect((await verify('late1@example.com', '192.0.2.1'))?.account.trial_left).toBe(0);
+    clock.advance(SIGNUP_WINDOW_MS);
+    expect((await verify('late2@example.com', '192.0.2.1'))?.account.trial_left).toBe(15);
+  });
+
+  it('does not cap an address nobody could tell', async () => {
+    for (let i = 1; i <= 5; i++) {
+      expect((await verify(`n${i}@example.com`, null))?.account.trial_left).toBe(15);
+    }
+    expect(count('signups')).toBe(0);
+  });
+
+  it('keeps no client address, only a keyed hash, and drops it after a day', async () => {
+    await verify('keep@example.com', '203.0.113.99');
+
+    const row = db.prepare('SELECT ip_hash FROM signups').get() as { ip_hash: string };
+    expect(row.ip_hash).toBe(createHmac('sha256', SECRET).update('ip\n203.0.113.99').digest('hex'));
+    expect(JSON.stringify(db.prepare('SELECT * FROM signups').all())).not.toContain('203.0.113.99');
+
+    clock.advance(SIGNUP_WINDOW_MS);
+    purgeExpired(db, clock.ms());
+    expect(count('signups')).toBe(0);
   });
 });
 

@@ -1,14 +1,11 @@
+import { createHash } from 'node:crypto';
 import { clampReviewInput, isAiReviewInput, type AiReviewInput } from '../../../lib/ai/input';
 import { AI_CACHE_PREFIX, AI_CACHE_TTL_MS, aiCacheDigest } from '../../../lib/ai/review-key';
 import { parseWebDetection } from '../../../lib/checks/image-matches';
 import { parseReview, type GeminiFailure } from '../../../lib/google/gemini';
 import type { WebDetectResult } from '../../../lib/google/vision';
 import { photoKey } from '../../../lib/image/photo-url';
-import {
-  VISION_CACHE_PREFIX,
-  VISION_CACHE_TTL_MS,
-  parseMatches,
-} from '../../../lib/image/search-entry';
+import { VISION_CACHE_PREFIX, parseMatches } from '../../../lib/image/search-entry';
 import type { AiReview, ImageMatch } from '../../../lib/model';
 import type { RouteModule } from '../context';
 import { getAccount } from '../db';
@@ -16,8 +13,9 @@ import { isOwnerProblem, upstreamReason, type GoogleDeps, type UpstreamReason } 
 import { limitBody, readJsonObject } from '../http';
 import { downloadPhoto, isAcceptablePhotoUrl } from '../photo';
 import { allowReview, releaseReview, reserveAnalysis, usageSummary } from '../quota';
+import { giveBackGeminiCall, takeGeminiCall } from '../gemini-ceiling';
 import { createSharedCache } from '../shared-cache';
-import { periodIds } from '../time';
+import { GOOGLE_TIME_ZONE, periodIds } from '../time';
 import { giveBackVisionCall, takeVisionCall } from '../vision-ceiling';
 
 /**
@@ -31,25 +29,54 @@ import { giveBackVisionCall, takeVisionCall } from '../vision-ceiling';
 /** The extension's cache keys start with its brand (`fripon:vision:v1:`); the server's do not. */
 const unbranded = (prefix: string) => prefix.replace(/^fripon:/, '');
 
+/**
+ * How long the server keeps a Vision answer: 35 days, not the extension's 7. The same photo is a
+ * free re-search for the account for the rest of the calendar month (31 days at most), and each
+ * such re-search that missed the cache would be a paid Google call for nothing.
+ */
+export const VISION_SERVER_CACHE_TTL_MS = 35 * 24 * 60 * 60 * 1000;
+
 /** Shared-cache key of a Vision answer: the extension's `visionCacheKey`, unbranded. */
 export const visionKey = (photo: string) => `${unbranded(VISION_CACHE_PREFIX)}${photo}`;
-/** Shared-cache key of a review: the extension's `aiCacheKey`, unbranded. */
+/**
+ * Shared-cache key of a review: the extension's `aiCacheKey`, unbranded, then a hash of the
+ * description. The extension leaves the description out of its own key (it only reuses a review
+ * on the same device); here a review is shared across accounts, and one account's description
+ * must not be answered with a review written for another's.
+ */
 export const reviewKey = (photo: string, input: AiReviewInput) =>
-  `${unbranded(AI_CACHE_PREFIX)}${photo}:${aiCacheDigest(input)}`;
+  `${unbranded(AI_CACHE_PREFIX)}${photo}:${aiCacheDigest(input)}:${descriptionHash(input.description)}`;
+
+function descriptionHash(description: string): string {
+  return createHash('sha256').update(description).digest('hex').slice(0, 16);
+}
 
 /** The same owner problem is logged once a minute at most, so a revoked key cannot flood the log. */
 const OWNER_LOG_EVERY_MS = 60_000;
 
-type UpstreamFailure = { ok: false; error: 'upstream'; reason: UpstreamReason };
-type SearchOutcome =
-  { ok: true; matches: ImageMatch[] } | { ok: false; error: 'capacity' } | UpstreamFailure;
-type ReviewOutcome = { ok: true; review: AiReview } | UpstreamFailure;
+/**
+ * A step that failed. `refundable` is the extension's rule (`readRefusal`): true only when Google
+ * certainly did not bill the call (never made, or refused with a named reason). A call that may
+ * have been processed (a timeout, a 5xx, an answer nobody could read) keeps the account's charge.
+ */
+type UpstreamFailure = {
+  ok: false;
+  error: 'upstream';
+  reason: UpstreamReason;
+  refundable: boolean;
+};
+/** The global daily ceiling is full: Google was never called, so everything goes back. */
+type CapacityFailure = { ok: false; error: 'capacity'; refundable: true };
+type SearchOutcome = { ok: true; matches: ImageMatch[] } | CapacityFailure | UpstreamFailure;
+type ReviewOutcome = { ok: true; review: AiReview } | CapacityFailure | UpstreamFailure;
 
-const upstream = (reason: UpstreamReason): UpstreamFailure => ({
+const upstream = (reason: UpstreamReason, refundable: boolean): UpstreamFailure => ({
   ok: false,
   error: 'upstream',
   reason,
+  refundable,
 });
+const capacity = (): CapacityFailure => ({ ok: false, error: 'capacity', refundable: true });
 
 export function registerProxyRoutes(google: GoogleDeps): RouteModule {
   return (app, ctx) => {
@@ -76,16 +103,15 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
 
     /** The Vision step for a photo no cache holds: ceiling, download, call, cache. */
     async function searchGoogle(photoUrl: string, photo: string): Promise<SearchOutcome> {
-      const day = periodIds(ctx.now()).day;
-      if (!takeVisionCall(ctx.db, day, ctx.config.globalDailyVisionCap)) {
-        return { ok: false, error: 'capacity' };
-      }
+      // Google's quota resets at midnight Pacific time: the ceiling counts on that day.
+      const day = periodIds(ctx.now(), GOOGLE_TIME_ZONE).day;
+      if (!takeVisionCall(ctx.db, day, ctx.config.globalDailyVisionCap)) return capacity();
 
       const image = await downloadPhoto(google.fetch, photoUrl);
       if (!image) {
         // Google was never called: nothing to bill.
         giveBackVisionCall(ctx.db, day);
-        return upstream('photo');
+        return upstream('photo', true);
       }
 
       let result: WebDetectResult;
@@ -99,11 +125,11 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
         // certainly did not bill goes back to the day's ceiling.
         if (result.refundable) giveBackVisionCall(ctx.db, day);
         logOwnerProblem('vision', result.reason);
-        return upstream(upstreamReason(result.reason));
+        return upstream(upstreamReason(result.reason), result.refundable);
       }
 
       const matches = parseWebDetection(result.webDetection);
-      cache.set(visionKey(photo), matches, ctx.now().getTime(), VISION_CACHE_TTL_MS);
+      cache.set(visionKey(photo), matches, ctx.now().getTime(), VISION_SERVER_CACHE_TTL_MS);
       return { ok: true, matches };
     }
 
@@ -120,10 +146,17 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
       return search;
     }
 
-    /** The Gemini step for a review no cache holds: download, call, cache. */
+    /** The Gemini step for a review no cache holds: ceiling, download, call, cache. */
     async function reviewGoogle(input: AiReviewInput, key: string): Promise<ReviewOutcome> {
+      const day = periodIds(ctx.now(), GOOGLE_TIME_ZONE).day;
+      if (!takeGeminiCall(ctx.db, day, ctx.config.globalDailyGeminiCap)) return capacity();
+
       const image = await downloadPhoto(google.fetch, input.photoUrl);
-      if (!image) return upstream('photo');
+      if (!image) {
+        // Google was never called: nothing to bill.
+        giveBackGeminiCall(ctx.db, day);
+        return upstream('photo', true);
+      }
 
       let result: Awaited<ReturnType<GoogleDeps['reviewListing']>>;
       try {
@@ -141,8 +174,10 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
         result = { ok: false, reason: 'network', refundable: false };
       }
       if (!result.ok) {
+        // Same rule as Vision: only a call Google certainly did not bill goes back to the ceiling.
+        if (result.refundable) giveBackGeminiCall(ctx.db, day);
         logOwnerProblem('gemini', result.reason);
-        return upstream(upstreamReason(result.reason));
+        return upstream(upstreamReason(result.reason), result.refundable);
       }
 
       cache.set(key, result.review, ctx.now().getTime(), AI_CACHE_TTL_MS);
@@ -172,7 +207,10 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
       const reservation = reserveAnalysis(ctx.db, account.id, photo, ctx.now());
       if (!reservation.ok) return c.json({ error: 'quota', reason: reservation.reason }, 402);
 
-      // A search that fails costs the account nothing: whatever happens next, the charge goes back.
+      // The charge goes back only when Google certainly did not bill (`refundable`), like the
+      // extension's own credit: a call that may have been processed keeps the analysis charged
+      // (the same photo again this month is free). A crash of the server itself is no fault of the
+      // account either, so it goes back too.
       const refund = () => {
         if (reservation.charged) reservation.release();
       };
@@ -184,7 +222,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
         throw error;
       }
       if (!outcome.ok) {
-        refund();
+        if (outcome.refundable) refund();
         return outcome.error === 'capacity'
           ? c.json({ error: 'capacity' }, 503)
           : c.json({ error: 'upstream', reason: outcome.reason }, 502);
@@ -220,8 +258,11 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
         throw error;
       }
       if (!outcome.ok) {
-        releaseReview(ctx.db, account.id, photo);
-        return c.json({ error: 'upstream', reason: outcome.reason }, 502);
+        // The review counts against the account unless Google certainly did not bill it.
+        if (outcome.refundable) releaseReview(ctx.db, account.id, photo);
+        return outcome.error === 'capacity'
+          ? c.json({ error: 'capacity' }, 503)
+          : c.json({ error: 'upstream', reason: outcome.reason }, 502);
       }
       return c.json({ review: outcome.review });
     });

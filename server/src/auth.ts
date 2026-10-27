@@ -9,6 +9,7 @@ import {
 import { TRIAL_ANALYSES } from './plans';
 import { CODE_TTL_MINUTES, type Mailer } from './mailer';
 import type { Account, Db } from './db';
+import { canonicalEmail } from './email';
 
 /** Sign-in by e-mail code, then a bearer token. Nothing secret is stored in clear: a code is an
  *  HMAC keyed by `AUTH_SECRET`, a token is a SHA-256. */
@@ -20,6 +21,18 @@ export const CODE_WINDOW_MS = 15 * 60 * 1000;
 export const CODE_SENDS_PER_WINDOW = 3;
 /** Wrong guesses a code survives. */
 export const CODE_MAX_ATTEMPTS = 5;
+/** Rolling window of the per-address cap on wrong guesses (a new code does not reset it). */
+export const LOGIN_FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000;
+/**
+ * Wrong guesses an address takes in that window, all its codes together; beyond that every
+ * verification answers like a wrong code until the oldest guess leaves the window. Without it,
+ * 3 codes per 15 minutes x 5 guesses each would let someone grind through a day of guesses.
+ */
+export const LOGIN_FAILURES_PER_WINDOW = 10;
+/** Window of the cap on accounts created from one client address. */
+export const SIGNUP_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Accounts one address may create per window with a trial; the next ones start without one. */
+export const SIGNUPS_PER_IP_PER_WINDOW = 3;
 /** Signed-in browsers per account; signing in on a fourth one signs the oldest out. */
 export const MAX_SESSIONS = 3;
 /** A session nobody used for this long stops working. */
@@ -56,8 +69,17 @@ export interface Auth {
    * itself could not be sent.
    */
   requestCode(email: string): Promise<void>;
-  /** A new session token when the code is right, null otherwise. Creates the account at first. */
-  verifyCode(email: string, code: string): { token: string; account: Account } | null;
+  /**
+   * A new session token when the code is right, null otherwise. Creates the account at first, with
+   * the free trial unless the same mailbox (see `canonicalEmail`) already has an account or
+   * `clientIp` already created `SIGNUPS_PER_IP_PER_WINDOW` accounts in a day. `clientIp` is null
+   * when the caller cannot tell (the cap then does not apply).
+   */
+  verifyCode(
+    email: string,
+    code: string,
+    clientIp?: string | null,
+  ): { token: string; account: Account } | null;
   /** The account a token belongs to, null for an unknown, expired or malformed token. */
   authenticate(token: string): Account | null;
   /** Ends the session of this token (already ended is fine). */
@@ -77,6 +99,8 @@ const sha256 = (value: string) => createHash('sha256').update(value).digest('hex
 export function createAuth({ db, mailer, secret, now }: AuthDeps): Auth {
   const codeHash = (email: string, code: string) =>
     createHmac('sha256', secret).update(`${email}\n${code}`).digest('hex');
+  /** Client addresses are stored as a keyed hash: personal data the server only needs to count. */
+  const ipHash = (ip: string) => createHmac('sha256', secret).update(`ip\n${ip}`).digest('hex');
 
   /** Stores a fresh code for the address and returns it, or null when the throttle says no. */
   const issueCode = db.transaction((email: string, at: number): string | null => {
@@ -101,6 +125,13 @@ export function createAuth({ db, mailer, secret, now }: AuthDeps): Auth {
   });
 
   const checkCode = db.transaction((email: string, code: string, at: number): boolean => {
+    // Locked: too many wrong guesses on this address today. Nothing more is counted, so the lock
+    // ends when the oldest guess leaves the window, and the answer is a plain wrong code.
+    const failures = db
+      .prepare('SELECT COUNT(*) AS n FROM login_failures WHERE email = ? AND at > ?')
+      .get(email, at - LOGIN_FAILURE_WINDOW_MS) as { n: number };
+    if (failures.n >= LOGIN_FAILURES_PER_WINDOW) return false;
+
     const row = db
       .prepare('SELECT code_hash, expires_at, attempts FROM login_codes WHERE email = ?')
       .get(email) as { code_hash: string; expires_at: number; attempts: number } | undefined;
@@ -110,17 +141,45 @@ export function createAuth({ db, mailer, secret, now }: AuthDeps): Auth {
     db.prepare('UPDATE login_codes SET attempts = attempts + 1 WHERE email = ?').run(email);
     const expected = Buffer.from(row.code_hash, 'hex');
     const given = Buffer.from(codeHash(email, code), 'hex');
-    if (expected.length !== given.length || !timingSafeEqual(expected, given)) return false;
+    if (expected.length !== given.length || !timingSafeEqual(expected, given)) {
+      db.prepare('INSERT INTO login_failures (email, at) VALUES (?, ?)').run(email, at);
+      return false;
+    }
 
     db.prepare('DELETE FROM login_codes WHERE email = ?').run(email);
     return true;
   });
 
-  const openSession = db.transaction((email: string, at: number) => {
-    db.prepare(
-      'INSERT INTO accounts (id, email, created_at, trial_left) VALUES (?, ?, ?, ?) ON CONFLICT (email) DO NOTHING',
-    ).run(randomUUID(), email, at, TRIAL_ANALYSES);
-    const account = db.prepare('SELECT * FROM accounts WHERE email = ?').get(email) as Account;
+  /** Analyses of the trial for an account about to be created: none for a known mailbox or a busy address. */
+  function trialFor(canonical: string, hashedIp: string | null, at: number): number {
+    const sameMailbox = db
+      .prepare('SELECT 1 FROM accounts WHERE canonical_email = ? LIMIT 1')
+      .get(canonical);
+    if (sameMailbox) return 0;
+    if (hashedIp !== null) {
+      const created = db
+        .prepare('SELECT COUNT(*) AS n FROM signups WHERE ip_hash = ? AND at > ?')
+        .get(hashedIp, at - SIGNUP_WINDOW_MS) as { n: number };
+      if (created.n >= SIGNUPS_PER_IP_PER_WINDOW) return 0;
+    }
+    return TRIAL_ANALYSES;
+  }
+
+  const openSession = db.transaction((email: string, at: number, clientIp: string | null) => {
+    let account = db.prepare('SELECT * FROM accounts WHERE email = ?').get(email) as
+      Account | undefined;
+    if (!account) {
+      const canonical = canonicalEmail(email);
+      const hashedIp = clientIp === null ? null : ipHash(clientIp);
+      const id = randomUUID();
+      db.prepare(
+        'INSERT INTO accounts (id, email, created_at, trial_left, canonical_email) VALUES (?, ?, ?, ?, ?)',
+      ).run(id, email, at, trialFor(canonical, hashedIp, at), canonical);
+      if (hashedIp !== null) {
+        db.prepare('INSERT INTO signups (ip_hash, at) VALUES (?, ?)').run(hashedIp, at);
+      }
+      account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(id) as Account;
+    }
 
     const token = randomBytes(32).toString('base64url');
     db.prepare(
@@ -143,13 +202,13 @@ export function createAuth({ db, mailer, secret, now }: AuthDeps): Auth {
       if (code !== null) await mailer.sendCode(email, code);
     },
 
-    verifyCode(rawEmail, code) {
+    verifyCode(rawEmail, code, clientIp = null) {
       const email = normalizeEmail(rawEmail);
       if (email === null) return null;
       const at = now().getTime();
       // Both steps in one transaction: a code can open one session at most.
       return db
-        .transaction(() => (checkCode(email, code, at) ? openSession(email, at) : null))
+        .transaction(() => (checkCode(email, code, at) ? openSession(email, at, clientIp) : null))
         .immediate();
     },
 

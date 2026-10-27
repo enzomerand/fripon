@@ -70,6 +70,15 @@ const isActive = (status: string | null): boolean =>
   status !== null && ACTIVE_STATUSES.includes(status);
 
 /**
+ * What a customer's subscription must not be for a new Checkout: Stripe has it (or is about to)
+ * charging the customer, whatever the local row says (it only moves when a webhook arrives).
+ */
+const BLOCKS_CHECKOUT: readonly string[] = ['active', 'trialing', 'past_due', 'incomplete'];
+
+/** How many of a customer's subscriptions are read to look for a live one. */
+const SUBSCRIPTIONS_READ = 100;
+
+/**
  * Billing: Checkout and the customer portal for the extension, the two pages Stripe sends the
  * buyer back to, and the webhook that keeps `accounts` in step with what Stripe says.
  *
@@ -130,6 +139,17 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
         if (isActive(account.subscription_status) && account.stripe_customer_id !== null) {
           return c.json({ url: await portalUrl(account.stripe_customer_id) });
         }
+        // The local status is only as fresh as the last webhook: two Checkouts opened before the
+        // first one's event arrived would make two paid subscriptions. Stripe is asked instead.
+        if (account.stripe_customer_id !== null) {
+          const { data } = await stripe.subscriptions.list({
+            customer: account.stripe_customer_id,
+            limit: SUBSCRIPTIONS_READ,
+          });
+          if (data.some((subscription) => BLOCKS_CHECKOUT.includes(subscription.status))) {
+            return c.json({ url: await portalUrl(account.stripe_customer_id) });
+          }
+        }
 
         const customer = await customerOf(account);
         const session = await stripe.checkout.sessions.create({
@@ -176,10 +196,10 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
     });
 
     const sync = createSubscriptionSync(stripe, ctx.db);
-    const claimEvent = ctx.db.prepare(
+    const wasHandled = ctx.db.prepare('SELECT 1 FROM stripe_events WHERE id = ?');
+    const recordEvent = ctx.db.prepare(
       'INSERT OR IGNORE INTO stripe_events (id, received_at) VALUES (?, ?)',
     );
-    const releaseEvent = ctx.db.prepare('DELETE FROM stripe_events WHERE id = ?');
 
     app.post(
       '/v1/stripe/webhook',
@@ -205,16 +225,14 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
         }
 
         // Stripe delivers an event more than once: the second time is a plain 200.
-        if (claimEvent.run(event.id, ctx.now().getTime()).changes === 0) {
-          return c.json({ received: true });
-        }
-        try {
-          await sync.handle(event);
-        } catch (error) {
-          // Not handled: let the retry through, which is the point of answering an error.
-          releaseEvent.run(event.id);
-          throw error;
-        }
+        if (wasHandled.get(event.id) !== undefined) return c.json({ received: true });
+
+        // Handled first, recorded after: a crash in between leaves the event unrecorded, so its
+        // redelivery is handled and not ignored. Handling is idempotent (the subscription is read
+        // again from Stripe and stored as it is), so two deliveries at once only write it twice.
+        // An error is not caught on purpose: the 500 is what makes Stripe retry.
+        await sync.handle(event);
+        recordEvent.run(event.id, ctx.now().getTime());
         return c.json({ received: true });
       },
     );
@@ -249,6 +267,35 @@ function createSubscriptionSync(stripe: StripeApi, db: Db) {
     return (findByCustomer.get(customerId) as Account | undefined) ?? null;
   }
 
+  /**
+   * Called when `incoming` is live and the account's stored subscription is another one that its
+   * row says is live too. Asks Stripe whether the stored one really is, and if so which of the two
+   * is the most recent (the account keeps that one) and logs an error line naming both. True when
+   * the stored one stays, so the incoming one must not be written.
+   */
+  async function keepsStored(account: Account, incoming: StripeSubscription): Promise<boolean> {
+    const storedId = account.subscription_id as string;
+    let stored: StripeSubscription;
+    try {
+      stored = await stripe.subscriptions.retrieve(storedId);
+    } catch (error) {
+      // Stripe no longer knows it: nothing is charged for it, the new one simply replaces it.
+      if (isMissing(error)) return false;
+      throw error;
+    }
+    // The row was stale: the stored subscription ended and the event is still on its way.
+    if (!isActive(stored.status)) return false;
+
+    const incomingIsNewer = incoming.created > stored.created;
+    const [kept, other] = incomingIsNewer ? [incoming, stored] : [stored, incoming];
+    console.error(
+      `[stripe] DOUBLE SUBSCRIPTION: account ${account.id} has two live subscriptions, ` +
+        `${kept.id} (kept, the most recent) and ${other.id}. Cancel or refund one in the Stripe Dashboard: ` +
+        'nothing was cancelled automatically.',
+    );
+    return !incomingIsNewer;
+  }
+
   /** Reads the subscription again from Stripe and stores what it says now. */
   async function syncSubscription(subscriptionId: string): Promise<void> {
     let subscription: StripeSubscription;
@@ -269,14 +316,16 @@ function createSubscriptionSync(stripe: StripeApi, db: Db) {
       return;
     }
 
-    // A late event about an older subscription must not wipe the one the account pays for now.
     if (
       account.subscription_id !== null &&
       account.subscription_id !== subscription.id &&
-      isActive(account.subscription_status) &&
-      !isActive(subscription.status)
+      isActive(account.subscription_status)
     ) {
-      return;
+      // A late event about an older subscription must not wipe the one the account pays for now.
+      if (!isActive(subscription.status)) return;
+      // A second live subscription: the account is being charged twice. Keep the most recent one
+      // and tell the owner, who decides what to cancel or refund (no money moves from here).
+      if (await keepsStored(account, subscription)) return;
     }
 
     const item = subscription.items.data[0];

@@ -38,20 +38,33 @@ export function planForLookupKey(key: string): PlanName | null {
  */
 export const ACTIVE_STATUSES: readonly string[] = ['active', 'trialing', 'past_due'];
 
+/**
+ * How long past the end of its period a subscription keeps its quota when the webhook that renews
+ * (or ends) it did not arrive. Stripe retries a webhook for three days: past that, an `active`
+ * status nobody renewed is a lost event, and the quota stops instead of lasting forever.
+ */
+export const PERIOD_GRACE_MS = 3 * 24 * 60 * 60 * 1000;
+
 /** What an account may use right now. */
 export type Entitlement =
   | { kind: 'plan'; plan: PlanName; monthCap: number; dayCap: number }
   | { kind: 'trial'; left: number }
   | { kind: 'none' };
 
-/** A subscription with a known plan wins; otherwise the trial, while it has analyses left. */
+/**
+ * A subscription with a known plan wins; otherwise the trial, while it has analyses left. The
+ * subscription must also be within its period: `period_end` unknown (null), or not more than
+ * `PERIOD_GRACE_MS` in the past.
+ */
 export function entitlement(
-  account: Pick<Account, 'plan' | 'subscription_status' | 'trial_left'>,
+  account: Pick<Account, 'plan' | 'subscription_status' | 'trial_left' | 'period_end'>,
+  now: Date,
 ): Entitlement {
   if (
     account.subscription_status !== null &&
     ACTIVE_STATUSES.includes(account.subscription_status) &&
-    isPlanName(account.plan)
+    isPlanName(account.plan) &&
+    (account.period_end === null || account.period_end > now.getTime() - PERIOD_GRACE_MS)
   ) {
     return { kind: 'plan', plan: account.plan, ...PLAN_CAPS[account.plan] };
   }

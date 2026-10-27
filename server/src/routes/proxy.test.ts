@@ -9,10 +9,11 @@ import { visionCacheKey } from '../../../lib/image/search-entry';
 import type { Config } from '../config';
 import type { Account } from '../db';
 import type { GoogleDeps } from '../google';
-import { periodIds } from '../time';
+import { geminiCallsOn } from '../gemini-ceiling';
+import { GOOGLE_TIME_ZONE, periodIds } from '../time';
 import { createTestApp, post, signIn, testConfig, type TestApp } from '../test-helpers';
 import { visionCallsOn } from '../vision-ceiling';
-import { registerProxyRoutes, reviewKey, visionKey } from './proxy';
+import { VISION_SERVER_CACHE_TTL_MS, registerProxyRoutes, reviewKey, visionKey } from './proxy';
 
 const VISION_KEY = 'AIza-test-vision-key-0001';
 const GEMINI_KEY = 'AIza-test-gemini-key-0002';
@@ -144,7 +145,10 @@ const reviewsCounted = (t: Setup, who: Person) =>
     t.db.prepare('SELECT count FROM reviews WHERE account_id = ?').get(who.id) as
       { count: number } | undefined
   )?.count ?? 0;
-const ceiling = (t: Setup) => visionCallsOn(t.db, periodIds(t.clock.now()).day);
+/** The ceilings count on Google's day (Pacific), unlike the account quotas (Paris). */
+const googleDay = (t: Setup) => periodIds(t.clock.now(), GOOGLE_TIME_ZONE).day;
+const ceiling = (t: Setup) => visionCallsOn(t.db, googleDay(t));
+const geminiCeiling = (t: Setup) => geminiCallsOn(t.db, googleDay(t));
 
 /** Quiets and records the server's error log. */
 function captureErrors() {
@@ -229,21 +233,60 @@ describe('POST /v1/search', () => {
     expect(t.google.detections).toHaveLength(1);
   });
 
-  it('asks Google again once the shared answer is a week old', async () => {
+  it("keeps the shared answer 35 days, not the extension's 7, and asks Google again after", async () => {
+    expect(VISION_SERVER_CACHE_TTL_MS).toBe(35 * 24 * 60 * 60 * 1000);
     const t = setup();
     const ann = await person(t, 'ann@example.com');
     const bob = await person(t, 'bob@example.com');
     await search(t, ann);
 
-    t.clock.advance(7 * 24 * 60 * 60 * 1000 + 1);
+    t.clock.advance(8 * 24 * 60 * 60 * 1000);
     await search(t, bob);
+    expect(t.google.detections).toHaveLength(1);
+
+    const stored = Date.parse('2026-10-20T12:00:00Z');
+    t.clock.set(new Date(stored + VISION_SERVER_CACHE_TTL_MS - 1).toISOString());
+    await search(t, ann);
+    expect(t.google.detections).toHaveLength(1);
+    t.clock.advance(1);
+    await search(t, ann);
     expect(t.google.detections).toHaveLength(2);
+  });
+
+  it('does not pay Google again for a free re-search later in the same month', async () => {
+    const t = setup();
+    const ann = await person(t, 'ann@example.com');
+    await search(t, ann);
+
+    // 10 days later: still October on the Paris calendar, so the photo is a free re-search.
+    t.clock.advance(10 * 24 * 60 * 60 * 1000);
+    const again = await search(t, ann);
+
+    expect(await again.json()).toMatchObject({ charged: false });
+    expect(t.google.detections).toHaveLength(1);
   });
 
   it('keeps its cache keys in step with the extension (no `fripon:` prefix)', () => {
     expect(`fripon:${visionKey(photoKey(PHOTO))}`).toBe(visionCacheKey(PHOTO));
+    // The review key is the extension's, unbranded, plus the hash of the description.
     const input = reviewInput();
-    expect(`fripon:${reviewKey(photoKey(PHOTO), input)}`).toBe(aiCacheKey(PHOTO, input));
+    const key = reviewKey(photoKey(PHOTO), input);
+    expect(`fripon:${key}`.startsWith(`${aiCacheKey(PHOTO, input)}:`)).toBe(true);
+    expect(key.slice(aiCacheKey(PHOTO, input).length - 'fripon:'.length + 1)).toMatch(
+      /^[0-9a-f]{16}$/,
+    );
+  });
+
+  it('keys a review by the description too, and by nothing that moves between visits', () => {
+    const photo = photoKey(PHOTO);
+    const base = reviewKey(photo, reviewInput());
+    expect(reviewKey(photo, reviewInput())).toBe(base);
+    expect(reviewKey(photo, reviewInput({ description: 'Autre texte' }))).not.toBe(base);
+    expect(reviewKey(photo, reviewInput({ description: '' }))).not.toBe(base);
+    // The extension's own key still ignores it: the server adds it, `lib/` is untouched.
+    expect(aiCacheKey(PHOTO, reviewInput({ description: 'Autre texte' }))).toBe(
+      aiCacheKey(PHOTO, reviewInput()),
+    );
   });
 
   describe('quota', () => {
@@ -299,7 +342,7 @@ describe('POST /v1/search', () => {
     });
   });
 
-  describe('a failure costs the account nothing', () => {
+  describe('a failure costs the account only when Google certainly did not bill', () => {
     it('releases the analysis when the photo cannot be downloaded, and the ceiling gets its call back', async () => {
       const t = setup();
       t.google.photoAnswer = () => new Response('gone', { status: 404 });
@@ -314,7 +357,7 @@ describe('POST /v1/search', () => {
       expect(ceiling(t)).toBe(0);
     });
 
-    it('releases the analysis when Google fails, and keeps the ceiling call that may have been billed', async () => {
+    it('keeps the analysis charged, and the ceiling call, when Google may have billed (network)', async () => {
       const t = setup();
       t.google.detect = async () => ({ ok: false, reason: 'network', refundable: false });
       const ann = await person(t, 'ann@example.com');
@@ -322,12 +365,22 @@ describe('POST /v1/search', () => {
       const response = await search(t, ann);
       expect(response.status).toBe(502);
       expect(await response.json()).toEqual({ error: 'upstream', reason: 'network' });
-      expect(usageRows(t, ann)).toBe(0);
-      expect(trialLeft(t, ann)).toBe(15);
+      expect(usageRows(t, ann)).toBe(1);
+      expect(trialLeft(t, ann)).toBe(14);
       expect(ceiling(t)).toBe(1);
     });
 
-    it('gives the ceiling its call back when Google certainly did not bill', async () => {
+    it('keeps the analysis charged for an answer Google billed and nobody could read (photo)', async () => {
+      const t = setup();
+      t.google.detect = async () => ({ ok: false, reason: 'photo', refundable: false });
+      const ann = await person(t, 'ann@example.com');
+
+      expect(await (await search(t, ann)).json()).toEqual({ error: 'upstream', reason: 'photo' });
+      expect(usageRows(t, ann)).toBe(1);
+      expect(trialLeft(t, ann)).toBe(14);
+    });
+
+    it('gives everything back when Google certainly did not bill (a named refusal)', async () => {
       const t = setup();
       t.google.detect = async () => ({ ok: false, reason: 'quota', refundable: true });
       const ann = await person(t, 'ann@example.com');
@@ -335,9 +388,11 @@ describe('POST /v1/search', () => {
 
       expect((await search(t, ann)).status).toBe(502);
       expect(ceiling(t)).toBe(0);
+      expect(usageRows(t, ann)).toBe(0);
+      expect(trialLeft(t, ann)).toBe(15);
     });
 
-    it('reads a Google call that throws as a network failure', async () => {
+    it('reads a Google call that throws as a network failure, which may have been billed', async () => {
       const t = setup();
       t.google.detect = async () => {
         throw new Error('boom');
@@ -347,16 +402,22 @@ describe('POST /v1/search', () => {
       const response = await search(t, ann);
       expect(response.status).toBe(502);
       expect(await response.json()).toEqual({ error: 'upstream', reason: 'network' });
-      expect(usageRows(t, ann)).toBe(0);
+      expect(usageRows(t, ann)).toBe(1);
+      expect(ceiling(t)).toBe(1);
     });
 
-    it('reports a photo Google cannot read as `photo`, and releases', async () => {
+    it('makes the retry of a charged failure free: the same photo again this month costs nothing', async () => {
       const t = setup();
-      t.google.detect = async () => ({ ok: false, reason: 'photo', refundable: false });
+      t.google.detect = async () => ({ ok: false, reason: 'network', refundable: false });
       const ann = await person(t, 'ann@example.com');
+      await search(t, ann);
 
-      expect(await (await search(t, ann)).json()).toEqual({ error: 'upstream', reason: 'photo' });
-      expect(usageRows(t, ann)).toBe(0);
+      t.google.detect = async () => DETECTION;
+      const retry = await search(t, ann);
+
+      expect(await retry.json()).toMatchObject({ charged: false, usage: { trialLeft: 14 } });
+      expect(trialLeft(t, ann)).toBe(14);
+      expect(usageRows(t, ann)).toBe(1);
     });
 
     it('answers 502 `unavailable` and logs loudly when Google refuses the owner key', async () => {
@@ -410,9 +471,11 @@ describe('POST /v1/search', () => {
       const t = setup();
       const ann = await person(t, 'ann@example.com');
       await search(t, ann);
-      // The shared answer is gone and Google fails: the second search of the month is free anyway.
+      // The shared answer is gone and Google refuses without billing: the second search of the
+      // month is free anyway, and the first charge stays.
       t.db.prepare('DELETE FROM cache').run();
-      t.google.detect = async () => ({ ok: false, reason: 'network', refundable: false });
+      t.google.detect = async () => ({ ok: false, reason: 'quota', refundable: true });
+      captureErrors();
 
       expect((await search(t, ann)).status).toBe(502);
       expect(usageRows(t, ann)).toBe(1);
@@ -446,7 +509,7 @@ describe('POST /v1/search', () => {
       expect(ceiling(t)).toBe(1);
     });
 
-    it('opens again the next day (Paris)', async () => {
+    it('opens again the next day', async () => {
       const t = setup({ globalDailyVisionCap: 1 });
       const ann = await person(t, 'ann@example.com');
       await search(t, ann);
@@ -454,6 +517,33 @@ describe('POST /v1/search', () => {
 
       t.clock.advance(24 * 60 * 60 * 1000);
       expect((await search(t, ann, OTHER_PHOTO)).status).toBe(200);
+    });
+
+    it("counts Google's day, which ends at midnight Pacific, not Paris midnight", async () => {
+      const t = setup({ globalDailyVisionCap: 1 });
+      const ann = await person(t, 'ann@example.com');
+      // 06:59 UTC is 23:59 the 19th in Los Angeles, and already 08:59 the 20th in Paris.
+      t.clock.set('2026-10-20T06:59:00Z');
+      expect((await search(t, ann)).status).toBe(200);
+      expect((await search(t, ann, OTHER_PHOTO)).status).toBe(503);
+
+      // One minute later it is the 20th for Google: a new day, though still the same Paris day.
+      t.clock.advance(60_000);
+      expect((await search(t, ann, OTHER_PHOTO)).status).toBe(200);
+      expect(visionCallsOn(t.db, '2026-10-19')).toBe(1);
+      expect(visionCallsOn(t.db, '2026-10-20')).toBe(1);
+    });
+
+    it('leaves the account quotas on Paris days', async () => {
+      const t = setup({ globalDailyVisionCap: 100 });
+      const bob = await person(t, 'bob@example.com', SUBSCRIBER);
+      t.clock.set('2026-10-20T06:59:00Z');
+      await search(t, bob);
+      t.clock.advance(60_000);
+      await search(t, bob, OTHER_PHOTO);
+
+      const days = t.db.prepare('SELECT DISTINCT day FROM usage').all();
+      expect(days).toEqual([{ day: '2026-10-20' }]);
     });
   });
 
@@ -480,27 +570,39 @@ describe('POST /v1/search', () => {
       expect(ceiling(t)).toBe(1);
     });
 
-    it('all fail together, and each account gets its own analysis back', async () => {
-      const t = setup();
-      const ann = await person(t, 'ann@example.com');
-      const bob = await person(t, 'bob@example.com');
-      let answer!: (result: WebDetectResult) => void;
-      t.google.detect = () => new Promise((resolve) => (answer = resolve));
+    it.each([
+      ['an unbilled refusal', { ok: false, reason: 'invalid', refundable: true }, 0, 15],
+      [
+        'a call that may have been billed',
+        { ok: false, reason: 'network', refundable: false },
+        1,
+        14,
+      ],
+    ] as const)(
+      'all fail together on %s, and each account is refunded or not alike',
+      async (_name, failure, rows, trial) => {
+        const t = setup();
+        const ann = await person(t, 'ann@example.com');
+        const bob = await person(t, 'bob@example.com');
+        let answer!: (result: WebDetectResult) => void;
+        t.google.detect = () => new Promise((resolve) => (answer = resolve));
+        captureErrors();
 
-      const first = search(t, ann);
-      await vi.waitFor(() => expect(t.google.detections).toHaveLength(1));
-      const second = search(t, bob);
-      await vi.waitFor(() => expect(usageRows(t, bob)).toBe(1));
-      answer({ ok: false, reason: 'network', refundable: false });
+        const first = search(t, ann);
+        await vi.waitFor(() => expect(t.google.detections).toHaveLength(1));
+        const second = search(t, bob);
+        await vi.waitFor(() => expect(usageRows(t, bob)).toBe(1));
+        answer(failure);
 
-      const [one, two] = await Promise.all([first, second]);
-      expect(one.status).toBe(502);
-      expect(two.status).toBe(502);
-      expect(usageRows(t, ann)).toBe(0);
-      expect(usageRows(t, bob)).toBe(0);
-      expect(trialLeft(t, ann)).toBe(15);
-      expect(trialLeft(t, bob)).toBe(15);
-    });
+        const [one, two] = await Promise.all([first, second]);
+        expect(one.status).toBe(502);
+        expect(two.status).toBe(502);
+        expect(usageRows(t, ann)).toBe(rows);
+        expect(usageRows(t, bob)).toBe(rows);
+        expect(trialLeft(t, ann)).toBe(trial);
+        expect(trialLeft(t, bob)).toBe(trial);
+      },
+    );
 
     it('lets the next search try again once the failed one is over', async () => {
       const t = setup();
@@ -710,20 +812,37 @@ describe('POST /v1/review', () => {
     const bob = await searched(t, 'bob@example.com');
 
     const first = await review(t, ann);
-    const second = await review(t, bob, reviewInput({ description: 'A completely other text' }));
+    const second = await review(t, bob);
     expect(await second.json()).toEqual(await first.json());
-    // The description is not part of the key (as in the extension), so Bob's review is a hit.
     expect(t.google.reviews).toHaveLength(1);
     expect(reviewsCounted(t, bob)).toBe(1);
   });
 
-  it('reviews again when what was asked changed: the price, the title, the fingerprint', async () => {
+  it('does not share a review with an account whose description differs', async () => {
+    const t = setup();
+    const ann = await searched(t, 'ann@example.com');
+    const bob = await searched(t, 'bob@example.com');
+
+    await review(t, ann);
+    const other = await review(t, bob, reviewInput({ description: 'A completely other text' }));
+
+    expect(other.status).toBe(200);
+    expect(t.google.reviews).toHaveLength(2);
+    expect(t.google.reviews[1]?.input.description).toBe('A completely other text');
+    // The same description again, from either account, is a hit.
+    await review(t, ann);
+    await review(t, bob, reviewInput({ description: 'A completely other text' }));
+    expect(t.google.reviews).toHaveLength(2);
+  });
+
+  it('reviews again when what was asked changed: the price, the title, the fingerprint, the description', async () => {
     const t = setup();
     const ann = await searched(t);
 
     await review(t, ann);
     await review(t, ann, reviewInput({ price: '30,00 €' }));
-    expect(t.google.reviews).toHaveLength(2);
+    await review(t, ann, reviewInput({ title: 'Robe bleue' }));
+    expect(t.google.reviews).toHaveLength(3);
   });
 
   it('shares one Gemini call between concurrent reviews', async () => {
@@ -755,8 +874,8 @@ describe('POST /v1/review', () => {
     expect(sent?.description).toHaveLength(1_500);
   });
 
-  describe('a failure costs the account nothing', () => {
-    it('gives the review back when Gemini fails', async () => {
+  describe('a failure counts against the account only when Google may have billed', () => {
+    it('keeps the review counted when Gemini fails after the call was made (network)', async () => {
       const t = setup();
       const ann = await searched(t);
       t.google.review = async () => ({ ok: false, reason: 'network', refundable: false });
@@ -764,14 +883,15 @@ describe('POST /v1/review', () => {
       const response = await review(t, ann);
       expect(response.status).toBe(502);
       expect(await response.json()).toEqual({ error: 'upstream', reason: 'network' });
-      expect(reviewsCounted(t, ann)).toBe(0);
+      expect(reviewsCounted(t, ann)).toBe(1);
+      expect(geminiCeiling(t)).toBe(1);
 
-      // Three tries that failed leave the three that count.
-      t.google.review = async () => REVIEW;
-      for (let i = 0; i < 3; i++) expect((await review(t, ann)).status).toBe(200);
+      // Three tries that failed use the three there are.
+      for (let i = 0; i < 2; i++) await review(t, ann);
+      expect((await review(t, ann)).status).toBe(403);
     });
 
-    it('gives the review back for an answer that cannot be used', async () => {
+    it('keeps the review counted for an answer that cannot be used (Google billed it)', async () => {
       const t = setup();
       const ann = await searched(t);
       t.google.review = async () => ({ ok: false, reason: 'invalid_answer', refundable: false });
@@ -779,10 +899,11 @@ describe('POST /v1/review', () => {
       const response = await review(t, ann);
       expect(response.status).toBe(502);
       expect(await response.json()).toEqual({ error: 'upstream', reason: 'invalid_answer' });
-      expect(reviewsCounted(t, ann)).toBe(0);
+      expect(reviewsCounted(t, ann)).toBe(1);
+      expect(geminiCeiling(t)).toBe(1);
     });
 
-    it('reads a Gemini call that throws as a network failure', async () => {
+    it('reads a Gemini call that throws as a network failure, which may have been billed', async () => {
       const t = setup();
       const ann = await searched(t);
       t.google.review = async () => {
@@ -790,10 +911,10 @@ describe('POST /v1/review', () => {
       };
 
       expect(await (await review(t, ann)).json()).toEqual({ error: 'upstream', reason: 'network' });
-      expect(reviewsCounted(t, ann)).toBe(0);
+      expect(reviewsCounted(t, ann)).toBe(1);
     });
 
-    it('gives the review back when the photo cannot be downloaded', async () => {
+    it('gives the review and the ceiling call back when the photo cannot be downloaded', async () => {
       const t = setup();
       const ann = await searched(t);
       t.google.photoAnswer = () => new Response('gone', { status: 404 });
@@ -801,9 +922,10 @@ describe('POST /v1/review', () => {
       expect(await (await review(t, ann)).json()).toEqual({ error: 'upstream', reason: 'photo' });
       expect(t.google.reviews).toHaveLength(0);
       expect(reviewsCounted(t, ann)).toBe(0);
+      expect(geminiCeiling(t)).toBe(0);
     });
 
-    it('answers 502 `unavailable` and logs loudly when Google refuses the owner key', async () => {
+    it('answers 502 `unavailable` and logs loudly when Google refuses the owner key, refunding all', async () => {
       const t = setup();
       const ann = await searched(t);
       t.google.review = async () => ({ ok: false, reason: 'disabled', refundable: true });
@@ -813,6 +935,7 @@ describe('POST /v1/review', () => {
       expect(response.status).toBe(502);
       expect(await response.json()).toEqual({ error: 'upstream', reason: 'unavailable' });
       expect(reviewsCounted(t, ann)).toBe(0);
+      expect(geminiCeiling(t)).toBe(0);
       expect(log).toHaveBeenCalledTimes(1);
       const line = String(log.mock.calls[0]?.[0]);
       expect(line).toContain('OWNER KEY PROBLEM');
@@ -820,6 +943,69 @@ describe('POST /v1/review', () => {
       for (const secret of [ann.email, ann.token, GEMINI_KEY, PHOTO]) {
         expect(line).not.toContain(secret);
       }
+    });
+
+    it('lets concurrent reviews fail alike: counted when billed, refunded when not', async () => {
+      const t = setup();
+      const ann = await searched(t, 'ann@example.com');
+      const bob = await searched(t, 'bob@example.com');
+      let answer!: (result: ReviewResult) => void;
+      t.google.review = () => new Promise((resolve) => (answer = resolve));
+
+      const first = review(t, ann);
+      await vi.waitFor(() => expect(t.google.reviews).toHaveLength(1));
+      const second = review(t, bob);
+      await vi.waitFor(() => expect(reviewsCounted(t, bob)).toBe(1));
+      answer({ ok: false, reason: 'network', refundable: false });
+
+      expect((await first).status).toBe(502);
+      expect((await second).status).toBe(502);
+      expect(reviewsCounted(t, ann)).toBe(1);
+      expect(reviewsCounted(t, bob)).toBe(1);
+    });
+  });
+
+  describe('the global daily ceiling', () => {
+    it('is 5000 a day unless the environment says otherwise', () => {
+      expect(testConfig().globalDailyGeminiCap).toBe(5000);
+    });
+
+    it('answers 503 `capacity` once the day is full, and the review is not counted', async () => {
+      const t = setup({ globalDailyGeminiCap: 1 });
+      const ann = await searched(t, 'ann@example.com');
+      const bob = await searched(t, 'bob@example.com');
+      expect((await review(t, ann)).status).toBe(200);
+
+      const response = await review(t, bob, reviewInput({ price: '99,00 €' }));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: 'capacity' });
+      expect(reviewsCounted(t, bob)).toBe(0);
+      expect(t.google.reviews).toHaveLength(1);
+      expect(geminiCeiling(t)).toBe(1);
+    });
+
+    it('does not count the answers of the cache, which cost nothing', async () => {
+      const t = setup({ globalDailyGeminiCap: 1 });
+      const ann = await searched(t, 'ann@example.com');
+      const bob = await searched(t, 'bob@example.com');
+      await review(t, ann);
+
+      expect((await review(t, bob)).status).toBe(200);
+      expect(geminiCeiling(t)).toBe(1);
+    });
+
+    it('counts its own table, apart from the Vision ceiling, on the Pacific day', async () => {
+      const t = setup({ globalDailyGeminiCap: 1, globalDailyVisionCap: 1 });
+      t.clock.set('2026-10-20T06:59:00Z');
+      const ann = await searched(t, 'ann@example.com');
+      expect(visionCallsOn(t.db, '2026-10-19')).toBe(1);
+      expect((await review(t, ann)).status).toBe(200);
+      expect(geminiCallsOn(t.db, '2026-10-19')).toBe(1);
+      expect((await review(t, ann, reviewInput({ price: '1,00 €' }))).status).toBe(503);
+
+      t.clock.advance(60_000);
+      expect((await review(t, ann, reviewInput({ price: '1,00 €' }))).status).toBe(200);
+      expect(geminiCallsOn(t.db, '2026-10-20')).toBe(1);
     });
   });
 
