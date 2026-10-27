@@ -19,12 +19,37 @@ if (!existsSync(join(source, 'manifest.json'))) {
   fail(`no Safari build in ${relative(root, source)}. Run "npm run build:safari" first.`);
 }
 
+if (!existsSync(project)) {
+  fail(
+    `Xcode project not found: ${relative(root, project)}. See README.md ("Régénérer le projet Xcode").`,
+  );
+}
+const pbxproj = readFileSync(project, 'utf8');
+
+// The converter targets the macOS of the machine that ran it (27.0 today), which would stop the
+// app from launching on any older macOS: every deployment target must stay at the supported one.
+const MIN_MACOS = [13, 0];
+const tooHigh = new Set();
+for (const match of pbxproj.matchAll(/MACOSX_DEPLOYMENT_TARGET = ([\d.]+);/g)) {
+  const [major = 0, minor = 0] = match[1].split('.').map(Number);
+  if (major > MIN_MACOS[0] || (major === MIN_MACOS[0] && minor > MIN_MACOS[1])) {
+    tooHigh.add(match[1]);
+  }
+}
+if (tooHigh.size > 0) {
+  fail(
+    `le projet Xcode cible macOS ${[...tooHigh].join(', ')} : remets MACOSX_DEPLOYMENT_TARGET à ` +
+      `${MIN_MACOS.join('.')} partout dans ${relative(root, project)} (projet et cibles), sinon ` +
+      "l'application ne se lance pas sur un macOS plus ancien.",
+  );
+}
+
 // The converter lists every top-level entry of the extension in the project (files one by one,
 // folders as folder references), so the project only knows the entries that existed when it was
 // generated. Content inside a folder (hashed chunk names...) is free to change.
 const referenced = new Map();
-for (const match of readFileSync(project, 'utf8').matchAll(
-  /lastKnownFileType = (\S+); name = [^;]+; path = "?Resources\/([^";]+)"?;/g,
+for (const match of pbxproj.matchAll(
+  /lastKnownFileType = (\S+);(?: name = [^;]+;)? path = "?Resources\/([^";]+)"?;/g,
 )) {
   referenced.set(match[2], match[1] === 'folder');
 }
@@ -49,12 +74,16 @@ if (unknown.length > 0 || missingFiles.length > 0) {
   );
 }
 
-rmSync(target, { recursive: true, force: true });
-mkdirSync(target, { recursive: true });
-cpSync(source, target, { recursive: true });
-// A folder the project references but this build does not produce (no shared chunk, say) must
-// still exist, or Xcode stops on a missing reference.
-for (const [name, isFolder] of referenced) {
-  if (isFolder) mkdirSync(join(target, name), { recursive: true });
+try {
+  rmSync(target, { recursive: true, force: true });
+  mkdirSync(target, { recursive: true });
+  cpSync(source, target, { recursive: true });
+  // A folder the project references but this build does not produce (no shared chunk, say) must
+  // still exist, or Xcode stops on a missing reference.
+  for (const [name, isFolder] of referenced) {
+    if (isFolder) mkdirSync(join(target, name), { recursive: true });
+  }
+} catch (error) {
+  fail(`could not copy the build into ${relative(root, target)}: ${error.message}`);
 }
 console.log(`safari:sync: ${relative(root, source)} -> ${relative(root, target)}`);

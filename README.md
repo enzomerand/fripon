@@ -27,7 +27,7 @@ Le projet Xcode est déjà dans `safari/`. Il n’y a pas de compte Apple Develo
 compilation est signée « ad hoc » (sans identité) et Safari doit être autorisé à charger des
 extensions non signées. Seul macOS est géré (pas iPhone ni iPad).
 
-Prérequis : macOS, Xcode (avec ses outils en ligne de commande) et Node.js.
+Prérequis : macOS 13 ou plus récent, Xcode (avec ses outils en ligne de commande) et Node.js.
 
 1. Compiler l’application :
 
@@ -81,6 +81,11 @@ xcrun safari-web-extension-converter .output/safari-mv3 --project-location safar
 
 Le convertisseur réécrit aussi l’application conteneur (textes en français, en-têtes Swift) : avec
 `git diff`, garder le nouveau `project.pbxproj` et rétablir le reste (`git checkout -- <fichier>`).
+
+Le convertisseur vise aussi le macOS de la machine qui l’a lancé (27.0 par exemple), ce qui
+empêcherait l’application de démarrer sur un macOS plus ancien : dans le nouveau `project.pbxproj`,
+remettre toutes les lignes `MACOSX_DEPLOYMENT_TARGET` à `13.0` (projet et deux cibles).
+`npm run safari:sync` refuse de continuer tant qu’une de ces lignes dépasse 13.0.
 
 ## Licence
 
