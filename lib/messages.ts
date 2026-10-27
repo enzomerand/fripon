@@ -88,8 +88,12 @@ export type AiReviewResponse =
   | { status: 'quota'; source?: 'cloud' }
   /** Only for `cacheOnly`: this listing was not reviewed in the last 7 days. */
   | { status: 'not_cached' }
-  /** The review did not complete; the credit was only given back when Google certainly did not bill it. */
-  | { status: 'error'; reason: GeminiFailure };
+  /**
+   * The review did not complete; the credit was only given back when Google certainly did not bill
+   * it. `review_limit`: the subscription's server refused it, the account has had its 3 reviews of
+   * this photo this month (asking again changes nothing until the next month).
+   */
+  | { status: 'error'; reason: GeminiFailure | 'review_limit' };
 
 /**
  * Ask whether the paid steps may run. The keys stay in the background: a content script only ever

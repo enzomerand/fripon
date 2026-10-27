@@ -7,8 +7,10 @@ import { ACTIVE_STATUSES, PLANS } from '../plans';
 import {
   createPriceResolver,
   isCustomerMissing,
+  isMissing,
   type StripeApi,
   type StripeEvent,
+  type StripeSubscription,
 } from '../stripe';
 import { createSubscriptionSync } from '../subscription-sync';
 
@@ -64,9 +66,16 @@ const isActive = (status: string | null): boolean =>
  * What a customer's subscription must not be for a new Checkout: Stripe has it charging the
  * customer, whatever the local row says (it only moves when a webhook arrives). `incomplete` (the
  * first payment never went through, Stripe lets it expire in 23 hours) does not block: the
- * customer must be able to try again, and the abandoned attempt costs nothing.
+ * customer must be able to try again. It is cancelled instead (`cancelAbandoned`), or it could
+ * still be paid later and bill the customer a second time.
  */
 const BLOCKS_CHECKOUT: readonly string[] = ['active', 'trialing', 'past_due'];
+
+/**
+ * What stops the deletion of an account: the same, and `incomplete` too, a payment that may still
+ * go through after the account (and the only way to cancel it) is gone.
+ */
+const BLOCKS_DELETION: readonly string[] = [...BLOCKS_CHECKOUT, 'incomplete'];
 
 /** How many of a customer's subscriptions are read to look for a live one. */
 const SUBSCRIPTIONS_READ = 100;
@@ -172,6 +181,40 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
       return session.url;
     }
 
+    /** A customer's subscriptions at Stripe, the canceled ones left out. */
+    async function subscriptionsOf(customer: string): Promise<StripeSubscription[]> {
+      const { data } = await stripe.subscriptions.list({ customer, limit: SUBSCRIPTIONS_READ });
+      return data;
+    }
+
+    /**
+     * Stripe has a live subscription the row does not know (a lost webhook): store it, so the
+     * account gets its plan now and not at the next event. A failure only means a later event or
+     * resync stores it.
+     */
+    async function storeLive(live: StripeSubscription): Promise<void> {
+      try {
+        await sync.syncSubscription(live.id);
+      } catch (error) {
+        console.error(
+          `[stripe] the live subscription ${live.id} could not be stored:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+
+    /** Ends the abandoned first payments of a customer; one Stripe no longer has is already gone. */
+    async function cancelAbandoned(subscriptions: StripeSubscription[]): Promise<void> {
+      for (const abandoned of subscriptions) {
+        if (abandoned.status !== 'incomplete') continue;
+        try {
+          await stripe.subscriptions.cancel(abandoned.id);
+        } catch (error) {
+          if (!isMissing(error)) throw error;
+        }
+      }
+    }
+
     async function checkoutUrl(
       account: Account,
       price: string,
@@ -184,24 +227,17 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
       // The local status is only as fresh as the last webhook: two Checkouts opened before the
       // first one's event arrived would make two paid subscriptions. Stripe is asked instead.
       if (account.stripe_customer_id !== null) {
-        const { data } = await stripe.subscriptions.list({
-          customer: account.stripe_customer_id,
-          limit: SUBSCRIPTIONS_READ,
-        });
-        const live = data.find((subscription) => BLOCKS_CHECKOUT.includes(subscription.status));
+        const subscriptions = await subscriptionsOf(account.stripe_customer_id);
+        const live = subscriptions.find((subscription) =>
+          BLOCKS_CHECKOUT.includes(subscription.status),
+        );
         if (live) {
-          // Stripe has a live subscription the row does not know (a lost webhook): store it, so
-          // the account gets its plan now and not at the next event.
-          try {
-            await sync.syncSubscription(live.id);
-          } catch (error) {
-            console.error(
-              `[stripe] the live subscription ${live.id} could not be stored:`,
-              error instanceof Error ? error.message : error,
-            );
-          }
+          await storeLive(live);
           return portalUrl(account.stripe_customer_id);
         }
+        // A first payment left unfinished is not a subscription, but it is not dead either: it
+        // must not be payable later, next to the one about to be bought.
+        await cancelAbandoned(subscriptions);
       }
 
       const customer = await customerOf(account, replaced);
@@ -269,6 +305,24 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
     // The lazy resync (`/v1/me`, `/v1/search`, `DELETE /v1/account`) shares this very instance:
     // its per-subscription ordering and its once-per-10-minutes memory are in it.
     ctx.subscriptions.refresh = (account) => sync.refresh(account);
+    ctx.subscriptions.hasLiveSubscription = async (account) => {
+      const customer = account.stripe_customer_id;
+      if (customer === null) return false;
+      let subscriptions: StripeSubscription[];
+      try {
+        subscriptions = await subscriptionsOf(customer);
+      } catch (error) {
+        // A customer Stripe does not know bills nobody.
+        if (isCustomerMissing(error)) return false;
+        throw error;
+      }
+      const live = subscriptions.find((subscription) =>
+        BLOCKS_DELETION.includes(subscription.status),
+      );
+      if (!live) return false;
+      await storeLive(live);
+      return true;
+    };
     const wasHandled = ctx.db.prepare('SELECT 1 FROM stripe_events WHERE id = ?');
     const recordEvent = ctx.db.prepare(
       'INSERT OR IGNORE INTO stripe_events (id, received_at) VALUES (?, ?)',

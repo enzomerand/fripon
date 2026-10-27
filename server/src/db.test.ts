@@ -4,7 +4,10 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { migrate, openDb, type Db } from './db';
+import { trialClaimKey } from './email';
 import { insertAccount } from './test-helpers';
+
+const SECRET = 'test-secret';
 
 const open: Db[] = [];
 const dirs: string[] = [];
@@ -40,6 +43,7 @@ describe('openDb', () => {
       'sessions',
       'signups',
       'stripe_events',
+      'trial_claims',
       'usage',
       'vision_calls',
     ]);
@@ -115,7 +119,7 @@ describe('schema', () => {
     insert.run('a', 'Jo.Doe+x@googlemail.com', 7);
     insert.run('b', 'plain@example.com', 15);
 
-    migrate(raw);
+    migrate(raw, undefined, SECRET);
 
     expect(
       raw.prepare('SELECT id, email, trial_left, canonical_email FROM accounts ORDER BY id').all(),
@@ -160,7 +164,7 @@ describe('schema', () => {
     raw.prepare('INSERT INTO login_failures (email, at) VALUES (?, ?)').run('a@b.c', 5);
     raw.prepare("INSERT INTO vision_calls (day, count) VALUES ('2026-10-20', 7)").run();
 
-    migrate(raw);
+    migrate(raw, undefined, SECRET);
 
     // The two sizes of one photo are one counter now, in the month of the last review.
     expect(raw.prepare('SELECT photo_key, month, count FROM reviews').all()).toEqual([
@@ -178,6 +182,54 @@ describe('schema', () => {
     expect(raw.prepare('SELECT count, trial_count FROM vision_calls').all()).toEqual([
       { count: 7, trial_count: 0 },
     ]);
+    raw.close();
+  });
+
+  it('upgrades the database of the third release: every account gets its trial claim, keyed, one per mailbox, no address kept', () => {
+    const raw = new Database(':memory:');
+    migrate(raw, 3);
+    expect(raw.pragma('user_version', { simple: true })).toBe(3);
+    const insert = raw.prepare(
+      'INSERT INTO accounts (id, email, created_at, trial_left, canonical_email) VALUES (?, ?, ?, 0, ?)',
+    );
+    insert.run('a', 'jo.doe@gmail.com', 50, 'jodoe@gmail.com');
+    insert.run('b', 'jodoe+x@gmail.com', 20, 'jodoe@gmail.com');
+    insert.run('c', 'plain@example.com', 30, 'plain@example.com');
+
+    migrate(raw, undefined, SECRET);
+
+    expect(raw.pragma('user_version', { simple: true })).toBe(4);
+    expect(
+      raw.prepare('SELECT key, created_at FROM trial_claims ORDER BY created_at').all(),
+    ).toEqual([
+      { key: trialClaimKey(SECRET, 'jodoe@gmail.com'), created_at: 20 },
+      { key: trialClaimKey(SECRET, 'plain@example.com'), created_at: 30 },
+    ]);
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM accounts').get()).toEqual({ n: 3 });
+    raw.close();
+  });
+
+  it('refuses to upgrade a database that has accounts without AUTH_SECRET, and changes nothing', () => {
+    const raw = new Database(':memory:');
+    migrate(raw, 3);
+    raw
+      .prepare(
+        "INSERT INTO accounts (id, email, created_at, canonical_email) VALUES ('a', 'a@b.c', 1, 'a@b.c')",
+      )
+      .run();
+
+    expect(() => migrate(raw)).toThrow(/AUTH_SECRET/);
+    expect(raw.pragma('user_version', { simple: true })).toBe(3);
+    expect(
+      raw.prepare("SELECT name FROM sqlite_master WHERE name = 'trial_claims'").all(),
+    ).toHaveLength(0);
+    raw.close();
+  });
+
+  it('upgrades an empty database without AUTH_SECRET: there is nothing to claim', () => {
+    const raw = new Database(':memory:');
+    migrate(raw);
+    expect(raw.pragma('user_version', { simple: true })).toBe(4);
     raw.close();
   });
 

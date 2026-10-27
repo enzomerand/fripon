@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
-import { canonicalEmail } from './email';
+import { canonicalEmail, trialClaimKey } from './email';
 import { dropSizeSegment } from './photo-key';
 import { periodIds } from './time';
 
@@ -31,8 +31,12 @@ export interface Account {
   canonical_email: string;
 }
 
-/** A migration: SQL, or a function when it also has to compute (a backfill). */
-type Migration = string | ((db: Db) => void);
+/**
+ * A migration: SQL, or a function when it also has to compute (a backfill). A function also gets
+ * `AUTH_SECRET` (null when the caller has none): a backfill of hashes keyed by it cannot be done
+ * without it, and must refuse to run rather than skip.
+ */
+type Migration = string | ((db: Db, authSecret: string | null) => void);
 
 /**
  * The schema, one entry per version: `PRAGMA user_version` holds how many have run. Never edit an
@@ -206,27 +210,66 @@ const MIGRATIONS: Migration[] = [
       if (key !== row.photo_key) rekey.run(key, row.id);
     }
   },
+  (db, authSecret) => {
+    db.exec(`
+    -- Mailboxes that had their free trial, by a keyed hash of the canonical address (never the
+    -- address): it outlives the account, so that deleting it and signing up again gives no second
+    -- trial. Purged after 12 months by the hourly maintenance.
+    CREATE TABLE trial_claims (
+      key TEXT PRIMARY KEY,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX trial_claims_by_date ON trial_claims (created_at);
+    `);
+
+    // Every account that exists has had its trial (or was refused one): it is claimed too.
+    const accounts = db
+      .prepare(
+        `SELECT canonical_email, MIN(created_at) AS created_at FROM accounts
+         WHERE canonical_email != '' GROUP BY canonical_email`,
+      )
+      .all() as { canonical_email: string; created_at: number }[];
+    if (accounts.length === 0) return;
+    if (authSecret === null) {
+      throw new Error(
+        'AUTH_SECRET is needed to migrate the database: the trial claims of the existing accounts are keyed by it',
+      );
+    }
+    const claim = db.prepare('INSERT OR IGNORE INTO trial_claims (key, created_at) VALUES (?, ?)');
+    for (const row of accounts) {
+      claim.run(trialClaimKey(authSecret, row.canonical_email), row.created_at);
+    }
+  },
 ];
 
 /**
  * Brings the schema up to date; safe to call on every start. `upTo` stops at an older version, so a
- * test can build the database of an earlier release, fill it, and upgrade it.
+ * test can build the database of an earlier release, fill it, and upgrade it. `authSecret` is
+ * `AUTH_SECRET`, for the migrations that fill in hashes keyed by it (they throw without it when
+ * there is something to fill in).
  */
-export function migrate(db: Db, upTo: number = MIGRATIONS.length): void {
+export function migrate(
+  db: Db,
+  upTo: number = MIGRATIONS.length,
+  authSecret: string | null = null,
+): void {
   const current = Number(db.pragma('user_version', { simple: true }));
   for (let version = current; version < Math.min(upTo, MIGRATIONS.length); version++) {
     const migration = MIGRATIONS[version] as Migration;
     db.transaction(() => {
       if (typeof migration === 'string') db.exec(migration);
-      else migration(db);
+      else migration(db, authSecret);
       // PRAGMA takes no bound parameter: `version` is a loop counter, never user input.
       db.pragma(`user_version = ${version + 1}`);
     })();
   }
 }
 
-/** Opens the database (a file, or `:memory:` in tests) and brings its schema up to date. */
-export function openDb(path: string): Db {
+/**
+ * Opens the database (a file, or `:memory:` in tests) and brings its schema up to date.
+ * `authSecret` (`AUTH_SECRET`) is only read by the migrations that need it.
+ */
+export function openDb(path: string, authSecret: string | null = null): Db {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
@@ -234,7 +277,7 @@ export function openDb(path: string): Db {
   // Another connection holding a write lock makes this one wait instead of failing at once.
   db.pragma('busy_timeout = 5000');
   db.pragma('synchronous = NORMAL');
-  migrate(db);
+  migrate(db, MIGRATIONS.length, authSecret);
   return db;
 }
 

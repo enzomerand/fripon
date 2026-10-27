@@ -19,7 +19,7 @@ if (config.production && !config.trustProxy) {
       'X-Forwarded-For. That is only right when no reverse proxy is in front of the server.',
   );
 }
-const db = openDb(config.databasePath);
+const db = openDb(config.databasePath, config.authSecret);
 const now = () => new Date();
 
 const app = createApp({ db, mailer: createMailer(config), config, now }, [

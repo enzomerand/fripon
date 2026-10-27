@@ -12,7 +12,7 @@ import { createSubscriptionSync } from '../src/subscription-sync';
 
 try {
   const config = loadConfig();
-  const db = openDb(config.databasePath);
+  const db = openDb(config.databasePath, config.authSecret);
   const sync = createSubscriptionSync({
     stripe: realStripe(config.stripeSecretKey),
     db,

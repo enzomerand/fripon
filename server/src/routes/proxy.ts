@@ -44,9 +44,9 @@ const unbranded = (prefix: string) => prefix.replace(/^fripon:/, '');
 export const VISION_SERVER_CACHE_TTL_MS = 35 * 24 * 60 * 60 * 1000;
 
 /**
- * How long a failure Google will repeat is remembered: a photo it billed and could not read, or a
- * review whose answer nobody could use. The same request is then answered from here, without a
- * second paid call: this memory, not the account's charge (it goes back), is what protects the bill.
+ * How long a failure Google will repeat is remembered: a photo it billed and could not read. The
+ * same request is then answered from here, without a second paid call: this memory, not the
+ * account's charge (it goes back), is what protects the bill.
  */
 export const NEGATIVE_CACHE_TTL_MS = 60 * 60 * 1000;
 
@@ -79,16 +79,19 @@ export const reviewKey = (photo: string, input: AiReviewInput) =>
 /** Where the memory of a failure of `key` is kept. */
 const negativeKey = (key: string) => `neg:${key}`;
 
-/** A failure Google repeats for the same input: the photo it could not read, an answer nobody can use. */
+/**
+ * A failure Google repeats for the same input: the photo it could not read. Never an answer
+ * nobody can use (`invalid_answer`): a model's output varies from one call to the next, so the
+ * same review may well work the second time, and what bounds its cost is the account's 3 reviews
+ * of the photo a month, which a failure of that kind keeps counted.
+ */
 function isDeterministic(reason: GeminiFailure): boolean {
-  return reason === 'photo' || reason === 'invalid_answer';
+  return reason === 'photo';
 }
 
 /** What is read back of a remembered failure. */
 function parseNegative(raw: unknown): { reason: UpstreamReason } | null {
-  return isRecord(raw) && (raw.reason === 'photo' || raw.reason === 'invalid_answer')
-    ? { reason: raw.reason }
-    : null;
+  return isRecord(raw) && raw.reason === 'photo' ? { reason: raw.reason } : null;
 }
 
 /** The same owner problem is logged once a minute at most, so a revoked key cannot flood the log. */
@@ -452,7 +455,9 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
       if (!outcome.ok) {
         if (outcome.error === 'capacity') return c.json({ error: 'capacity' }, 503);
         if (outcome.error === 'internal') return c.json({ error: 'internal' }, 500);
-        if (outcome.error === 'limit') return c.json({ error: 'not_searched' }, 403);
+        // The month's 3 reviews of this photo are used: not the same thing as a photo never
+        // searched, which the extension answers by searching it (and would only repeat here).
+        if (outcome.error === 'limit') return c.json({ error: 'review_limit' }, 403);
         return c.json({ error: 'upstream', reason: outcome.reason }, 502);
       }
       return c.json({ review: outcome.review });

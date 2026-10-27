@@ -18,7 +18,7 @@ import { sendMessage } from '../../lib/messages';
  */
 export const CLOUD_PRIVACY: readonly string[] = [
   "Avec l'abonnement, l'adresse de la photo, le titre, la description, le prix et les indices calculés par Fripon sont envoyés au serveur de Fripon, qui appelle Google avec sa propre clé payante (Google ne les utilise pas pour améliorer ses produits).",
-  "Le serveur garde ton adresse e-mail, l'état de ton abonnement et la liste des photos analysées (2 mois au plus). Les résultats d'une recherche de photo sont gardés 35 jours, ceux d'un avis de l'IA 7 jours. Les adresses IP ne sont gardées que sous forme d'empreinte (hash), pour limiter les abus.",
+  "Le serveur garde ton adresse e-mail, l'état de ton abonnement et la liste des photos analysées (2 mois au plus). Les résultats d'une recherche de photo sont gardés 35 jours, ceux d'un avis de l'IA 7 jours. Ton adresse IP, tronquée, reste 7 jours dans les journaux du serveur web, et l'application n'en garde qu'une empreinte (hash) pendant 24 h, pour limiter les abus. Une empreinte de ton adresse e-mail est gardée 12 mois, même si tu supprimes ton compte, pour qu'un essai gratuit ne serve qu'une fois.",
   "Fripon s'appuie sur Google (l'analyse), Stripe (le paiement), un service d'envoi d'e-mails (les codes de connexion) et un hébergeur.",
   'Tu peux supprimer ton compte et son historique depuis cette page.',
 ];
@@ -530,6 +530,11 @@ export function CloudSection({
 }) {
   // Only for this visit: a deleted account leaves nothing to remember it by.
   const [deleted, setDeleted] = useState(false);
+  // The notice is about the account that was just deleted: a new sign-in ends it, so that signing
+  // out later does not say the account was deleted again.
+  useEffect(() => {
+    if (status) setDeleted(false);
+  }, [status]);
   return (
     <section class="card" id="cloud" aria-labelledby="cloud-title">
       <h2 id="cloud-title">Abonnement Fripon</h2>

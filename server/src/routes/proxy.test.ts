@@ -855,14 +855,16 @@ describe('POST /v1/review', () => {
     expect((await review(t, bob)).status).toBe(403);
   });
 
-  it('answers 403 once the search is more than 7 days old', async () => {
+  it('answers 403 `not_searched` once the search is more than 7 days old', async () => {
     const t = setup();
     const ann = await searched(t);
     t.clock.advance(7 * 24 * 60 * 60 * 1000 + 1);
-    expect((await review(t, ann)).status).toBe(403);
+    const response = await review(t, ann);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'not_searched' });
   });
 
-  it('answers 403 after 3 reviews of the same photo that went to Gemini this month, and still serves the ones the cache holds', async () => {
+  it('answers 403 `review_limit` (not `not_searched`) after 3 reviews of the same photo that went to Gemini this month, and still serves the ones the cache holds', async () => {
     const t = setup();
     const ann = await searched(t);
     const ask = (n: number) => review(t, ann, reviewInput({ title: `Robe ${n}` }));
@@ -870,7 +872,7 @@ describe('POST /v1/review', () => {
     for (let n = 1; n <= 3; n++) expect((await ask(n)).status).toBe(200);
     const response = await ask(4);
     expect(response.status).toBe(403);
-    expect(await response.json()).toEqual({ error: 'not_searched' });
+    expect(await response.json()).toEqual({ error: 'review_limit' });
     expect(t.google.reviews).toHaveLength(3);
     expect(geminiCeiling(t)).toBe(3);
 
@@ -999,7 +1001,7 @@ describe('POST /v1/review', () => {
       expect((await review(t, ann)).status).toBe(403);
     });
 
-    it('gives the review back for an answer nobody can use (Google billed it, the ceiling keeps the call)', async () => {
+    it('keeps the review counted for an answer nobody can use (Google billed it, and it is not remembered: the count is what bounds the cost)', async () => {
       const t = setup();
       const ann = await searched(t);
       t.google.review = async () => ({ ok: false, reason: 'invalid_answer', refundable: false });
@@ -1007,7 +1009,7 @@ describe('POST /v1/review', () => {
       const response = await review(t, ann);
       expect(response.status).toBe(502);
       expect(await response.json()).toEqual({ error: 'upstream', reason: 'invalid_answer' });
-      expect(reviewsCounted(t, ann)).toBe(0);
+      expect(reviewsCounted(t, ann)).toBe(1);
       expect(geminiCeiling(t)).toBe(1);
     });
 
@@ -1280,34 +1282,52 @@ describe('a failure Google would repeat is paid once an hour', () => {
     expect(t.google.detections).toHaveLength(2);
   });
 
-  it('Gemini: an answer nobody can use is remembered for the same review, which then costs no call and no count', async () => {
+  it('Gemini: an answer nobody can use is not remembered: the same review asks Gemini again, counts each time, and the 4th is refused by the monthly limit', async () => {
     const t = setup();
     t.google.review = async () => ({ ok: false, reason: 'invalid_answer', refundable: false });
     const ann = await searched(t, 'ann@example.com');
-    const bob = await searched(t, 'bob@example.com');
 
-    const first = await review(t, ann);
-    const second = await review(t, bob);
-    const third = await review(t, ann);
-
-    for (const response of [first, second, third]) {
+    for (let n = 1; n <= 3; n++) {
+      const response = await review(t, ann);
       expect(response.status).toBe(502);
       expect(await response.json()).toEqual({ error: 'upstream', reason: 'invalid_answer' });
+      expect(t.google.reviews).toHaveLength(n);
+      expect(reviewsCounted(t, ann)).toBe(n);
+    }
+    const refused = await review(t, ann);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: 'review_limit' });
+    expect(t.google.reviews).toHaveLength(3);
+    expect(geminiCeiling(t)).toBe(3);
+
+    // The model has a better moment: the same review works, with nothing remembered in the way.
+    t.clock.advance(NEGATIVE_CACHE_TTL_MS);
+    t.google.review = async () => REVIEW;
+    const bob = await searched(t, 'bob@example.com');
+    expect((await review(t, bob)).status).toBe(200);
+  });
+
+  it('Gemini: a photo it cannot read is remembered for the same review (it would fail again), which then costs no call and no count', async () => {
+    const t = setup();
+    t.google.review = async () => ({ ok: false, reason: 'photo', refundable: false });
+    const ann = await searched(t, 'ann@example.com');
+    const bob = await searched(t, 'bob@example.com');
+
+    for (const who of [ann, bob, ann]) {
+      const response = await review(t, who);
+      expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({ error: 'upstream', reason: 'photo' });
     }
     expect(t.google.reviews).toHaveLength(1);
     expect(geminiCeiling(t)).toBe(1);
     expect(reviewsCounted(t, ann)).toBe(0);
     expect(reviewsCounted(t, bob)).toBe(0);
 
-    // Another review of the photo (another input) is another key: Gemini is asked.
-    await review(t, ann, reviewInput({ title: 'Robe bleue' }));
-    expect(t.google.reviews).toHaveLength(2);
-
     // After an hour the same review is tried again.
     t.clock.advance(NEGATIVE_CACHE_TTL_MS);
     t.google.review = async () => REVIEW;
     expect((await review(t, ann)).status).toBe(200);
-    expect(t.google.reviews).toHaveLength(3);
+    expect(t.google.reviews).toHaveLength(2);
   });
 
   async function searched(t: Setup, email: string) {

@@ -25,13 +25,21 @@ export interface AppEnv {
 export const API_REQUESTS_PER_MINUTE = 60;
 
 /**
- * Where the billing routes plug in the lazy resync of a subscription (see `SubscriptionSync`), for
- * the routes that read an account's plan (`/v1/me`, `/v1/search`, `DELETE /v1/account`) without
- * owning the Stripe client. Until `registerBillingRoutes` runs (no Stripe: tests, development) it
- * answers with the account as it is.
+ * Where the billing routes plug in what they know of Stripe, for the routes that read an account's
+ * plan (`/v1/me`, `/v1/search`, `DELETE /v1/account`) without owning the Stripe client: the lazy
+ * resync of a subscription (see `SubscriptionSync`) and the question "does Stripe still bill this
+ * account". Until `registerBillingRoutes` runs (no Stripe: tests, development) it answers with the
+ * account as it is, and says nothing is billed.
  */
 export interface SubscriptionRefresher {
   refresh(account: Account): Promise<Account>;
+  /**
+   * Whether Stripe has a subscription for the account's customer that bills it or still may
+   * (active, trialing, past_due, incomplete), whatever the local row says (it only moves when a
+   * webhook arrives). A live one the row did not know is stored. Rejects when Stripe cannot be
+   * read: the caller must not decide "no" from that.
+   */
+  hasLiveSubscription(account: Account): Promise<boolean>;
 }
 
 /** The shared pieces a route module receives. */
@@ -89,7 +97,7 @@ export function createContext(deps: AppDeps): AppContext {
     auth,
     alert: createAlerts({ mailer: deps.mailer, ownerEmail: deps.config.ownerEmail, now: at }),
     health: createHealth(at),
-    subscriptions: { refresh: async (account) => account },
+    subscriptions: { refresh: async (account) => account, hasLiveSubscription: async () => false },
     requireAccount,
     ip: (c) => clientIp(c, deps.config.trustProxy),
   };

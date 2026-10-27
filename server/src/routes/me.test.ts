@@ -23,6 +23,13 @@ async function signedIn(t: TestApp, email: string, patch: Partial<Account> = {})
   return { token, id };
 }
 
+/** Plugs in what Stripe says of a live subscription, the way the billing routes do. */
+const withLiveCheck = (check: (account: Account) => Promise<boolean>): RouteModule => {
+  return (_app, ctx) => {
+    ctx.subscriptions.hasLiveSubscription = check;
+  };
+};
+
 /** Plugs a refresher in the way the billing routes do. */
 const withRefresher = (refresh: (account: Account) => Promise<Account>): RouteModule => {
   return (_app, ctx) => {
@@ -77,6 +84,22 @@ describe('DELETE /v1/account', () => {
       expect(count(t, table, 'account_id = ?', bob.id)).toBe(1);
     }
     expect(count(t, 'login_failures', 'email = ?', 'bob@example.com')).toBe(1);
+  });
+
+  it('keeps the trial claim of the mailbox (a keyed hash, no address), so that signing up again gives no second trial', async () => {
+    const t = createTestApp();
+    const ann = await signedIn(t, 'ann@example.com');
+    expect(count(t, 'trial_claims')).toBe(1);
+
+    expect(
+      (await t.app.request('/v1/account', { method: 'DELETE', headers: bearer(ann.token) })).status,
+    ).toBe(204);
+
+    expect(count(t, 'trial_claims')).toBe(1);
+    const again = await signedIn(t, 'ann@example.com');
+    expect(t.db.prepare('SELECT trial_left FROM accounts WHERE id = ?').get(again.id)).toEqual({
+      trial_left: 0,
+    });
   });
 
   it('forgets the Stripe customer with the account (it stays at Stripe, invoices must be kept)', async () => {
@@ -134,6 +157,42 @@ describe('DELETE /v1/account', () => {
       expect(count(t, 'accounts', 'id = ?', ann.id)).toBe(0);
     },
   );
+
+  it('answers 409 when Stripe still bills a subscription the row does not show, and deletes nothing', async () => {
+    const check = vi.fn(async () => true);
+    const t = createTestApp([withLiveCheck(check)]);
+    const ann = await signedIn(t, 'ann@example.com', { stripe_customer_id: 'cus_ann' });
+
+    const response = await t.app.request('/v1/account', {
+      method: 'DELETE',
+      headers: bearer(ann.token),
+    });
+
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'active_subscription' });
+    expect(count(t, 'accounts', 'id = ?', ann.id)).toBe(1);
+    expect(count(t, 'sessions', 'account_id = ?', ann.id)).toBe(1);
+  });
+
+  it('answers 503 `unavailable` when Stripe cannot be read, and deletes nothing', async () => {
+    const t = createTestApp([
+      withLiveCheck(async () => {
+        throw new Error('Stripe is down');
+      }),
+    ]);
+    const ann = await signedIn(t, 'ann@example.com', { stripe_customer_id: 'cus_ann' });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const response = await t.app.request('/v1/account', {
+      method: 'DELETE',
+      headers: bearer(ann.token),
+    });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'unavailable' });
+    expect(count(t, 'accounts', 'id = ?', ann.id)).toBe(1);
+  });
 
   it('asks Stripe again first when the row looks stale: a subscription that ended no longer blocks', async () => {
     const refresh = vi.fn(async (account: Account) => ({

@@ -4,6 +4,7 @@ import {
   LOGIN_FAILURE_WINDOW_MS,
   SESSION_MAX_AGE_MS,
   SIGNUP_WINDOW_MS,
+  TRIAL_CLAIM_KEEP_MS,
 } from './auth';
 import { openDb, type Db } from './db';
 import { previousMonth, purgeExpired } from './maintenance';
@@ -93,6 +94,16 @@ describe('purgeExpired: what the database does not keep', () => {
 
     expect(db.prepare('SELECT ip_hash FROM signups').all()).toEqual([{ ip_hash: 'new' }]);
     expect(db.prepare('SELECT ip_hash FROM login_failures').all()).toEqual([{ ip_hash: 'new' }]);
+  });
+
+  it('drops trial claims after 12 months, and not before', () => {
+    const insert = db.prepare('INSERT INTO trial_claims (key, created_at) VALUES (?, ?)');
+    insert.run('old', clock.ms() - TRIAL_CLAIM_KEEP_MS);
+    insert.run('young', clock.ms() - TRIAL_CLAIM_KEEP_MS + 1);
+
+    purgeExpired(db, clock.ms());
+
+    expect(db.prepare('SELECT key FROM trial_claims').all()).toEqual([{ key: 'young' }]);
   });
 
   it('drops sign-in codes once their throttle window is over', () => {

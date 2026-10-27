@@ -35,10 +35,14 @@ interface FakeStripe extends StripeApi {
   missingCustomers: Set<string>;
   /** The customers whose subscriptions were listed. */
   listed: string[];
+  /** The subscriptions cancelled (they then read `canceled`). */
+  cancelled: string[];
   /** The subscriptions Stripe "has", by id. */
   subscriptionsById: Map<string, StripeSubscription>;
   /** The next call of that kind rejects with this. */
-  failWith: Partial<Record<'checkout' | 'portal' | 'customer' | 'retrieve' | 'list', Error>>;
+  failWith: Partial<
+    Record<'checkout' | 'portal' | 'customer' | 'retrieve' | 'list' | 'cancel', Error>
+  >;
   /** Lookup keys that have no active price. */
   missingPrices: Set<string>;
 }
@@ -64,6 +68,7 @@ function fakeStripe(): FakeStripe {
     retrieveParams: [],
     missingCustomers: new Set(),
     listed: [],
+    cancelled: [],
     subscriptionsById: new Map(),
     failWith: {},
     missingPrices: new Set(),
@@ -128,6 +133,19 @@ function fakeStripe(): FakeStripe {
                 params.customer && found.status !== 'canceled',
           ),
         };
+      },
+      async cancel(id) {
+        if (stripe.failWith.cancel) throw stripe.failWith.cancel;
+        const found = stripe.subscriptionsById.get(id);
+        // Like Stripe: a subscription that is already canceled is "no such subscription".
+        if (!found || found.status === 'canceled') {
+          throw Object.assign(new Error(`No such subscription: ${id}`), {
+            code: 'resource_missing',
+          });
+        }
+        stripe.cancelled.push(id);
+        stripe.subscriptionsById.set(id, { ...found, status: 'canceled' });
+        return { id };
       },
     },
     webhooks: signer.webhooks,
@@ -496,6 +514,115 @@ describe('POST /v1/billing/checkout', () => {
       expect(row(t, buyer.id).subscription_status).toBeNull();
     });
 
+    it('cancels the abandoned (incomplete) subscriptions of the customer before the new Checkout Session is made', async () => {
+      const t = setup();
+      const buyer = await buyerWithCustomer(t);
+      for (const id of ['sub_abandoned_1', 'sub_abandoned_2']) {
+        t.stripe.subscriptionsById.set(
+          id,
+          subscription({ id, status: 'incomplete', customer: 'cus_race' }),
+        );
+      }
+      // Not this customer's, and not an abandoned one: both stay.
+      t.stripe.subscriptionsById.set(
+        'sub_other',
+        subscription({ id: 'sub_other', status: 'incomplete', customer: 'cus_someone_else' }),
+      );
+      t.stripe.subscriptionsById.set(
+        'sub_expired',
+        subscription({ id: 'sub_expired', status: 'incomplete_expired', customer: 'cus_race' }),
+      );
+      let cancelledWhenCheckoutWasMade: string[] = [];
+      const create = t.stripe.checkout.sessions.create;
+      t.stripe.checkout.sessions.create = async (params) => {
+        cancelledWhenCheckoutWasMade = [...t.stripe.cancelled];
+        return create(params);
+      };
+
+      const response = await post(
+        t.app,
+        '/v1/billing/checkout',
+        { price: 'essentiel_monthly' },
+        bearer(buyer.token),
+      );
+
+      expect(response.status).toBe(200);
+      expect(t.stripe.cancelled).toEqual(['sub_abandoned_1', 'sub_abandoned_2']);
+      expect(cancelledWhenCheckoutWasMade).toEqual(['sub_abandoned_1', 'sub_abandoned_2']);
+      expect(t.stripe.checkoutCreated).toHaveLength(1);
+    });
+
+    it('does not mind an abandoned subscription Stripe no longer has when it cancels it', async () => {
+      const t = setup();
+      const buyer = await buyerWithCustomer(t);
+      t.stripe.subscriptionsById.set(
+        'sub_abandoned',
+        subscription({ id: 'sub_abandoned', status: 'incomplete', customer: 'cus_race' }),
+      );
+      // It expired between the listing and the cancel.
+      const list = t.stripe.subscriptions.list;
+      t.stripe.subscriptions.list = async (params) => {
+        const listed = await list(params);
+        t.stripe.subscriptionsById.delete('sub_abandoned');
+        return listed;
+      };
+
+      const response = await post(
+        t.app,
+        '/v1/billing/checkout',
+        { price: 'essentiel_monthly' },
+        bearer(buyer.token),
+      );
+
+      expect(response.status).toBe(200);
+      expect(t.stripe.checkoutCreated).toHaveLength(1);
+    });
+
+    it('makes no Checkout Session when an abandoned subscription cannot be cancelled: it could still be paid', async () => {
+      const t = setup();
+      const buyer = await buyerWithCustomer(t);
+      t.stripe.subscriptionsById.set(
+        'sub_abandoned',
+        subscription({ id: 'sub_abandoned', status: 'incomplete', customer: 'cus_race' }),
+      );
+      t.stripe.failWith.cancel = new Error('Stripe is down');
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      const response = await post(
+        t.app,
+        '/v1/billing/checkout',
+        { price: 'essentiel_monthly' },
+        bearer(buyer.token),
+      );
+
+      expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({ error: 'upstream' });
+      expect(t.stripe.checkoutCreated).toHaveLength(0);
+    });
+
+    it('cancels nothing when the customer already has a live subscription: the portal is the answer', async () => {
+      const t = setup();
+      const buyer = await buyerWithCustomer(t);
+      t.stripe.subscriptionsById.set(
+        'sub_paid',
+        subscription({ id: 'sub_paid', customer: 'cus_race', metadata: { account_id: buyer.id } }),
+      );
+      t.stripe.subscriptionsById.set(
+        'sub_abandoned',
+        subscription({ id: 'sub_abandoned', status: 'incomplete', customer: 'cus_race' }),
+      );
+
+      await post(
+        t.app,
+        '/v1/billing/checkout',
+        { price: 'revendeur_monthly' },
+        bearer(buyer.token),
+      );
+
+      expect(t.stripe.cancelled).toEqual([]);
+      expect(t.stripe.portalCreated).toHaveLength(1);
+    });
+
     it("stops a second Checkout opened before the first one's webhook arrived", async () => {
       const t = setup();
       const buyer = await signedInAccount(t);
@@ -784,6 +911,95 @@ describe('POST /v1/billing/portal', () => {
 
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: 'upstream' });
+  });
+});
+
+describe('DELETE /v1/account asks Stripe, not only the row', () => {
+  const del = (t: ReturnType<typeof setup>, token: string) =>
+    t.app.request('/v1/account', { method: 'DELETE', headers: bearer(token) });
+  const exists = (t: ReturnType<typeof setup>, id: string) =>
+    t.db.prepare('SELECT 1 FROM accounts WHERE id = ?').get(id) !== undefined;
+
+  it.each(['active', 'trialing', 'past_due', 'incomplete'])(
+    'answers 409 when Stripe has a %s subscription the row does not know, stores it, and deletes nothing',
+    async (status) => {
+      const t = setup();
+      const buyer = await signedInAccount(t, { stripe_customer_id: 'cus_1' });
+      t.stripe.subscriptionsById.set(
+        'sub_1',
+        subscription({ status, metadata: { account_id: buyer.id } }),
+      );
+
+      const response = await del(t, buyer.token);
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: 'active_subscription' });
+      expect(exists(t, buyer.id)).toBe(true);
+      expect(row(t, buyer.id)).toMatchObject({
+        subscription_id: 'sub_1',
+        subscription_status: status,
+      });
+    },
+  );
+
+  it.each(['canceled', 'incomplete_expired', 'unpaid', 'paused'])(
+    'deletes the account when Stripe only has a %s subscription',
+    async (status) => {
+      const t = setup();
+      const buyer = await signedInAccount(t, { stripe_customer_id: 'cus_1' });
+      t.stripe.subscriptionsById.set('sub_1', subscription({ status }));
+
+      expect((await del(t, buyer.token)).status).toBe(204);
+      expect(t.stripe.listed).toEqual(['cus_1']);
+      expect(exists(t, buyer.id)).toBe(false);
+    },
+  );
+
+  it('answers 503 `unavailable` when Stripe cannot be read, and deletes nothing', async () => {
+    const t = setup();
+    const buyer = await signedInAccount(t, { stripe_customer_id: 'cus_1' });
+    t.stripe.failWith.list = new Error('Stripe is down');
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const response = await del(t, buyer.token);
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'unavailable' });
+    expect(exists(t, buyer.id)).toBe(true);
+    // Nothing of it was started: the session still works.
+    expect((await t.app.request('/v1/me', { headers: bearer(buyer.token) })).status).toBe(200);
+  });
+
+  it('deletes the account of a customer Stripe does not know (it bills nobody)', async () => {
+    const t = setup();
+    const buyer = await signedInAccount(t, { stripe_customer_id: 'cus_gone' });
+    t.stripe.missingCustomers.add('cus_gone');
+
+    expect((await del(t, buyer.token)).status).toBe(204);
+    expect(exists(t, buyer.id)).toBe(false);
+  });
+
+  it('asks Stripe nothing for an account that never had a customer', async () => {
+    const t = setup();
+    const buyer = await signedInAccount(t);
+
+    expect((await del(t, buyer.token)).status).toBe(204);
+    expect(t.stripe.listed).toEqual([]);
+  });
+
+  it('answers 409 from the row alone when it says the subscription is live, without asking Stripe', async () => {
+    const t = setup();
+    const buyer = await signedInAccount(t, {
+      stripe_customer_id: 'cus_1',
+      subscription_id: 'sub_1',
+      plan: 'essentiel',
+      subscription_status: 'active',
+      period_end: PERIOD_END_SECONDS * 1000 + 365 * 24 * 60 * 60 * 1000,
+    });
+
+    expect((await del(t, buyer.token)).status).toBe(409);
+    expect(t.stripe.listed).toEqual([]);
+    expect(exists(t, buyer.id)).toBe(true);
   });
 });
 

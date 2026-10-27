@@ -13,11 +13,13 @@ import {
   SESSION_MAX_AGE_MS,
   SIGNUPS_PER_IP_PER_WINDOW,
   SIGNUP_WINDOW_MS,
+  TRIAL_CLAIM_KEEP_MS,
   createAuth,
   normalizeEmail,
   type Auth,
 } from './auth';
 import { openDb, type Db } from './db';
+import { trialClaimKey } from './email';
 import { purgeExpired } from './maintenance';
 import { fakeClock, fakeMailer, type Clock, type FakeMailer } from './test-helpers';
 
@@ -514,6 +516,62 @@ describe('the free trial of a new account', () => {
   it('gives the trial to the first account of a mailbox, whichever alias comes first', async () => {
     expect((await verify('sam+first@example.com'))?.account.trial_left).toBe(15);
     expect((await verify(EMAIL))?.account.trial_left).toBe(0);
+  });
+
+  describe('a mailbox that had its trial and deleted its account', () => {
+    const deleteAccount = (email: string) =>
+      db.prepare('DELETE FROM accounts WHERE email = ?').run(email);
+    const claims = () => db.prepare('SELECT key, created_at FROM trial_claims').all();
+
+    it('writes a claim, keyed by the secret and never the address, when an account is created with a trial', async () => {
+      await verify('Jo.Doe+x@gmail.com');
+
+      expect(claims()).toEqual([
+        { key: trialClaimKey(SECRET, 'jodoe@gmail.com'), created_at: clock.ms() },
+      ]);
+      expect(JSON.stringify(db.prepare('SELECT * FROM trial_claims').all())).not.toMatch(/jodoe/);
+      expect(trialClaimKey('another-secret', 'jodoe@gmail.com')).not.toBe(
+        trialClaimKey(SECRET, 'jodoe@gmail.com'),
+      );
+    });
+
+    it('gets no trial when it signs up again, whichever alias it uses', async () => {
+      expect((await verify(EMAIL))?.account.trial_left).toBe(15);
+      deleteAccount(EMAIL);
+      expect(count('accounts')).toBe(0);
+
+      expect((await verify(EMAIL))?.account.trial_left).toBe(0);
+      deleteAccount(EMAIL);
+      expect((await verify('sam+again@example.com'))?.account.trial_left).toBe(0);
+      expect(count('trial_claims')).toBe(1);
+    });
+
+    it('writes no claim for an account created without a trial', async () => {
+      await verify('u1@example.com', '203.0.113.7');
+      await verify('u2@example.com', '203.0.113.7');
+      await verify('u3@example.com', '203.0.113.7');
+      await verify('u4@example.com', '203.0.113.7');
+      expect(count('trial_claims')).toBe(3);
+
+      // Never had a trial: deleted and back from another address, it gets one.
+      deleteAccount('u4@example.com');
+      expect((await verify('u4@example.com', '203.0.113.8'))?.account.trial_left).toBe(15);
+    });
+
+    it('gets a trial again once the claim is 12 months old and purged', async () => {
+      await verify(EMAIL);
+      deleteAccount(EMAIL);
+
+      clock.advance(TRIAL_CLAIM_KEEP_MS - 1);
+      purgeExpired(db, clock.ms());
+      expect((await verify(EMAIL))?.account.trial_left).toBe(0);
+      deleteAccount(EMAIL);
+
+      clock.advance(1);
+      purgeExpired(db, clock.ms());
+      expect(count('trial_claims')).toBe(0);
+      expect((await verify(EMAIL))?.account.trial_left).toBe(15);
+    });
   });
 
   it('creates at most 3 accounts with a trial per client address and day', async () => {

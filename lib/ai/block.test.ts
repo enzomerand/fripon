@@ -52,12 +52,13 @@ describe('aiBlockFor', () => {
     ['photo', "L'IA n'a pas pu lire la photo de l'annonce."],
     ['unavailable', 'Gemini est indisponible pour le moment.'],
     ['invalid_answer', "L'IA a donné une réponse inutilisable."],
+    ['review_limit', "Tu as déjà demandé 3 avis de l'IA pour cette annonce ce mois-ci."],
   ] as const)('gives one neutral line and no button for "%s"', (reason, message) => {
     expect(aiBlockFor({ status: 'error', reason })).toEqual({ status: 'failed', message });
   });
 
   it('has a line for every failure there is', () => {
-    const reasons: GeminiFailure[] = [
+    const reasons: (GeminiFailure | 'review_limit')[] = [
       'invalid',
       'disabled',
       'restricted',
@@ -67,6 +68,7 @@ describe('aiBlockFor', () => {
       'photo',
       'unavailable',
       'invalid_answer',
+      'review_limit',
     ];
     for (const reason of reasons) {
       const response: AiReviewResponse = { status: 'error', reason };

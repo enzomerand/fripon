@@ -1,3 +1,5 @@
+import { createHmac } from 'node:crypto';
+
 /**
  * The address with its cosmetic variants removed, so that `Jo.Doe+a@googlemail.com` and
  * `jodoe@gmail.com` are the same mailbox. It only serves to spot one person making several
@@ -21,4 +23,14 @@ export function canonicalEmail(email: string): string {
   // `+tag@...` or `...@gmail.com` would all collapse into one empty name: keep what was typed.
   if (local === '') local = original;
   return `${local}@${domain}`;
+}
+
+/**
+ * What `trial_claims` keeps of a mailbox that had its free trial: a keyed hash of the canonical
+ * address (never the address), so that deleting the account and signing up again does not give
+ * the trial a second time. Changing `AUTH_SECRET` makes every claim unreadable (and the trial
+ * available again to those mailboxes), like the hashes of client addresses.
+ */
+export function trialClaimKey(secret: string, canonical: string): string {
+  return createHmac('sha256', secret).update(`trial\n${canonical}`).digest('hex');
 }

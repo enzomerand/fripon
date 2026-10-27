@@ -223,6 +223,8 @@ describe('search', () => {
     [402, { error: 'quota', reason: 'day' }, 'quota'],
     [403, { error: 'forbidden' }, 'unavailable'],
     [403, { error: 'not_searched' }, 'unavailable'],
+    // Nothing here asks for a review: its limit is not a search failure either.
+    [403, { error: 'review_limit' }, 'unavailable'],
     [429, { error: 'rate_limited' }, 'rate_limited'],
     [502, { error: 'upstream', reason: 'timeout' }, 'unavailable'],
     [503, { error: 'capacity' }, 'unavailable'],
@@ -273,6 +275,8 @@ describe('review', () => {
   it.each([
     [400, { error: 'invalid_photo' }, 'photo'],
     [403, { error: 'not_searched' }, 'not_searched'],
+    [403, { error: 'review_limit' }, 'review_limit'],
+    [403, { error: 'forbidden' }, 'unavailable'],
     // The review is never refused for want of analyses: a 402 here is not the server's contract.
     [402, { error: 'quota', reason: 'month' }, 'unavailable'],
     [429, { error: 'rate_limited' }, 'rate_limited'],

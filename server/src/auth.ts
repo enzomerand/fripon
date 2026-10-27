@@ -9,7 +9,7 @@ import {
 import { TRIAL_ANALYSES } from './plans';
 import { CODE_TTL_MINUTES, type Mailer } from './mailer';
 import type { Account, Db } from './db';
-import { canonicalEmail } from './email';
+import { canonicalEmail, trialClaimKey } from './email';
 
 /** Sign-in by e-mail code, then a bearer token. Nothing secret is stored in clear: a code is an
  *  HMAC keyed by `AUTH_SECRET`, a token is a SHA-256. */
@@ -41,6 +41,8 @@ export const LOGIN_FAILURES_PER_EMAIL_PER_WINDOW = 50;
 export const SIGNUP_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** Accounts one address may create per window with a trial; the next ones start without one. */
 export const SIGNUPS_PER_IP_PER_WINDOW = 3;
+/** How long a mailbox remembers that its free trial was used, account deleted or not. */
+export const TRIAL_CLAIM_KEEP_MS = 365 * 24 * 60 * 60 * 1000;
 /** Signed-in browsers per account; signing in on a fourth one signs the oldest out. */
 export const MAX_SESSIONS = 3;
 /** A session nobody used for this long stops working. */
@@ -81,9 +83,10 @@ export interface Auth {
   requestCode(email: string): Promise<void>;
   /**
    * A new session token when the code is right, null otherwise. Creates the account at first, with
-   * the free trial unless the same mailbox (see `canonicalEmail`) already has an account or
-   * `clientIp` already created `SIGNUPS_PER_IP_PER_WINDOW` accounts in a day. `clientIp` is null
-   * when the caller cannot tell (the cap then does not apply).
+   * the free trial unless the same mailbox (see `canonicalEmail`) already has an account or a
+   * trial claim (an account of it was created with the trial, even if it was deleted since: see
+   * `TRIAL_CLAIM_KEEP_MS`), or `clientIp` already created `SIGNUPS_PER_IP_PER_WINDOW` accounts in
+   * a day. `clientIp` is null when the caller cannot tell (the cap then does not apply).
    */
   verifyCode(
     email: string,
@@ -177,6 +180,11 @@ export function createAuth({ db, mailer, secret, now }: AuthDeps): Auth {
       .prepare('SELECT 1 FROM accounts WHERE canonical_email = ? LIMIT 1')
       .get(canonical);
     if (sameMailbox) return 0;
+    // The mailbox had its trial on an account that is gone since.
+    const claimed = db
+      .prepare('SELECT 1 FROM trial_claims WHERE key = ?')
+      .get(trialClaimKey(secret, canonical));
+    if (claimed) return 0;
     if (hashedIp !== null) {
       const created = db
         .prepare('SELECT COUNT(*) AS n FROM signups WHERE ip_hash = ? AND at > ?')
@@ -193,9 +201,17 @@ export function createAuth({ db, mailer, secret, now }: AuthDeps): Auth {
       const canonical = canonicalEmail(email);
       const hashedIp = clientIp === null ? null : ipHash(clientIp);
       const id = randomUUID();
+      const trial = trialFor(canonical, hashedIp, at);
       db.prepare(
         'INSERT INTO accounts (id, email, created_at, trial_left, canonical_email) VALUES (?, ?, ?, ?, ?)',
-      ).run(id, email, at, trialFor(canonical, hashedIp, at), canonical);
+      ).run(id, email, at, trial, canonical);
+      if (trial > 0) {
+        // Kept when the account is deleted: this is what stops a second trial for the mailbox.
+        db.prepare('INSERT OR IGNORE INTO trial_claims (key, created_at) VALUES (?, ?)').run(
+          trialClaimKey(secret, canonical),
+          at,
+        );
+      }
       if (hashedIp !== null) {
         db.prepare('INSERT INTO signups (ip_hash, at) VALUES (?, ?)').run(hashedIp, at);
       }

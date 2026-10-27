@@ -58,10 +58,13 @@ export type SearchResult =
   | { ok: false; reason: SearchFailure };
 
 /**
- * Why a review was not served. `not_searched`: the server never served this photo to the account.
- * No `quota`: the review is never refused for want of analyses (the search is what costs one).
+ * Why a review was not served. `not_searched`: the server never served this photo to the account
+ * (lately): a search makes it servable. `review_limit`: the account has had its 3 reviews of this
+ * photo this month: nothing the client does changes that. No `quota`: the review is never refused
+ * for want of analyses (the search is what costs one).
  */
-export type ReviewFailure = Exclude<SearchFailure, 'quota'> | 'not_searched' | 'invalid_answer';
+export type ReviewFailure =
+  Exclude<SearchFailure, 'quota'> | 'not_searched' | 'review_limit' | 'invalid_answer';
 
 export type ReviewResult = { ok: true; review: AiReview } | { ok: false; reason: ReviewFailure };
 
@@ -179,7 +182,10 @@ export function createCloudClient(deps: CloudClientDeps): CloudClient {
   }
 
   /** The words of a refused search or review, shared by both. */
-  function refused(reply: { status: number; body: unknown }): SearchFailure | 'not_searched' {
+  function refused(reply: {
+    status: number;
+    body: unknown;
+  }): SearchFailure | 'not_searched' | 'review_limit' {
     const word = errorWord(reply.body);
     switch (reply.status) {
       case 400:
@@ -187,7 +193,8 @@ export function createCloudClient(deps: CloudClientDeps): CloudClient {
       case 402:
         return 'quota';
       case 403:
-        return word === 'not_searched' ? 'not_searched' : 'unavailable';
+        if (word === 'not_searched' || word === 'review_limit') return word;
+        return 'unavailable';
       case 429:
         return 'rate_limited';
       case 502:
@@ -258,7 +265,10 @@ export function createCloudClient(deps: CloudClientDeps): CloudClient {
       if (reply.status !== 200) {
         const reason = refused(reply);
         // Nothing here asks for a review: a 403 is the server not liking the request.
-        return { ok: false, reason: reason === 'not_searched' ? 'unavailable' : reason };
+        return {
+          ok: false,
+          reason: reason === 'not_searched' || reason === 'review_limit' ? 'unavailable' : reason,
+        };
       }
       const matches = isRecord(reply.body) ? parseMatches(reply.body.matches) : null;
       if (!matches || !isRecord(reply.body)) return { ok: false, reason: 'unavailable' };

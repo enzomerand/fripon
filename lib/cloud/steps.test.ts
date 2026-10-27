@@ -9,7 +9,7 @@ import { VISION_CACHE_PREFIX, visionCacheKey, writeVisionCache } from '../image/
 import type { ImageMatch } from '../model';
 import type { CloudClient } from './client';
 import { PHOTO_QUOTA_MEMO_MS, STATUS_AFTER_REFUSAL_MS } from './config';
-import { saveSession, saveStatusFor } from './session';
+import { expireSession, saveSession, saveStatusFor } from './session';
 import type { StatusKeeper } from './status';
 import { createCloudSteps } from './steps';
 import { PLAN_USAGE, makeClient } from './test-helpers';
@@ -124,6 +124,14 @@ describe('searchImage', () => {
   it('answers no_key when there is no session, and sends nothing', async () => {
     const none = setup(makeClient(), null);
     expect(await none.steps.searchImage(PHOTO)).toEqual({ status: 'no_key' });
+    expect(none.client.search).not.toHaveBeenCalled();
+  });
+
+  it('answers expired, not no_key, when the session just ended (the marker is there, the token is gone)', async () => {
+    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+    await expireSession('tok-1');
+    const none = setup(makeClient(), null);
+    expect(await none.steps.searchImage(PHOTO)).toEqual({ status: 'expired' });
     expect(none.client.search).not.toHaveBeenCalled();
   });
 
@@ -303,6 +311,42 @@ describe('aiReview', () => {
     const none = setup(makeClient(), null);
     expect(await none.steps.aiReview(INPUT)).toEqual({ status: 'no_key' });
     expect(none.client.review).not.toHaveBeenCalled();
+  });
+
+  it('answers expired, not no_key, when the session just ended (the marker is there, the token is gone)', async () => {
+    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+    await expireSession('tok-1');
+    const none = setup(makeClient(), null);
+    expect(await none.steps.aiReview(INPUT)).toEqual({ status: 'expired' });
+    expect(none.client.review).not.toHaveBeenCalled();
+  });
+
+  it('answers review_limit as it is: no catch-up search, no second review, nothing remembered', async () => {
+    const review = vi.fn<CloudClient['review']>(() =>
+      Promise.resolve({ ok: false as const, reason: 'review_limit' as const }),
+    );
+    const { steps, client } = setup(makeClient({ review }));
+
+    expect(await steps.aiReview(INPUT)).toEqual({ status: 'error', reason: 'review_limit' });
+    expect(client.search).not.toHaveBeenCalled();
+    expect(review).toHaveBeenCalledTimes(1);
+
+    // A click asks the server again (it answers for free); no memory of 90 seconds stands in the way.
+    expect(await steps.aiReview(INPUT)).toEqual({ status: 'error', reason: 'review_limit' });
+    expect(review).toHaveBeenCalledTimes(2);
+    expect(client.search).not.toHaveBeenCalled();
+  });
+
+  it('answers review_limit too when it comes after the catch-up search, without a third call', async () => {
+    const review = vi
+      .fn<CloudClient['review']>()
+      .mockResolvedValueOnce({ ok: false, reason: 'not_searched' })
+      .mockResolvedValue({ ok: false, reason: 'review_limit' });
+    const { steps, client } = setup(makeClient({ review }));
+
+    expect(await steps.aiReview(INPUT)).toEqual({ status: 'error', reason: 'review_limit' });
+    expect(client.search).toHaveBeenCalledTimes(1);
+    expect(review).toHaveBeenCalledTimes(2);
   });
 
   it('answers expired when the server refuses the session, on the review or on the search it needs', async () => {

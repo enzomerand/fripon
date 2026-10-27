@@ -37,6 +37,8 @@ export interface StripeApi {
     retrieve(id: string, params?: { expand?: string[] }): Promise<StripeSubscription>;
     /** A customer's subscriptions, the canceled ones left out (Stripe's default). */
     list(params: { customer: string; limit?: number }): Promise<{ data: StripeSubscription[] }>;
+    /** Ends a subscription at once (an abandoned `incomplete` one, which must never be paid later). */
+    cancel(id: string): Promise<{ id: string }>;
   };
   webhooks: {
     constructEventAsync(

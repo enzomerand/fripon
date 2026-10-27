@@ -4,6 +4,7 @@ import {
   SESSION_IDLE_MS,
   SESSION_MAX_AGE_MS,
   SIGNUP_WINDOW_MS,
+  TRIAL_CLAIM_KEEP_MS,
 } from './auth';
 import type { Db } from './db';
 import { periodIds } from './time';
@@ -23,7 +24,8 @@ export function previousMonth(now: Date): string {
  * guesses and sign-ups (a keyed hash of an address) out of their day, sessions nobody used for 90
  * days or older than a year, old webhook events, and the usage and review counters older than the
  * previous month (the current and the previous month stay; the quota and the review limit only
- * read the current one). `main.ts` calls it every hour.
+ * read the current one), and trial claims (a keyed hash of a mailbox) after 12 months. `main.ts`
+ * calls it every hour.
  */
 export function purgeExpired(db: Db, now: number): void {
   db.prepare('DELETE FROM cache WHERE expires_at <= ?').run(now);
@@ -38,6 +40,7 @@ export function purgeExpired(db: Db, now: number): void {
     now - SESSION_MAX_AGE_MS,
   );
   db.prepare('DELETE FROM stripe_events WHERE received_at <= ?').run(now - STRIPE_EVENT_KEEP_MS);
+  db.prepare('DELETE FROM trial_claims WHERE created_at <= ?').run(now - TRIAL_CLAIM_KEEP_MS);
 
   const keepFrom = previousMonth(new Date(now));
   db.prepare('DELETE FROM usage WHERE month < ?').run(keepFrom);

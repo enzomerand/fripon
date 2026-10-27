@@ -55,8 +55,10 @@ Avec l’abonnement, l’adresse de la photo, le titre, la description, le prix 
 partent vers le serveur de Fripon, qui appelle Google avec sa propre clé payante (Google ne les
 utilise pas pour améliorer ses produits). Le serveur garde ton adresse e-mail, l’état de ton
 abonnement et la liste des photos analysées (2 mois au plus) ; les résultats sont gardés 35 jours
-pour une recherche de photo et 7 jours pour un avis de l’IA ; les adresses IP ne sont gardées que
-sous forme d’empreinte (hash), pour limiter les abus. Fripon s’appuie sur Google (l’analyse), Stripe
+pour une recherche de photo et 7 jours pour un avis de l’IA ; ton adresse IP, tronquée, reste 7
+jours dans les journaux du serveur web, et l’application n’en garde qu’une empreinte (hash) pendant
+24 h, pour limiter les abus ; une empreinte de ton adresse e-mail est gardée 12 mois, même si tu
+supprimes ton compte, pour qu’un essai gratuit ne serve qu’une fois. Fripon s’appuie sur Google (l’analyse), Stripe
 (le paiement), un service d’envoi d’e-mails (les codes de connexion) et un hébergeur. Tu peux
 supprimer ton compte et son historique depuis la page de réglages ; tes factures restent chez
 Stripe.

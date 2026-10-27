@@ -22,7 +22,7 @@ const CLOUD_QUOTA = "Tu n'as plus d'analyses disponibles.";
 
 const KEY_REFUSED = 'Google refuse ta clé Gemini : vérifie-la dans les réglages.';
 
-const FAILURE_LINES: Record<GeminiFailure, string> = {
+const FAILURE_LINES: Record<GeminiFailure | 'review_limit', string> = {
   invalid: KEY_REFUSED,
   restricted: KEY_REFUSED,
   disabled: KEY_REFUSED,
@@ -32,6 +32,7 @@ const FAILURE_LINES: Record<GeminiFailure, string> = {
   photo: "L'IA n'a pas pu lire la photo de l'annonce.",
   unavailable: 'Gemini est indisponible pour le moment.',
   invalid_answer: "L'IA a donné une réponse inutilisable.",
+  review_limit: "Tu as déjà demandé 3 avis de l'IA pour cette annonce ce mois-ci.",
 };
 
 /**

@@ -6,6 +6,7 @@ import { readVisionCache, visionCacheKey, writeVisionCache } from '../image/sear
 import type { AiReviewResponse, SearchImageResponse } from '../messages';
 import type { CloudClient, SearchResult } from './client';
 import { PHOTO_QUOTA_MEMO_MS, STATUS_AFTER_REFUSAL_MS } from './config';
+import { loadExpired } from './session';
 import type { StatusKeeper } from './status';
 
 export interface CloudStepsDeps {
@@ -26,6 +27,16 @@ type Transient = 'network' | 'unavailable';
 
 /** The subscription has nothing left: the card says it is that one, not a personal key's cap. */
 const reviewQuota = (): AiReviewResponse => ({ status: 'quota', source: 'cloud' });
+
+/**
+ * There is no token to send: signed out, or the session just ended. A request of this browser that
+ * the server answered with a 401 turns the session into its `expired` marker while another one is
+ * on its way (the search, then the review that follows it), and that one must say `expired`, not
+ * ask the subscriber for a Google key.
+ */
+async function withoutToken(): Promise<{ status: 'no_key' } | { status: 'expired' }> {
+  return (await loadExpired().catch(() => null)) ? { status: 'expired' } : { status: 'no_key' };
+}
 
 /** What a failure of the server is called to the page, and whether it may pass by itself. */
 type Described = { word: 'photo'; transient: false } | { word: Transient; transient: true };
@@ -142,7 +153,7 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
     if (cached) return { status: 'ok', matches: cached };
 
     const token = await deps.token();
-    if (token === null) return { status: 'no_key' };
+    if (token === null) return withoutToken();
     const remembered = searchMemo.recall(token, retry);
     if (remembered) return { status: 'error', reason: remembered };
     if (wasRefused(token, cacheKey, retry)) return { status: 'quota' };
@@ -170,7 +181,7 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
     if (cached) return { status: 'ok', review: cached };
 
     const token = await deps.token();
-    if (token === null) return { status: 'no_key' };
+    if (token === null) return withoutToken();
     const remembered = reviewMemo.recall(token, retry);
     if (remembered) return { status: 'error', reason: remembered };
 
@@ -203,6 +214,9 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
     }
     if (result.reason === 'signed_out') return { status: 'expired' };
     if (result.reason === 'invalid_answer') return { status: 'error', reason: 'invalid_answer' };
+    // The month's 3 reviews of this photo are used: no catch-up search (it would not change that,
+    // and it may cost an analysis), no memory (a click asks the server, which answers for free).
+    if (result.reason === 'review_limit') return { status: 'error', reason: 'review_limit' };
     const failure = describe(result.reason);
     if (failure.transient) reviewMemo.remember(token, failure.word, generation);
     return { status: 'error', reason: failure.word };

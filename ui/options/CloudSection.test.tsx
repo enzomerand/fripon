@@ -125,7 +125,10 @@ describe('the subscription section', () => {
       '2 mois au plus',
       'gardés 35 jours',
       "ceux d'un avis de l'IA 7 jours",
-      "adresses IP ne sont gardées que sous forme d'empreinte (hash), pour limiter les abus",
+      'Ton adresse IP, tronquée, reste 7 jours dans les journaux du serveur web',
+      "l'application n'en garde qu'une empreinte (hash) pendant 24 h, pour limiter les abus",
+      'Une empreinte de ton adresse e-mail est gardée 12 mois',
+      "pour qu'un essai gratuit ne serve qu'une fois",
       "Google (l'analyse)",
       'Stripe (le paiement)',
       "service d'envoi d'e-mails",
@@ -134,6 +137,8 @@ describe('the subscription section', () => {
     ]) {
       expect(privacy()).toContain(part);
     }
+    // The claim that IP addresses are only ever kept hashed was false (the web server logs them truncated).
+    expect(privacy()).not.toContain("ne sont gardées que sous forme d'empreinte");
     // No e-mail provider, no host, no country: none of them is decided.
     expect(privacy()).not.toMatch(
       /resend|postmark|mailgun|sendgrid|brevo|scaleway|ovh|hetzner|aws|vercel|france|allemagne|irlande|états-unis/i,
@@ -529,6 +534,33 @@ describe('signed in', () => {
       // Deleted, not expired.
       expect(text(cloud())).not.toContain('Ta session a expiré');
       expect(($('#cloud-email') as HTMLInputElement).value).toBe('');
+    });
+
+    it('does not say "supprimés" again after a new sign-in and a sign-out', async () => {
+      await signIn(TRIAL_USAGE);
+      background({
+        cloudDeleteAccount: async () => {
+          await clearSession();
+          return { ok: true };
+        },
+        cloudSignOut: async () => {
+          await clearSession();
+        },
+      });
+      await mount();
+      await click(button('Supprimer mon compte'));
+      await click(button('Oui, supprimer'));
+      await until(() => $('#cloud-email') !== null);
+      expect(text(cloud())).toContain('ont été supprimés');
+
+      // Signs in again (a new account), then out.
+      await signIn(TRIAL_USAGE);
+      await until(() => button('Me déconnecter') !== undefined);
+      expect(text(cloud())).not.toContain('ont été supprimés');
+      await click(button('Me déconnecter'));
+      await until(() => $('#cloud-email') !== null);
+
+      expect(text(cloud())).not.toContain('ont été supprimés');
     });
 
     it('says to end the subscription first when the server refuses (409), and stays signed in', async () => {
