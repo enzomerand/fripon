@@ -291,6 +291,8 @@ function Result({
       </button>
       {expanded && (
         <div id={CHECKS_ID}>
+          {/* First: the summary is what most people want to read, the rows are the proof. */}
+          {showAi && <AiReviewBlock ai={ai} onRun={onRunAiReview} onOpenOptions={onOpenOptions} />}
           <ul class="fripon__checks">
             {checks.map((check) => (
               <CheckRow
@@ -302,7 +304,6 @@ function Result({
               />
             ))}
           </ul>
-          {showAi && <AiReviewBlock ai={ai} onRun={onRunAiReview} onOpenOptions={onOpenOptions} />}
           <p class="fripon__foot">{PRUDENCE_NOTE}</p>
         </div>
       )}

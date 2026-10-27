@@ -486,13 +486,18 @@ describe('ListingCard', () => {
       expect(block()?.textContent).toContain('Résumé par Gemini, il peut se tromper.');
     });
 
-    it('puts the block after the checks and before the prudence note', async () => {
+    it('puts the block first in the expanded card: before the checks and the prudence note', async () => {
       await show(withAi({ status: 'done', summary: 'Un résumé.' }));
       await expand();
       const children = [...(root.querySelector('#fripon-checks')?.children ?? [])].map(
         (el) => el.className,
       );
-      expect(children).toEqual(['fripon__checks', 'fripon__ai', 'fripon__foot']);
+      expect(children).toEqual(['fripon__ai', 'fripon__checks', 'fripon__foot']);
+      // Right under the verdict lines and the toggle, nothing else in between.
+      const card = root.querySelector('.fripon') as HTMLElement;
+      const order = [...card.children].map((el) => el.className || el.id);
+      expect(order.at(-1)).toBe('fripon-checks');
+      expect(order.at(-2)).toBe('fripon__toggle');
     });
 
     it('shows the summary as plain text, whatever it looks like', async () => {
