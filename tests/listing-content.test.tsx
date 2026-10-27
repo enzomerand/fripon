@@ -910,23 +910,102 @@ describe('listing content script', () => {
       expect(sentMessages('openOptions')).toContainEqual({ type: 'openOptions', section: 'keys' });
     }, 15_000);
 
-    it('asks for the review once: retrying a failed image search does not review again', async () => {
-      imageGate = 'ready';
-      aiGate = 'ready';
-      let attempts = 0;
-      searchAnswer = () =>
-        Promise.resolve(
-          ++attempts === 1 ? { status: 'error', reason: 'network' } : { status: 'ok', matches: [] },
-        );
-      await openCard();
-      await until(() => aiText().includes('Résumé de test.'));
-      expect(actionButton()?.textContent).toBe('Réessayer la recherche');
+    describe('when the image search changes after the review', () => {
+      /** The first search fails, the next ones answer with `then`; the review follows the signals it gets. */
+      function failThen(then: unknown) {
+        let attempts = 0;
+        searchAnswer = () =>
+          Promise.resolve(++attempts === 1 ? { status: 'error', reason: 'network' } : then);
+      }
+      /** A review whose summary says which image line it was asked about. */
+      const answerBySignal = () => {
+        aiAnswer = (message) =>
+          Promise.resolve({
+            status: 'ok',
+            review: { catalogPhoto: false, summary: `Résumé pour : ${message.input?.signals[0]}` },
+          });
+      };
 
-      actionButton()?.click();
-      await until(() => shadowText().includes('Introuvable'));
-      expect(paidSearches()).toHaveLength(2);
-      expect(paidReviews()).toHaveLength(1);
-    }, 15_000);
+      it('reviews again, with the new result, once a retry of the search succeeds', async () => {
+        imageGate = 'ready';
+        aiGate = 'ready';
+        failThen({ status: 'ok', matches: [SHEIN_EXACT] });
+        answerBySignal();
+        await openCard();
+        await until(() => aiText().includes("Résumé pour : Recherche d'image : non faite."));
+        expect(actionButton()?.textContent).toBe('Réessayer la recherche');
+
+        actionButton()?.click();
+        await until(() => aiText().includes("Résumé pour : Recherche d'image : la même photo"));
+        expect(paidSearches()).toHaveLength(2);
+        expect(paidReviews()).toHaveLength(2);
+        expect(paidReviews()[1]?.input?.signals[0]).toBe(
+          "Recherche d'image : la même photo est en vente sur Shein.",
+        );
+        // Only the new summary is left.
+        expect(aiText()).not.toContain('non faite');
+      }, 15_000);
+
+      it('does not review again when the retry fails the same way', async () => {
+        imageGate = 'ready';
+        aiGate = 'ready';
+        searchAnswer = () => Promise.resolve({ status: 'error', reason: 'network' });
+        await openCard();
+        await until(() => aiText().includes('Résumé de test.'));
+
+        actionButton()?.click();
+        await until(() => paidSearches().length === 2);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(actionButton()?.textContent).toBe('Réessayer la recherche');
+        expect(paidReviews()).toHaveLength(1);
+        expect(aiText()).toContain('Résumé de test.');
+      }, 15_000);
+
+      it('shows the review is on its way again while the new one runs', async () => {
+        imageGate = 'ready';
+        aiGate = 'ready';
+        failThen({ status: 'ok', matches: [] });
+        await openCard();
+        await until(() => aiText().includes('Résumé de test.'));
+        const release = holdReview();
+
+        actionButton()?.click();
+        await until(() => aiText().includes("L'IA lit l'annonce…"));
+        expect(aiText()).not.toContain('Résumé de test.');
+        release({ status: 'ok', review: { catalogPhoto: false, summary: 'Nouveau résumé.' } });
+        await until(() => aiText().includes('Nouveau résumé.'));
+      }, 15_000);
+
+      it('never ignores the retry of the search because a review is running, and drops the review it made stale', async () => {
+        imageGate = 'ready';
+        aiGate = 'ready';
+        failThen({ status: 'ok', matches: [SHEIN_EXACT] });
+        const releaseFirst = holdReview();
+        await openCard();
+        await until(() => sentMessages('aiReview').length === 1);
+        // The search failed, the review is still running: the row offers the retry.
+        await until(() => actionButton()?.textContent === 'Réessayer la recherche');
+        const first = sentMessages('aiReview')[0];
+
+        actionButton()?.click();
+        await until(() => paidSearches().length === 2);
+        await until(() => shadowText().includes('Trouvée sur Shein'));
+        // The first review is still on its way: the search did not wait for it, nor was it dropped.
+        expect(sentMessages('aiReview')).toHaveLength(1);
+
+        answerBySignal();
+        releaseFirst({ status: 'ok', review: { catalogPhoto: true, summary: 'Résumé périmé.' } });
+        await until(() => aiText().includes("Résumé pour : Recherche d'image : la même photo"));
+        expect(sentMessages('aiReview')).toHaveLength(2);
+        expect(first?.input?.signals[0]).toBe("Recherche d'image : non faite.");
+        expect(sentMessages('aiReview')[1]?.input?.signals[0]).toBe(
+          "Recherche d'image : la même photo est en vente sur Shein.",
+        );
+        // The stale answer was never shown, nor its catalogue photo applied (no exact-match red).
+        expect(aiText()).not.toContain('Résumé périmé.');
+        expect(shadowText()).not.toContain("L'IA confirme");
+      }, 15_000);
+    });
 
     it('keeps the answer when Vinted re-renders the sidebar during the review', async () => {
       imageGate = 'ready';
@@ -1103,11 +1182,79 @@ describe('listing content script', () => {
         await until(() => aiText().includes('Résumé de test.'));
         expect(paidReviews()).toEqual([]);
         expect(paidSearches()).toEqual([]);
-        // The image row still waits for its click; that click does not review again.
+        // The image row still waits for its click.
         expect(actionButton()?.textContent).toBe("Lancer la recherche d'image");
-        actionButton()?.click();
-        await until(() => shadowText().includes('Introuvable'));
+      }, 15_000);
+
+      it('reviews again when the click changes the image row after a cached review', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        aiAnswer = (message) =>
+          Promise.resolve(
+            message.cacheOnly
+              ? { status: 'ok', review: { catalogPhoto: false, summary: 'Résumé du cache.' } }
+              : { status: 'ok', review: { catalogPhoto: false, summary: 'Résumé à jour.' } },
+          );
+        await openCard();
+        await until(() => aiText().includes('Résumé du cache.'));
         expect(paidReviews()).toEqual([]);
+
+        actionButton()?.click();
+        await until(() => aiText().includes('Résumé à jour.'));
+        expect(shadowText()).toContain('Introuvable');
+        expect(paidReviews()).toHaveLength(1);
+        // The new review was asked about the result of the search the click ran.
+        expect(paidReviews()[0]?.input?.signals[0]).toBe(
+          "Recherche d'image : aucune trace de la photo sur Shein, Temu, AliExpress…",
+        );
+        expect(aiText()).not.toContain('Résumé du cache.');
+      }, 15_000);
+
+      it('keeps a cached review when the click does not change the image row', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        searchAnswer = (message) =>
+          Promise.resolve(
+            message.cacheOnly ? { status: 'not_cached' } : { status: 'error', reason: 'network' },
+          );
+        aiAnswer = (message) =>
+          Promise.resolve(
+            message.cacheOnly
+              ? { status: 'ok', review: REVIEW }
+              : { status: 'error', reason: 'network' },
+          );
+        await openCard();
+        await until(() => aiText().includes('Résumé de test.'));
+
+        actionButton()?.click();
+        await until(() => shadowText().includes('Recherche impossible'));
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        // The search failed: the image row still reads "not done", as it did for the cached review.
+        expect(paidReviews()).toEqual([]);
+        expect(aiText()).toContain('Résumé de test.');
+      }, 15_000);
+
+      it('ignores a late cache answer for an image row that has changed since', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        let cacheAnswer: (value: unknown) => void = () => undefined;
+        aiAnswer = (message) =>
+          message.cacheOnly
+            ? new Promise((resolve) => {
+                cacheAnswer = resolve;
+              })
+            : Promise.resolve({ status: 'ok', review: REVIEW });
+        await openCard();
+        await until(() => sentMessages('aiReview').length === 1);
+
+        actionButton()?.click();
+        await until(() => aiText().includes('Résumé de test.'));
+        // Every step of the click is over: nothing is running, but the image row is not the same.
+        cacheAnswer({ status: 'ok', review: { catalogPhoto: true, summary: 'Réponse du cache.' } });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(aiText()).toContain('Résumé de test.');
+        expect(aiText()).not.toContain('Réponse du cache.');
+        expect(shadowText()).not.toContain('Photo type catalogue');
       }, 15_000);
 
       it.each([

@@ -118,6 +118,15 @@ export function signalLines(rawChecks: CheckResult[]): string[] {
 }
 
 /**
+ * What the image search found, as a review reads it. A review is based on it: when it changes (a
+ * click ran the search, a retry succeeded), the review no longer says what the card shows and is
+ * asked again.
+ */
+export function imageBasis(rawChecks: CheckResult[]): string {
+  return imageLine(rawChecks.find((check) => check.id === 'image'));
+}
+
+/**
  * What the checks found, in short and stable words: the image line first (it names the platforms
  * and no number), then `id:status:tag` for each row that ran. It changes when a check changes its
  * mind, not when a count moves. The first element is also what the review is "based on" for the
@@ -128,7 +137,7 @@ export function reviewFingerprint(rawChecks: CheckResult[]): string[] {
     const row = rawChecks.find((check) => check.id === id);
     return row && row.status !== 'off' ? [`${id}:${row.status}:${row.tag}`] : [];
   });
-  return [imageLine(rawChecks.find((check) => check.id === 'image')), ...rows];
+  return [imageBasis(rawChecks), ...rows];
 }
 
 /**

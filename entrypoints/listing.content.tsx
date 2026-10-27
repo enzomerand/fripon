@@ -1,6 +1,7 @@
 import { render } from 'preact';
 import type { ContentScriptContext } from 'wxt/utils/content-script-context';
 import { aiBlockFor, type AiBlock } from '../lib/ai/block';
+import { imageBasis } from '../lib/ai/input';
 import {
   AnalysisCancelledError,
   analyzeListing,
@@ -81,10 +82,18 @@ interface Analysed {
   gates: Gates;
   /** The AI block of the expanded card, null when the card says nothing of the AI. */
   ai: AiBlock | null;
-  /** true while steps that can spend are running (not the look in the cache): a second run does not start. */
-  busy: boolean;
-  /** true once a review that can spend was asked for: the AI is asked once per page, then a reload. */
-  aiAsked: boolean;
+  /**
+   * true while a search, or a review, that can spend is running (not the look in the cache): a
+   * second one does not start. Apart on purpose: the retry of a search must never be ignored
+   * because a review is on its way.
+   */
+  busyImage: boolean;
+  busyAi: boolean;
+  /**
+   * What the image search had found (`imageBasis`) when the review was last asked or answered,
+   * null before any. A review is asked again only when this is no longer what the card shows.
+   */
+  aiBasis: string | null;
 }
 
 /**
@@ -95,9 +104,9 @@ interface Analysed {
 type Trigger = 'auto' | 'click';
 
 /**
- * What a paid step does in one run. lookup: only a look in the cache, which costs nothing and
- * shows nothing but a result. run: the real request (the background has the last word on keys
- * and credits). skip: not this time.
+ * What the image search does in one run. lookup: only a look in the cache, which costs nothing
+ * and shows nothing but a result. run: the real request (the background has the last word on
+ * keys and credits). skip: not this time.
  */
 type StepMode = 'lookup' | 'run' | 'skip';
 
@@ -168,7 +177,10 @@ function createCardController(ctx: ContentScriptContext) {
    *   with a result when this listing was reviewed before.
    * - manual: by itself only a look in the cache (`lookup`), which costs nothing; the click sends
    *   the real request. A click starts the image search only when its row has the button (a manual
-   *   search, or the retry of a failed one) and the review only when it was never asked for.
+   *   search, or the retry of a failed one).
+   *
+   * The review always follows the image row: it is asked again whenever the search's result is not
+   * the one the last review was based on (see `aiReviewSteps`).
    */
   async function paidSteps(trigger: Trigger) {
     const current = analysed;
@@ -184,69 +196,100 @@ function createCardController(ctx: ContentScriptContext) {
         : gates.image === 'manual'
           ? 'lookup'
           : 'run';
-    const aiSettled = current.aiAsked || current.result.aiReview !== null;
-    const aiStep: StepMode = aiSettled
-      ? 'skip'
-      : trigger === 'click'
-        ? gates.ai === 'manual'
-          ? 'run'
-          : 'skip'
-        : gates.ai === 'manual'
-          ? 'lookup'
-          : 'run';
-
-    // Only steps that can really spend keep a second run from starting. A look in the cache is
-    // quick and free, and so is a request the gate says the background will refuse ("no key", no
-    // credits left): none of them may keep a click from starting its steps.
-    const spends =
-      (imageStep === 'run' && canSpend(gates.image)) || (aiStep === 'run' && canSpend(gates.ai));
-    if (spends) {
-      if (current.busy) return;
-      current.busy = true;
+    // The click that starts the review takes the AI block's button away from the first render.
+    if (trigger === 'click' && current.ai?.status === 'waiting' && canSpend(gates.ai)) {
+      current.ai = { status: 'running' };
     }
-    // The click that starts the review also takes the AI block's button away, from the first render.
-    if (trigger === 'click' && aiStep === 'run') current.ai = { status: 'running' };
-    try {
-      if (imageStep !== 'skip') await imageSearchStep(current, imageStep === 'lookup', trigger);
-      if (analysed !== current || ctx.isInvalid) return;
-      if (aiStep !== 'skip') await aiReviewStep(current, aiStep === 'lookup');
-    } finally {
-      if (spends) current.busy = false;
+    // A search already running is not started twice, and the review waits for its own turn.
+    if (
+      imageStep !== 'skip' &&
+      !(await imageSearchStep(current, imageStep === 'lookup', trigger))
+    ) {
+      return;
     }
+    if (analysed !== current || ctx.isInvalid) return;
+    await aiReviewSteps(current, trigger);
   }
 
+  /** false when the search was not started because another one is running. */
   async function imageSearchStep(current: Analysed, lookup: boolean, trigger: Trigger) {
-    const { listing } = current;
-    // The row already says "Recherche en cours…" when the search starts by itself; only a click
-    // has to take the button's place.
-    if (trigger === 'click') showAnalysed(current, true);
-    const response = await searchPhoto(listing.photoUrls[0], searchDeps, lookup);
-    // A newer run (new item, bfcache restore) took the card over while the search ran.
-    if (analysed !== current) return;
-    // A look in the cache only ever shows a result: a miss, a failure or a lost message leaves the
-    // "Au clic" row alone (it is not a failed search), and so does a click that got there first.
-    if (lookup && (current.busy || response.status !== 'ok')) return;
-    current.result = withImageSearch(current.result, response);
-    showAnalysed(current);
+    // Only a search that can spend keeps another one from starting: a look in the cache is quick
+    // and free, and so is a request the gate says the background will refuse.
+    const spends = !lookup && canSpend(current.gates.image);
+    if (spends) {
+      if (current.busyImage) return false;
+      current.busyImage = true;
+    }
+    try {
+      // The row already says "Recherche en cours…" when the search starts by itself; only a click
+      // has to take the button's place.
+      if (trigger === 'click') showAnalysed(current, true);
+      const response = await searchPhoto(current.listing.photoUrls[0], searchDeps, lookup);
+      // A newer run (new item, bfcache restore) took the card over while the search ran.
+      if (analysed !== current) return true;
+      // A look in the cache only ever shows a result: a miss, a failure or a lost message leaves the
+      // "Au clic" row alone (it is not a failed search), and so does a click that got there first.
+      if (lookup && (current.busyImage || response.status !== 'ok')) return true;
+      current.result = withImageSearch(current.result, response);
+      showAnalysed(current);
+      return true;
+    } finally {
+      if (spends) current.busyImage = false;
+    }
   }
 
-  async function aiReviewStep(current: Analysed, lookup: boolean) {
+  /**
+   * Asks for the AI review until it is based on what the image row shows now. A review that was
+   * asked (or came from the cache) for another result of the search is stale: a click that ran the
+   * search after a cached review, a retry that succeeded. Asking again has a new cache key, so it
+   * may spend a credit, which is the point. A review is not asked again for the same result, even
+   * after a failure (reload the page to try again).
+   *
+   * One review runs at a time. A second call while one is running just returns: the running one
+   * looks at the image row when its answer comes, drops that answer if the row has changed since,
+   * and asks again. Its busy flag is not the search's, so the retry of a search is never ignored.
+   */
+  async function aiReviewSteps(current: Analysed, trigger: Trigger) {
+    const { gates } = current;
+    const lookup = trigger === 'auto' && gates.ai === 'manual';
+    // A click only starts what a credit can pay for; the rest is the background's to refuse.
+    if (trigger === 'click' && !canSpend(gates.ai)) return;
     if (!lookup) {
-      current.aiAsked = true;
-      // With no key or no credits left the answer is immediate and shows nothing: no flash of
-      // "L'IA lit l'annonce…" then.
-      if (canSpend(current.gates.ai)) {
-        current.ai = { status: 'running' };
-        showAnalysed(current);
-      }
+      if (current.busyAi) return;
+      current.busyAi = true;
     }
-    const response = await askAiReview(current.listing, current.result, aiDeps, lookup);
-    if (analysed !== current) return;
-    // The same rule as the search: a look in the cache only ever shows a review.
-    if (lookup && (current.busy || response.status !== 'ok')) return;
-    current.result = withAiReview(current.result, response);
-    current.ai = aiBlockFor(response);
-    showAnalysed(current);
+    try {
+      for (;;) {
+        if (analysed !== current || ctx.isInvalid) return;
+        const basis = imageBasis(current.result.rawChecks);
+        if (current.aiBasis === basis) return;
+        if (!lookup) {
+          current.aiBasis = basis;
+          // With no key or no credits left the answer is immediate and shows nothing: no flash of
+          // "L'IA lit l'annonce…" then.
+          if (canSpend(gates.ai)) {
+            current.ai = { status: 'running' };
+            showAnalysed(current);
+          }
+        }
+        const response = await askAiReview(current.listing, current.result, aiDeps, lookup);
+        if (analysed !== current) return;
+        const stale = basis !== imageBasis(current.result.rawChecks);
+        if (lookup) {
+          // A look in the cache only ever shows a review, for the image row it was asked about.
+          if (current.busyAi || stale || response.status !== 'ok') return;
+          current.aiBasis = basis;
+        } else if (stale) {
+          continue;
+        }
+        current.result = withAiReview(current.result, response);
+        current.ai = aiBlockFor(response);
+        showAnalysed(current);
+        if (lookup) return;
+      }
+    } finally {
+      if (!lookup) current.busyAi = false;
+    }
   }
 
   function stopKeepingAttached() {
@@ -345,8 +388,9 @@ function createCardController(ctx: ContentScriptContext) {
       result,
       gates,
       ai: initialAiBlock(gates.ai),
-      busy: false,
-      aiAsked: false,
+      busyImage: false,
+      busyAi: false,
+      aiBasis: null,
     };
     showAnalysed(analysed);
     // The card does not wait for Google. The paid steps start only now, and only for a run that is
