@@ -7,6 +7,7 @@ import { purgeExpired } from './maintenance';
 import { createMailer } from './mailer';
 import { registerBillingRoutes } from './routes/billing';
 import { registerProxyRoutes } from './routes/proxy';
+import { createShutdown } from './shutdown';
 import { realStripe } from './stripe';
 
 const config = loadConfig();
@@ -14,8 +15,8 @@ if (config.production && !config.trustProxy) {
   // Behind Caddy every client then looks like the proxy's own address: the per-address limits and
   // the cap on accounts per address would hit everybody at once.
   console.warn(
-    '[config] TRUST_PROXY is not true: the client address is read from the socket, not from ' +
-      'X-Forwarded-For. Set TRUST_PROXY=true when the server runs behind the reverse proxy.',
+    '[config] TRUST_PROXY is false: the client address is read from the socket, not from ' +
+      'X-Forwarded-For. That is only right when no reverse proxy is in front of the server.',
   );
 }
 const db = openDb(config.databasePath);
@@ -34,17 +35,14 @@ purgeExpired(db, Date.now());
 const purge = setInterval(() => purgeExpired(db, Date.now()), 60 * 60 * 1000);
 purge.unref();
 
-/** Stops taking requests, lets the running ones finish, then closes the database. */
-function shutdown(signal: string): void {
-  console.log(`${signal} received, shutting down`);
-  clearInterval(purge);
-  // A connection kept alive by a client must not hold the container past its stop timeout.
-  const forced = setTimeout(() => process.exit(1), 10_000);
-  forced.unref();
-  server.close(() => {
+const shutdown = createShutdown({
+  server,
+  cleanup: () => {
+    clearInterval(purge);
     db.close();
-    process.exit(0);
-  });
-}
+  },
+  exit: (code) => process.exit(code),
+  log: console.log,
+});
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));

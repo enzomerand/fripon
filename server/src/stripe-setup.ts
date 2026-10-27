@@ -9,6 +9,11 @@ import { STRIPE_API_VERSION, WEBHOOK_EVENTS } from './stripe';
  *
  * One product per plan, not one « Fripon » for all: the portal and the invoices show the product's
  * name, and « Fripon Essentiel » tells the subscriber what they pay for.
+ *
+ * Every product and every price carries `metadata.plan`: that, not the lookup key, is what tells
+ * the server which plan a subscription is on (the lookup key moves to the new price when a price
+ * changes, and the subscribers still on the old one would otherwise lose their plan). The script
+ * adds it to the products and prices it finds without it, and to a price whose lookup key it moves.
  */
 
 /** The products: one per plan, named as the portal and the invoices show them. */
@@ -69,6 +74,7 @@ interface SetupPrice {
   id: string;
   active: boolean;
   lookup_key: string | null;
+  metadata?: Record<string, string> | null;
   unit_amount: number | null;
   currency: string;
   tax_behavior?: string | null;
@@ -96,10 +102,12 @@ export interface SetupApi {
       starting_after?: string;
     }): Promise<Page<SetupProduct>>;
     create(params: Stripe.ProductCreateParams): Promise<SetupProduct>;
+    update(id: string, params: Stripe.ProductUpdateParams): Promise<SetupProduct>;
   };
   prices: {
     list(params: { lookup_keys: string[]; limit: number }): Promise<Page<SetupPrice>>;
     create(params: Stripe.PriceCreateParams): Promise<SetupPrice>;
+    update(id: string, params: Stripe.PriceUpdateParams): Promise<SetupPrice>;
   };
   billingPortal: {
     configurations: {
@@ -121,7 +129,8 @@ export interface SetupApi {
 export type Outcome = 'created' | 'found' | 'updated' | 'replaced';
 
 export interface SetupSummary {
-  products: Array<{ plan: PlanName; id: string; outcome: 'created' | 'found' }>;
+  /** `updated`: found without its `metadata.plan`, which was added. */
+  products: Array<{ plan: PlanName; id: string; outcome: 'created' | 'found' | 'updated' }>;
   prices: Array<{ lookupKey: string; id: string; outcome: Outcome; replaced?: string }>;
   portal: { id: string; outcome: 'created' | 'updated' };
   webhook: null | { id: string; outcome: 'created' | 'updated' | 'found'; secret: string | null };
@@ -182,14 +191,18 @@ export async function runSetup(
       existingProducts.find(
         (product) => product.metadata.fripon === PRODUCT_TAG && product.metadata.plan === plan,
       ) ?? existingProducts.find((product) => product.name === spec.name);
-    const product =
+    let product =
       existing ??
       (await stripe.products.create({
         name: spec.name,
         description: spec.description,
         metadata: { fripon: PRODUCT_TAG, plan },
       }));
-    const outcome = existing ? 'found' : 'created';
+    let outcome: 'created' | 'found' | 'updated' = existing ? 'found' : 'created';
+    if (existing && existing.metadata.plan !== plan) {
+      product = await stripe.products.update(existing.id, { metadata: { plan } });
+      outcome = 'updated';
+    }
     products.set(plan, product);
     productSummaries.push({ plan, id: product.id, outcome });
     log(`product ${spec.name}: ${product.id} (${outcome})`);
@@ -202,9 +215,16 @@ export async function runSetup(
     const product = products.get(spec.plan) as { id: string };
     const { data } = await stripe.prices.list({ lookup_keys: [lookupKey], limit: 10 });
     const held = data.find((price) => price.lookup_key === lookupKey);
+    // A price about to lose its lookup key (or found without one) must already say which plan it
+    // is: the subscribers on it keep the plan through `metadata.plan`.
+    const tagged = held !== undefined && held.metadata?.plan === spec.plan;
+    if (held && !tagged) {
+      await stripe.prices.update(held.id, { metadata: { plan: spec.plan } });
+    }
     if (held && matches(held, spec, product.id)) {
-      prices.push({ lookupKey, id: held.id, outcome: 'found' });
-      log(`price ${lookupKey}: ${held.id} (found)`);
+      const outcome = tagged ? 'found' : 'updated';
+      prices.push({ lookupKey, id: held.id, outcome });
+      log(`price ${lookupKey}: ${held.id} (${outcome})`);
       continue;
     }
 
@@ -216,6 +236,7 @@ export async function runSetup(
       lookup_key: lookupKey,
       tax_behavior: 'inclusive',
       nickname: spec.nickname,
+      metadata: { plan: spec.plan },
       ...(held && { transfer_lookup_key: true }),
     });
     prices.push({

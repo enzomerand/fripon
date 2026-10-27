@@ -27,7 +27,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The AI review only follows an image search served this recently. */
 export const REVIEW_WINDOW_MS = 7 * DAY_MS;
-/** Reviews of one photo, per account. */
+/** Reviews of one photo that go to Gemini, per account and calendar month (Paris). */
 export const REVIEWS_PER_PHOTO = 3;
 
 /** Usage rows of an account in a month (`YYYY-MM`) or a day (`YYYY-MM-DD`), the plan's only or all. */
@@ -145,38 +145,52 @@ export function releaseAnalysis(db: Db, accountId: string, photoKey: string, now
 }
 
 /**
- * Whether the account may run an AI review of this photo: it was served to it in the last 7 days
- * and fewer than 3 reviews were made for it. Counts the review when it answers true: call
- * `releaseReview` if the review then fails.
+ * Whether the account may have a review of this photo at all: it was served to it in the last 7
+ * days. Counts nothing (a cache hit costs nothing): `allowReview` counts, right before a call that
+ * really goes to Gemini.
+ */
+export function mayReview(db: Db, accountId: string, photoKey: string, now: Date): boolean {
+  const served = db
+    .prepare('SELECT MAX(served_at) AS at FROM usage WHERE account_id = ? AND photo_key = ?')
+    .get(accountId, photoKey) as { at: number | null };
+  return served.at !== null && now.getTime() - served.at <= REVIEW_WINDOW_MS;
+}
+
+/**
+ * Counts one review of this photo for the account in the month of `now` (Paris) when it may have
+ * one: the photo was served to it in the last 7 days (`mayReview`) and fewer than 3 reviews were
+ * counted for it this month. Call it only for a review that really goes to Gemini: an answer from
+ * the shared cache, or from a call somebody else is making, costs nothing and is not counted.
+ * Call `releaseReview` if the call then fails without having cost anything.
  */
 export function allowReview(db: Db, accountId: string, photoKey: string, now: Date): boolean {
   const at = now.getTime();
+  const { month } = periodIds(now);
   return db
     .transaction((): boolean => {
-      const served = db
-        .prepare('SELECT MAX(served_at) AS at FROM usage WHERE account_id = ? AND photo_key = ?')
-        .get(accountId, photoKey) as { at: number | null };
-      if (served.at === null || at - served.at > REVIEW_WINDOW_MS) return false;
+      if (!mayReview(db, accountId, photoKey, now)) return false;
 
       const done = db
-        .prepare('SELECT count FROM reviews WHERE account_id = ? AND photo_key = ?')
-        .get(accountId, photoKey) as { count: number } | undefined;
+        .prepare('SELECT count FROM reviews WHERE account_id = ? AND photo_key = ? AND month = ?')
+        .get(accountId, photoKey, month) as { count: number } | undefined;
       if (done && done.count >= REVIEWS_PER_PHOTO) return false;
 
       db.prepare(
-        `INSERT INTO reviews (account_id, photo_key, count, last_at) VALUES (?, ?, 1, ?)
-         ON CONFLICT (account_id, photo_key) DO UPDATE SET count = count + 1, last_at = excluded.last_at`,
-      ).run(accountId, photoKey, at);
+        `INSERT INTO reviews (account_id, photo_key, month, count, last_at) VALUES (?, ?, ?, 1, ?)
+         ON CONFLICT (account_id, photo_key, month)
+         DO UPDATE SET count = count + 1, last_at = excluded.last_at`,
+      ).run(accountId, photoKey, month, at);
       return true;
     })
     .immediate();
 }
 
-/** Gives back the review `allowReview` counted, once, when the review itself failed. */
-export function releaseReview(db: Db, accountId: string, photoKey: string): void {
+/** Gives back the review `allowReview` counted in the month of `now`, when the call cost nothing. */
+export function releaseReview(db: Db, accountId: string, photoKey: string, now: Date): void {
   db.prepare(
-    'UPDATE reviews SET count = MAX(count - 1, 0) WHERE account_id = ? AND photo_key = ?',
-  ).run(accountId, photoKey);
+    `UPDATE reviews SET count = MAX(count - 1, 0)
+     WHERE account_id = ? AND photo_key = ? AND month = ?`,
+  ).run(accountId, photoKey, periodIds(now).month);
 }
 
 /** A counter and its cap; `cap` is null when the account has none (the trial has no daily cap). */

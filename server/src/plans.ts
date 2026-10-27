@@ -12,8 +12,8 @@ export const PLAN_CAPS: Record<PlanName, { monthCap: number; dayCap: number }> =
 };
 
 /**
- * The plans by the lookup key of their Stripe price (set on the price in the Stripe dashboard).
- * The billing code turns a subscription's price into a plan with it and stores `plan`.
+ * The plans by the lookup key of their Stripe price: what Checkout asks for (the price to buy is
+ * found by its key), and the last resort of `planOfPrice` when a price carries no `metadata.plan`.
  */
 export const PLANS = {
   essentiel_monthly: { plan: 'essentiel', ...PLAN_CAPS.essentiel },
@@ -30,6 +30,30 @@ export function isPlanName(value: unknown): value is PlanName {
 /** The plan a Stripe price lookup key stands for, null for a key Fripon does not sell. */
 export function planForLookupKey(key: string): PlanName | null {
   return Object.hasOwn(PLANS, key) ? PLANS[key as PriceLookupKey].plan : null;
+}
+
+/** The fields of a subscription item's price that tell which plan it is. */
+export interface PlanPrice {
+  lookup_key: string | null;
+  metadata?: Record<string, string> | null;
+  product?: string | { metadata?: Record<string, string> | null } | null;
+}
+
+/**
+ * The plan a subscription's price stands for. Read from `metadata.plan` of the price, then of its
+ * product (`stripe:setup` sets both), and only then from the lookup key: a price change moves the
+ * lookup key (`transfer_lookup_key`) to the new price, and the subscribers still on the old one
+ * must keep their plan. Null for a price Fripon does not sell.
+ */
+export function planOfPrice(price: PlanPrice): PlanName | null {
+  const fromPrice = price.metadata?.plan;
+  if (isPlanName(fromPrice)) return fromPrice;
+  const product = price.product;
+  if (typeof product === 'object' && product !== null) {
+    const fromProduct = product.metadata?.plan;
+    if (isPlanName(fromProduct)) return fromProduct;
+  }
+  return price.lookup_key === null ? null : planForLookupKey(price.lookup_key);
 }
 
 /**

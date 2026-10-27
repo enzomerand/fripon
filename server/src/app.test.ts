@@ -231,6 +231,37 @@ describe('POST /v1/auth/verify', () => {
     expect((await signInFrom('n1+again@example.com', '203.0.113.52')).trialLeft).toBe(0);
   });
 
+  it('counts the addresses of one IPv6 /64 as one client address: the 4th account of the block starts without a trial', async () => {
+    const t = createTestApp([], testConfig({ trustProxy: true }));
+    const trialOf = async (email: string, ip: string) => {
+      await post(t.app, '/v1/auth/code', { email }, { 'x-forwarded-for': ip });
+      const response = await post(
+        t.app,
+        '/v1/auth/verify',
+        { email, code: t.mailer.sent.at(-1)!.code },
+        { 'x-forwarded-for': ip },
+      );
+      const { token } = (await response.json()) as { token: string };
+      return (
+        (await (await t.app.request('/v1/me', { headers: bearer(token) })).json()) as {
+          trialLeft: number;
+        }
+      ).trialLeft;
+    };
+
+    // Three different addresses of the same /64, then the 4th, and the same mailbox as the first.
+    expect(await trialOf('v1@example.com', '2001:db8:1:2:aaaa::1')).toBe(15);
+    expect(await trialOf('v2@example.com', '2001:db8:1:2:bbbb::2')).toBe(15);
+    expect(await trialOf('v3@example.com', '2001:db8:1:2::3')).toBe(15);
+    expect(await trialOf('v4@example.com', '2001:db8:1:2:cccc:dddd:eeee:4')).toBe(0);
+    // The next /64 is another client; IPv4 and IPv4-mapped IPv6 are one client together.
+    expect(await trialOf('v5@example.com', '2001:db8:1:3::1')).toBe(15);
+    expect(await trialOf('w1@example.com', '203.0.113.60')).toBe(15);
+    expect(await trialOf('w2@example.com', '::ffff:203.0.113.60')).toBe(15);
+    expect(await trialOf('w3@example.com', '::ffff:cb00:713c')).toBe(15);
+    expect(await trialOf('w4@example.com', '203.0.113.60')).toBe(0);
+  });
+
   it.each([
     ['no code', { email: EMAIL }],
     ['a numeric code', { email: EMAIL, code: 123456 }],
@@ -402,6 +433,36 @@ describe('rate limits', () => {
       expect((await verify('198.51.100.1')).status).toBe(400);
     expect((await verify('198.51.100.1')).status).toBe(429);
     expect((await verify('198.51.100.2')).status).toBe(400);
+  });
+
+  it('limits code requests per IPv6 /64, not per address: rotating the low 64 bits escapes nothing', async () => {
+    const t = proxied();
+    for (let i = 0; i < CODE_REQUESTS_PER_HOUR; i++) {
+      expect((await ask(t, `2001:db8:5:6:${i}::${i + 1}`, `u${i}@example.com`)).status).toBe(204);
+    }
+    expect((await ask(t, '2001:db8:5:6:ffff:ffff:ffff:ffff', 'z@example.com')).status).toBe(429);
+    // Another block, and an IPv4 address, are other clients.
+    expect((await ask(t, '2001:db8:5:7::1', 'z@example.com')).status).toBe(204);
+    expect((await ask(t, '203.0.113.9', 'z@example.com')).status).toBe(204);
+  });
+
+  it('reads an IPv4-mapped IPv6 address as the IPv4 address it carries', async () => {
+    const t = proxied();
+    for (let i = 0; i < CODE_REQUESTS_PER_HOUR; i++) {
+      await ask(t, i % 2 === 0 ? '203.0.113.20' : '::ffff:203.0.113.20', `u${i}@example.com`);
+    }
+    expect((await ask(t, '::ffff:cb00:7114', 'z@example.com')).status).toBe(429);
+  });
+
+  it('limits code guesses per IPv6 /64 too', async () => {
+    const t = proxied();
+    const verify = (ip: string) =>
+      post(t.app, '/v1/auth/verify', { email: EMAIL, code: '123456' }, { 'x-forwarded-for': ip });
+    for (let i = 0; i < VERIFY_ATTEMPTS_PER_HOUR; i++) {
+      expect((await verify(`2001:db8:9:9:${i}::1`)).status).toBe(400);
+    }
+    expect((await verify('2001:db8:9:9::99')).status).toBe(429);
+    expect((await verify('2001:db8:9:8::1')).status).toBe(400);
   });
 
   it("reads the last X-Forwarded-For entry (the proxy's), not what the client wrote first", async () => {

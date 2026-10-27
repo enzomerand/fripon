@@ -2,6 +2,8 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 import { canonicalEmail } from './email';
+import { dropSizeSegment } from './photo-key';
+import { periodIds } from './time';
 
 export type Db = Database.Database;
 
@@ -145,6 +147,63 @@ const MIGRATIONS: Migration[] = [
       email: string;
     }[]) {
       update.run(canonicalEmail(row.email), row.id);
+    }
+  },
+  (db) => {
+    db.exec(`
+    -- A wrong guess of a sign-in code now also remembers where it came from (a keyed hash of the
+    -- client's address prefix, never the address): 10 per address and prefix, 50 per address.
+    ALTER TABLE login_failures ADD COLUMN ip_hash TEXT NOT NULL DEFAULT '';
+    CREATE INDEX login_failures_by_email_ip ON login_failures (email, ip_hash, at);
+
+    -- Vision calls served to accounts on their free trial, a part of the day's count: the trial
+    -- may use a share of the global ceiling only.
+    ALTER TABLE vision_calls ADD COLUMN trial_count INTEGER NOT NULL DEFAULT 0;
+
+    -- Reviews are now counted per account, photo AND month (Paris), and only when the call really
+    -- went to Gemini.
+    CREATE TABLE reviews_by_month (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      photo_key TEXT NOT NULL,
+      month TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      last_at INTEGER NOT NULL,
+      PRIMARY KEY (account_id, photo_key, month)
+    );
+    `);
+
+    // The old counters go to the month of their last review. A photo key loses its size segment
+    // (`/f800/`, `/310x430/`) like every new key does: one listing, one analysis.
+    const insert = db.prepare(
+      `INSERT INTO reviews_by_month (account_id, photo_key, month, count, last_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (account_id, photo_key, month) DO UPDATE SET
+         count = count + excluded.count, last_at = MAX(last_at, excluded.last_at)`,
+    );
+    for (const row of db.prepare('SELECT * FROM reviews').all() as {
+      account_id: string;
+      photo_key: string;
+      count: number;
+      last_at: number;
+    }[]) {
+      insert.run(
+        row.account_id,
+        dropSizeSegment(row.photo_key),
+        periodIds(new Date(row.last_at)).month,
+        row.count,
+        row.last_at,
+      );
+    }
+    db.exec('DROP TABLE reviews; ALTER TABLE reviews_by_month RENAME TO reviews;');
+
+    // OR IGNORE: two rows of one month that now share a key keep the old key of the second one.
+    const rekey = db.prepare('UPDATE OR IGNORE usage SET photo_key = ? WHERE rowid = ?');
+    for (const row of db.prepare('SELECT rowid AS id, photo_key FROM usage').all() as {
+      id: number;
+      photo_key: string;
+    }[]) {
+      const key = dropSizeSegment(row.photo_key);
+      if (key !== row.photo_key) rekey.run(key, row.id);
     }
   },
 ];

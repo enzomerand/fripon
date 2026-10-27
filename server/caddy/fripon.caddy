@@ -16,8 +16,10 @@
 #
 #    then `docker compose up -d` in /opt/reverse-proxy to recreate Caddy with the new network.
 #
-# 2. The domain is only written here (the name of the site) and in PUBLIC_URL (server/.env): change
-#    it in those two places, and in the Stripe webhook URL.
+# 2. The domain is written here (the name of the site), in PUBLIC_URL (server/.env), in the Stripe
+#    webhook URL, and in the extension (`CLOUD_ORIGIN` of lib/cloud/config.ts and the host
+#    permission of the generated manifest): docs/cloud.md lists every place, and says to freeze
+#    the domain before the extension is published.
 #
 # 3. The container name `fripon-cloud` and port 8787 come from server/compose.yml and PORT.
 
@@ -40,15 +42,26 @@ fripon.endurance.tools {
 		output file /var/log/caddy/fripon.log {
 			roll_size 10MiB
 			roll_keep 10
-			roll_keep_for 720h
+			# Seven days: the logs only serve to look at a recent problem.
+			roll_keep_for 168h
 		}
-		# Nothing secret in the logs: no credentials, no query string (Checkout session ids...), no
-		# long token even when it ends up in a path.
+		# Nothing secret or personal in the logs: no credentials, no full client address (masked to a
+		# /24 or a /48: the server itself only ever sees the real one, hashed), no query string
+		# (Checkout session ids...), no long token even when it ends up in a path.
 		format filter {
 			wrap json
 			request>headers>Authorization delete
 			request>headers>Cookie delete
 			request>headers>Stripe-Signature delete
+			request>headers>X-Forwarded-For delete
+			request>remote_ip ip_mask {
+				ipv4 24
+				ipv6 48
+			}
+			request>client_ip ip_mask {
+				ipv4 24
+				ipv6 48
+			}
 			resp_headers>Set-Cookie delete
 			request>uri regexp \?.*|[A-Za-z0-9_-]{24,} REDACTED
 		}

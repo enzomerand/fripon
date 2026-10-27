@@ -36,6 +36,8 @@ export function fakeClock(start = '2026-10-20T12:00:00Z'): Clock {
 
 export interface FakeMailer extends Mailer {
   sent: { email: string; code: string }[];
+  /** The owner's alerts, in the order they were sent. */
+  alerts: { to: string; subject: string; text: string }[];
   /** The next `sendCode` rejects with this. */
   failWith: Error | null;
 }
@@ -43,10 +45,14 @@ export interface FakeMailer extends Mailer {
 export function fakeMailer(): FakeMailer {
   const mailer: FakeMailer = {
     sent: [],
+    alerts: [],
     failWith: null,
     async sendCode(email, code) {
       if (mailer.failWith) throw mailer.failWith;
       mailer.sent.push({ email, code });
+    },
+    async sendAlert(to, subject, text) {
+      mailer.alerts.push({ to, subject, text });
     },
   };
   return mailer;

@@ -24,11 +24,19 @@ export const CODE_MAX_ATTEMPTS = 5;
 /** Rolling window of the per-address cap on wrong guesses (a new code does not reset it). */
 export const LOGIN_FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000;
 /**
- * Wrong guesses an address takes in that window, all its codes together; beyond that every
- * verification answers like a wrong code until the oldest guess leaves the window. Without it,
- * 3 codes per 15 minutes x 5 guesses each would let someone grind through a day of guesses.
+ * Wrong guesses an address takes in that window from one client (an IPv4 address, an IPv6 /64
+ * prefix), all its codes together; beyond that every verification from that client answers like a
+ * wrong code until the oldest guess leaves the window. Without it, 3 codes per 15 minutes x 5
+ * guesses each would let someone grind through a day of guesses. It is per client so that somebody
+ * else guessing at an address cannot lock its owner out from their own line.
  */
 export const LOGIN_FAILURES_PER_WINDOW = 10;
+/**
+ * Wrong guesses an address takes in that window whatever the client: what many addresses (a
+ * botnet, a rented /48) together may try at one mailbox. Past it, every verification of that
+ * address answers like a wrong code, from anywhere.
+ */
+export const LOGIN_FAILURES_PER_EMAIL_PER_WINDOW = 50;
 /** Window of the cap on accounts created from one client address. */
 export const SIGNUP_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** Accounts one address may create per window with a trial; the next ones start without one. */
@@ -37,6 +45,8 @@ export const SIGNUPS_PER_IP_PER_WINDOW = 3;
 export const MAX_SESSIONS = 3;
 /** A session nobody used for this long stops working. */
 export const SESSION_IDLE_MS = 90 * 24 * 60 * 60 * 1000;
+/** A session never lives longer than this, however often it is used: a token stolen once ends. */
+export const SESSION_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 /** `last_used_at` moves at most this often: authenticating is a read, not a write per request. */
 const LAST_USED_RESOLUTION_MS = 60 * 1000;
 
@@ -124,31 +134,42 @@ export function createAuth({ db, mailer, secret, now }: AuthDeps): Auth {
     return code;
   });
 
-  const checkCode = db.transaction((email: string, code: string, at: number): boolean => {
-    // Locked: too many wrong guesses on this address today. Nothing more is counted, so the lock
-    // ends when the oldest guess leaves the window, and the answer is a plain wrong code.
-    const failures = db
-      .prepare('SELECT COUNT(*) AS n FROM login_failures WHERE email = ? AND at > ?')
-      .get(email, at - LOGIN_FAILURE_WINDOW_MS) as { n: number };
-    if (failures.n >= LOGIN_FAILURES_PER_WINDOW) return false;
+  const checkCode = db.transaction(
+    (email: string, code: string, at: number, hashedIp: string): boolean => {
+      // Locked: too many wrong guesses on this address today, from this client or from all of them.
+      // Nothing more is counted, so the lock ends when the oldest guess leaves the window, and the
+      // answer is a plain wrong code.
+      const failures = db
+        .prepare(
+          `SELECT COUNT(*) AS total, COALESCE(SUM(ip_hash = ?), 0) AS here
+         FROM login_failures WHERE email = ? AND at > ?`,
+        )
+        .get(hashedIp, email, at - LOGIN_FAILURE_WINDOW_MS) as { total: number; here: number };
+      if (failures.here >= LOGIN_FAILURES_PER_WINDOW) return false;
+      if (failures.total >= LOGIN_FAILURES_PER_EMAIL_PER_WINDOW) return false;
 
-    const row = db
-      .prepare('SELECT code_hash, expires_at, attempts FROM login_codes WHERE email = ?')
-      .get(email) as { code_hash: string; expires_at: number; attempts: number } | undefined;
-    if (!row || row.expires_at <= at || row.attempts >= CODE_MAX_ATTEMPTS) return false;
+      const row = db
+        .prepare('SELECT code_hash, expires_at, attempts FROM login_codes WHERE email = ?')
+        .get(email) as { code_hash: string; expires_at: number; attempts: number } | undefined;
+      if (!row || row.expires_at <= at || row.attempts >= CODE_MAX_ATTEMPTS) return false;
 
-    // The guess is counted before it is compared, so nothing can skip the count.
-    db.prepare('UPDATE login_codes SET attempts = attempts + 1 WHERE email = ?').run(email);
-    const expected = Buffer.from(row.code_hash, 'hex');
-    const given = Buffer.from(codeHash(email, code), 'hex');
-    if (expected.length !== given.length || !timingSafeEqual(expected, given)) {
-      db.prepare('INSERT INTO login_failures (email, at) VALUES (?, ?)').run(email, at);
-      return false;
-    }
+      // The guess is counted before it is compared, so nothing can skip the count.
+      db.prepare('UPDATE login_codes SET attempts = attempts + 1 WHERE email = ?').run(email);
+      const expected = Buffer.from(row.code_hash, 'hex');
+      const given = Buffer.from(codeHash(email, code), 'hex');
+      if (expected.length !== given.length || !timingSafeEqual(expected, given)) {
+        db.prepare('INSERT INTO login_failures (email, ip_hash, at) VALUES (?, ?, ?)').run(
+          email,
+          hashedIp,
+          at,
+        );
+        return false;
+      }
 
-    db.prepare('DELETE FROM login_codes WHERE email = ?').run(email);
-    return true;
-  });
+      db.prepare('DELETE FROM login_codes WHERE email = ?').run(email);
+      return true;
+    },
+  );
 
   /** Analyses of the trial for an account about to be created: none for a known mailbox or a busy address. */
   function trialFor(canonical: string, hashedIp: string | null, at: number): number {
@@ -206,9 +227,13 @@ export function createAuth({ db, mailer, secret, now }: AuthDeps): Auth {
       const email = normalizeEmail(rawEmail);
       if (email === null) return null;
       const at = now().getTime();
+      // A client that cannot be told counts as one client of its own (the empty hash).
+      const hashedIp = clientIp === null ? '' : ipHash(clientIp);
       // Both steps in one transaction: a code can open one session at most.
       return db
-        .transaction(() => (checkCode(email, code, at) ? openSession(email, at, clientIp) : null))
+        .transaction(() =>
+          checkCode(email, code, at, hashedIp) ? openSession(email, at, clientIp) : null,
+        )
         .immediate();
     },
 
@@ -217,14 +242,15 @@ export function createAuth({ db, mailer, secret, now }: AuthDeps): Auth {
       const at = now().getTime();
       const row = db
         .prepare(
-          `SELECT s.last_used_at AS last_used_at, a.* FROM sessions s
-           JOIN accounts a ON a.id = s.account_id WHERE s.token_hash = ?`,
+          `SELECT s.last_used_at AS last_used_at, s.created_at AS session_created_at, a.*
+           FROM sessions s JOIN accounts a ON a.id = s.account_id WHERE s.token_hash = ?`,
         )
-        .get(sha256(token)) as (Account & { last_used_at: number }) | undefined;
+        .get(sha256(token)) as
+        (Account & { last_used_at: number; session_created_at: number }) | undefined;
       if (!row) return null;
-      const { last_used_at: lastUsedAt, ...account } = row;
+      const { last_used_at: lastUsedAt, session_created_at: sessionCreatedAt, ...account } = row;
 
-      if (at - lastUsedAt >= SESSION_IDLE_MS) {
+      if (at - lastUsedAt >= SESSION_IDLE_MS || at - sessionCreatedAt >= SESSION_MAX_AGE_MS) {
         db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token));
         return null;
       }

@@ -21,6 +21,7 @@ interface StoredPrice {
   tax_behavior: string | null;
   recurring: { interval: string; interval_count: number } | null;
   product: string;
+  metadata?: Record<string, string>;
 }
 
 /** A Stripe account in memory: lists page by two, creating makes ids, a lookup key can be moved. */
@@ -36,6 +37,8 @@ function fakeAccount() {
   const calls = {
     productCreates: [] as Stripe.ProductCreateParams[],
     priceCreates: [] as Stripe.PriceCreateParams[],
+    productUpdates: [] as Array<{ id: string; params: Stripe.ProductUpdateParams }>,
+    priceUpdates: [] as Array<{ id: string; params: Stripe.PriceUpdateParams }>,
     portalCreates: [] as Stripe.BillingPortal.ConfigurationCreateParams[],
     portalUpdates: [] as Array<{
       id: string;
@@ -66,6 +69,14 @@ function fakeAccount() {
         state.products.push(product);
         return product;
       },
+      async update(productId, params) {
+        calls.productUpdates.push({ id: productId, params });
+        const product = state.products.find(
+          (candidate) => candidate.id === productId,
+        ) as (typeof state.products)[number];
+        Object.assign(product.metadata, params.metadata);
+        return product;
+      },
     },
     prices: {
       async list(params) {
@@ -92,8 +103,15 @@ function fakeAccount() {
             ? { interval: params.recurring.interval, interval_count: 1 }
             : null,
           product: params.product as string,
+          metadata: { ...(params.metadata as Record<string, string> | undefined) },
         };
         state.prices.push(price);
+        return price;
+      },
+      async update(priceId, params) {
+        calls.priceUpdates.push({ id: priceId, params });
+        const price = state.prices.find((candidate) => candidate.id === priceId) as StoredPrice;
+        price.metadata = { ...price.metadata, ...(params.metadata as Record<string, string>) };
         return price;
       },
     },
@@ -263,9 +281,13 @@ describe('runSetup', () => {
 
     const { summary } = await run(account);
 
+    // Found by its name, and given the plan it stands for (`metadata.plan`).
     expect(summary.products).toEqual([
-      { plan: 'essentiel', id: 'prod_ess', outcome: 'found' },
+      { plan: 'essentiel', id: 'prod_ess', outcome: 'updated' },
       { plan: 'revendeur', id: expect.any(String), outcome: 'created' },
+    ]);
+    expect(account.calls.productUpdates).toEqual([
+      { id: 'prod_ess', params: { metadata: { plan: 'essentiel' } } },
     ]);
     expect(account.calls.productCreates).toHaveLength(1);
     expect(account.calls.priceCreates[0]).toMatchObject({ product: 'prod_ess' });
@@ -354,6 +376,71 @@ describe('runSetup', () => {
     ).toHaveLength(1);
   });
 
+  it('tags every product and price it creates with the plan, which is what the server reads', async () => {
+    const account = fakeAccount();
+
+    await run(account);
+
+    expect(account.state.products.map((product) => product.metadata.plan)).toEqual([
+      'essentiel',
+      'revendeur',
+    ]);
+    for (const price of account.state.prices) {
+      const spec = PRICE_SPECS[price.lookup_key as keyof typeof PRICE_SPECS];
+      expect(price.metadata).toEqual({ plan: spec.plan });
+    }
+    for (const create of account.calls.priceCreates) {
+      expect(create.metadata).toEqual({
+        plan: PRICE_SPECS[create.lookup_key as keyof typeof PRICE_SPECS].plan,
+      });
+    }
+  });
+
+  it('adds the plan to the prices and products it finds without it, and only to those', async () => {
+    const account = fakeAccount();
+    await run(account);
+    // An earlier release of the script made them without the tag.
+    const price = account.state.prices.find(
+      (candidate) => candidate.lookup_key === 'essentiel_yearly',
+    ) as StoredPrice;
+    delete price.metadata;
+    delete (account.state.products[1] as { metadata: Record<string, string> }).metadata.plan;
+    account.calls.priceUpdates.length = 0;
+    account.calls.productUpdates.length = 0;
+
+    const { summary } = await run(account);
+
+    expect(account.calls.priceUpdates).toEqual([
+      { id: price.id, params: { metadata: { plan: 'essentiel' } } },
+    ]);
+    expect(account.calls.productUpdates).toEqual([
+      { id: account.state.products[1]?.id, params: { metadata: { plan: 'revendeur' } } },
+    ]);
+    expect(outcomes(summary)).toEqual({
+      essentiel_monthly: 'found',
+      essentiel_yearly: 'updated',
+      revendeur_monthly: 'found',
+    });
+    expect(summary.products.map((product) => product.outcome)).toEqual(['found', 'updated']);
+    expect(price.metadata).toEqual({ plan: 'essentiel' });
+  });
+
+  it('tags the price whose lookup key it moves, so its subscribers keep their plan', async () => {
+    const account = fakeAccount();
+    await run(account);
+    const old = account.state.prices.find(
+      (price) => price.lookup_key === 'essentiel_monthly',
+    ) as StoredPrice;
+    delete old.metadata;
+    old.unit_amount = 199;
+
+    await run(account);
+
+    // The old price lost its lookup key, and says which plan it is on all the same.
+    expect(old.lookup_key).toBeNull();
+    expect(old.metadata).toEqual({ plan: 'essentiel' });
+  });
+
   it.each([
     ['archived', (price: StoredPrice) => (price.active = false)],
     ['without tax behavior', (price: StoredPrice) => (price.tax_behavior = 'unspecified')],
@@ -434,7 +521,7 @@ describe('runSetup', () => {
       expect(account.state.webhooks).toEqual([]);
     });
 
-    it('is created for the four events handled, pinned to the SDK API version, and its secret is printed once', async () => {
+    it('is created for the five events handled (the dispute one included), pinned to the SDK API version, and its secret is printed once', async () => {
       const account = fakeAccount();
 
       const { summary, lines } = await run(account, URL);
@@ -447,7 +534,8 @@ describe('runSetup', () => {
           api_version: STRIPE_API_VERSION,
         },
       ]);
-      expect(WEBHOOK_EVENTS).toHaveLength(4);
+      expect(WEBHOOK_EVENTS).toHaveLength(5);
+      expect(WEBHOOK_EVENTS).toContain('charge.dispute.created');
       expect(summary.webhook).toMatchObject({ outcome: 'created', secret: 'whsec_created_once' });
       expect(lines.filter((line) => line.includes('whsec_created_once'))).toHaveLength(1);
 

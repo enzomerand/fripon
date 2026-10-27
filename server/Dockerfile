@@ -4,8 +4,10 @@
 #   docker build -f server/Dockerfile -t fripon-cloud .
 # `server/compose.yml` does exactly that. `.dockerignore` (at the root) keeps the context small.
 
+# The Node image is pinned to an exact version: a rebuild must not move the runtime by itself. Bump it
+# on purpose (security releases: https://nodejs.org/en/about/previous-releases), keep it on 22.x.
 # ---- build: all dependencies, the esbuild bundle, then only the production dependencies ----
-FROM node:22-bookworm-slim AS build
+FROM node:22.23.4-bookworm-slim AS build
 
 # No compiler here on purpose: better-sqlite3 13 ships prebuilt binaries inside the package (linux
 # x64 and arm64, glibc 2.34 at most, bookworm has 2.36) and never compiles at install. If a future
@@ -18,12 +20,14 @@ RUN npm ci
 COPY lib /app/lib
 COPY server/tsconfig.json ./
 COPY server/src ./src
-# The bundle keeps its npm packages external (--packages=external): after the build, only the
-# production ones stay in node_modules.
-RUN npm run build && npm prune --omit=dev
+COPY server/scripts ./scripts
+# The bundles keep their npm packages external (--packages=external): after the build, only the
+# production ones stay in node_modules. dist/stripe-resync.js is the one-off maintenance command
+# (`docker compose exec fripon-cloud node dist/stripe-resync.js`, see docs/cloud.md).
+RUN npm run build && npm run build:resync && npm prune --omit=dev
 
 # ---- runtime: production node_modules + the bundle, nothing else ----
-FROM node:22-bookworm-slim AS runtime
+FROM node:22.23.4-bookworm-slim AS runtime
 
 ENV NODE_ENV=production \
     DATABASE_PATH=/data/fripon.db
@@ -33,6 +37,7 @@ WORKDIR /app
 COPY server/package.json ./package.json
 COPY --from=build /app/server/node_modules ./node_modules
 COPY --from=build /app/server/dist/main.js ./dist/main.js
+COPY --from=build /app/server/dist/stripe-resync.js ./dist/stripe-resync.js
 
 # The SQLite database (and its -wal / -shm files) lives in /data. The directory is created and
 # handed to the `node` user (uid 1000) before VOLUME, so a new named volume inherits that owner.
@@ -46,6 +51,6 @@ EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=6s --start-period=15s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/healthz',{signal:AbortSignal.timeout(5000)}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 
-# main.ts closes the server and the database on SIGTERM.
+# main.ts closes the server and the database on SIGTERM (it waits up to 45 s for the requests in flight).
 STOPSIGNAL SIGTERM
 CMD ["node", "dist/main.js"]

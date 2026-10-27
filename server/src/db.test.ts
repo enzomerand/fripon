@@ -138,6 +138,64 @@ describe('schema', () => {
     raw.close();
   });
 
+  it('upgrades the database of the second release: reviews move to their month, photo keys lose their size', () => {
+    const raw = new Database(':memory:');
+    migrate(raw, 2);
+    raw.pragma('foreign_keys = ON');
+    raw.prepare("INSERT INTO accounts (id, email, created_at) VALUES ('a', 'a@b.c', 1)").run();
+    // 2026-10-20 12:00 UTC is October in Paris.
+    const lastAt = Date.UTC(2026, 9, 20, 12);
+    raw
+      .prepare('INSERT INTO reviews (account_id, photo_key, count, last_at) VALUES (?, ?, ?, ?)')
+      .run('a', 'https://images1.vinted.net/t/01_a/f800/1.jpeg', 2, lastAt);
+    raw
+      .prepare('INSERT INTO reviews (account_id, photo_key, count, last_at) VALUES (?, ?, ?, ?)')
+      .run('a', 'https://images1.vinted.net/t/01_a/310x430/1.jpeg', 1, lastAt + 1000);
+    const usage = raw.prepare(
+      "INSERT INTO usage (account_id, photo_key, month, day, kind, served_at) VALUES ('a', ?, ?, '2026-10-20', 'plan', 0)",
+    );
+    usage.run('https://images1.vinted.net/t/01_a/f800/1.jpeg', '2026-10');
+    usage.run('https://images1.vinted.net/t/01_b/f800/2.jpeg', '2026-10');
+    usage.run('https://images1.vinted.net/t/01_b/310x430/2.jpeg', '2026-10');
+    raw.prepare('INSERT INTO login_failures (email, at) VALUES (?, ?)').run('a@b.c', 5);
+    raw.prepare("INSERT INTO vision_calls (day, count) VALUES ('2026-10-20', 7)").run();
+
+    migrate(raw);
+
+    // The two sizes of one photo are one counter now, in the month of the last review.
+    expect(raw.prepare('SELECT photo_key, month, count FROM reviews').all()).toEqual([
+      { photo_key: 'https://images1.vinted.net/t/01_a/1.jpeg', month: '2026-10', count: 3 },
+    ]);
+    // The two sizes of the second photo collide: one takes the new key, the other keeps its old
+    // one (which of the two depends on the order the rows are read in). Nothing is lost.
+    const keys = (
+      raw.prepare('SELECT photo_key FROM usage ORDER BY photo_key').all() as { photo_key: string }[]
+    ).map((row) => row.photo_key);
+    expect(keys).toHaveLength(3);
+    expect(keys).toContain('https://images1.vinted.net/t/01_a/1.jpeg');
+    expect(keys).toContain('https://images1.vinted.net/t/01_b/2.jpeg');
+    expect(raw.prepare('SELECT ip_hash FROM login_failures').all()).toEqual([{ ip_hash: '' }]);
+    expect(raw.prepare('SELECT count, trial_count FROM vision_calls').all()).toEqual([
+      { count: 7, trial_count: 0 },
+    ]);
+    raw.close();
+  });
+
+  it('counts a review per account, photo and month', () => {
+    const db = memory();
+    const { id } = insertAccount(db);
+    const insert = (photo: string, month: string) =>
+      db
+        .prepare(
+          'INSERT INTO reviews (account_id, photo_key, month, count, last_at) VALUES (?, ?, ?, 1, 0)',
+        )
+        .run(id, photo, month);
+    insert('p', '2026-10');
+    expect(() => insert('p', '2026-10')).toThrow(/UNIQUE/);
+    insert('p', '2026-11');
+    insert('q', '2026-10');
+  });
+
   it('keeps emails and Stripe customers unique', () => {
     const db = memory();
     insertAccount(db, { email: 'a@b.c', stripe_customer_id: 'cus_1' });
@@ -158,7 +216,7 @@ describe('schema', () => {
       "INSERT INTO usage (account_id, photo_key, month, day, kind, served_at) VALUES (?, 'p', '2026-10', '2026-10-20', 'plan', 0)",
     ).run(id);
     db.prepare(
-      "INSERT INTO reviews (account_id, photo_key, count, last_at) VALUES (?, 'p', 1, 0)",
+      "INSERT INTO reviews (account_id, photo_key, month, count, last_at) VALUES (?, 'p', '2026-10', 1, 0)",
     ).run(id);
     db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
     for (const table of ['sessions', 'usage', 'reviews']) {

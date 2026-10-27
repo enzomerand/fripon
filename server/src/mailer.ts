@@ -4,9 +4,11 @@ import type { Config } from './config';
 /** How long a sign-in code lives; the e-mail says it, `auth.ts` enforces it. */
 export const CODE_TTL_MINUTES = 10;
 
-/** Sends the sign-in code. It throws when the mail could not be handed over. */
+/** Sends the sign-in code and the owner's alerts. They throw when the mail could not be handed over. */
 export interface Mailer {
   sendCode(email: string, code: string): Promise<void>;
+  /** A plain-text mail to the owner (see `alerts.ts`). */
+  sendAlert(to: string, subject: string, text: string): Promise<void>;
 }
 
 /** The mail a person gets (French, tutoiement). */
@@ -34,6 +36,9 @@ export function createSmtpMailer(smtpUrl: string, from: string): Mailer {
     async sendCode(email, code) {
       await transport.sendMail({ from, to: email, ...codeMessage(code) });
     },
+    async sendAlert(to, subject, text) {
+      await transport.sendMail({ from, to, subject, text });
+    },
   };
 }
 
@@ -42,6 +47,9 @@ export function createConsoleMailer(log: (line: string) => void = console.log): 
   return {
     async sendCode(email, code) {
       log(`[mail] sign-in code for ${email}: ${code}`);
+    },
+    async sendAlert(to, subject, text) {
+      log(`[mail] alert to ${to}: ${subject}\n${text}`);
     },
   };
 }

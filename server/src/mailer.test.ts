@@ -52,6 +52,19 @@ describe('createSmtpMailer', () => {
     });
   });
 
+  it('sends an alert to the owner as a plain text, from the same sender', async () => {
+    const mailer = createSmtpMailer('smtps://user:pass@smtp.example.com:465', 'Fripon <a@b.c>');
+
+    await mailer.sendAlert('owner@example.com', '[Fripon Cloud] dispute', 'A customer disputed.');
+
+    expect(sendMail).toHaveBeenCalledWith({
+      from: 'Fripon <a@b.c>',
+      to: 'owner@example.com',
+      subject: '[Fripon Cloud] dispute',
+      text: 'A customer disputed.',
+    });
+  });
+
   it('lets a failure out', async () => {
     sendMail.mockRejectedValueOnce(new Error('connection refused'));
     const mailer = createSmtpMailer('smtp://localhost', 'a@b.c');
@@ -67,6 +80,15 @@ describe('createConsoleMailer', () => {
     await createConsoleMailer(log).sendCode('sam@example.com', '123456');
     expect(log).toHaveBeenCalledWith(expect.stringContaining('123456'));
     expect(log).toHaveBeenCalledWith(expect.stringContaining('sam@example.com'));
+  });
+});
+
+describe('the console mailer, for an alert', () => {
+  it('prints it with its recipient, development only', async () => {
+    const log = vi.fn();
+    await createConsoleMailer(log).sendAlert('owner@example.com', 'subject line', 'the text');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('owner@example.com'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('the text'));
   });
 });
 

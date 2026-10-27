@@ -3,10 +3,13 @@ import { blobToBase64 } from '../../lib/image/base64';
 import { fetchGuardedImage, mimeTypeOf } from '../../lib/image/guarded-fetch';
 import { isAllowedImageUrl, isTinyThumbnail } from '../../lib/image/photo-url';
 
+export { serverPhotoKey } from './photo-key';
+
 /**
  * A photo address the server accepts: the extension's allowlist (https, the default port,
  * `*.vinted.net`) minus the thumbnails too small to be worth a paid search. Checked before
- * anything is reserved or fetched.
+ * anything is reserved or fetched, on the URL as it came: the size segment is dropped from the
+ * photo's KEY only (`serverPhotoKey`), after this check.
  */
 export function isAcceptablePhotoUrl(raw: string): boolean {
   return isAllowedImageUrl(raw) && !isTinyThumbnail(new URL(raw).pathname);

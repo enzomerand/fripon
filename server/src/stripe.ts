@@ -33,7 +33,8 @@ export interface StripeApi {
     };
   };
   subscriptions: {
-    retrieve(id: string): Promise<StripeSubscription>;
+    /** `expand` asks for the price's product too (see `SUBSCRIPTION_EXPAND`). */
+    retrieve(id: string, params?: { expand?: string[] }): Promise<StripeSubscription>;
     /** A customer's subscriptions, the canceled ones left out (Stripe's default). */
     list(params: { customer: string; limit?: number }): Promise<{ data: StripeSubscription[] }>;
   };
@@ -46,6 +47,12 @@ export interface StripeApi {
   };
 }
 
+/**
+ * What a subscription is retrieved with: the product of each price, so that the plan can be read
+ * from the product's metadata when the price has none (and no lookup key any more).
+ */
+export const SUBSCRIPTION_EXPAND = ['items.data.price.product'];
+
 /** The part of a subscription the server reads. */
 export interface StripeSubscription {
   id: string;
@@ -57,7 +64,13 @@ export interface StripeSubscription {
   metadata: Record<string, string>;
   items: {
     data: Array<{
-      price: { lookup_key: string | null };
+      price: {
+        lookup_key: string | null;
+        /** `plan` is set by `stripe:setup` on every price and product it makes. */
+        metadata?: Record<string, string> | null;
+        /** The id, or the product itself when it was expanded (`SUBSCRIPTION_EXPAND`). */
+        product?: string | { id?: string; metadata?: Record<string, string> | null } | null;
+      };
       /** Seconds. Since API version 2025-03-31 the period lives on the item, not on the subscription. */
       current_period_end?: number;
     }>;
@@ -82,6 +95,8 @@ export const WEBHOOK_EVENTS = [
   'customer.subscription.created',
   'customer.subscription.updated',
   'customer.subscription.deleted',
+  // Only tells the owner (see `alerts.ts`): nothing is cancelled or refunded automatically.
+  'charge.dispute.created',
 ] as const;
 
 /** The API version the SDK's types describe, pinned so a Stripe default change never reshapes answers. */
@@ -98,6 +113,26 @@ export function realStripe(secretKey: string): StripeApi {
     timeout: 20_000,
     appInfo: { name: 'Fripon Cloud' },
   });
+}
+
+/** Stripe's answer for an object it does not (or no longer) have. */
+export function isMissing(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'resource_missing'
+  );
+}
+
+/**
+ * Stripe does not know the customer: it was made in another mode (a test customer once the keys
+ * are live) or deleted. `resource_missing` says it for any object, so the customer is told apart by
+ * the parameter Stripe blames, or by its message.
+ */
+export function isCustomerMissing(error: unknown): boolean {
+  if (!isMissing(error)) return false;
+  const { param, message } = error as { param?: unknown; message?: unknown };
+  return param === 'customer' || (typeof message === 'string' && /No such customer/i.test(message));
 }
 
 /** The id of a Stripe reference that is either the id or the expanded object; null for anything else. */

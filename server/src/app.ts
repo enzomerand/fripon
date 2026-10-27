@@ -23,13 +23,16 @@ export function createApp(deps: AppDeps, extraRoutes: RouteModule[] = []): Hono<
     c.header('Cache-Control', 'no-store');
   });
 
+  // 503 while the database does not answer, and while the owner's own Google key was refused in the
+  // last 10 minutes (`degraded` names the service): an external probe on this address catches both.
   app.get('/healthz', (c) => {
     try {
       deps.db.prepare('SELECT 1').get();
-      return c.json({ ok: true });
     } catch {
       return c.json({ ok: false }, 503);
     }
+    const degraded = ctx.health.degraded();
+    return degraded.length === 0 ? c.json({ ok: true }) : c.json({ ok: false, degraded }, 503);
   });
 
   for (const register of [registerAuthRoutes, registerMeRoute, ...extraRoutes]) register(app, ctx);

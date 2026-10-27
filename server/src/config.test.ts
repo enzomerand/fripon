@@ -12,6 +12,9 @@ const production = {
   GEMINI_KEY: 'gemini-key',
   STRIPE_SECRET_KEY: 'sk_live_abc',
   STRIPE_WEBHOOK_SECRET: 'whsec_abc',
+  // No default in production: the deployment says whether a reverse proxy is in front.
+  TRUST_PROXY: 'true',
+  OWNER_EMAIL: 'owner@fripon.test',
 };
 
 describe('loadConfig', () => {
@@ -24,6 +27,7 @@ describe('loadConfig', () => {
       publicUrl: 'http://localhost:8787',
       smtpUrl: null,
       trustProxy: false,
+      ownerEmail: '',
       globalDailyVisionCap: 3000,
       globalDailyGeminiCap: 5000,
       googleVisionKey: '',
@@ -46,6 +50,7 @@ describe('loadConfig', () => {
         SMTP_URL: 'smtp://localhost:1025',
         MAIL_FROM: 'Fripon <a@b.c>',
         TRUST_PROXY: 'true',
+        OWNER_EMAIL: 'owner@a.b',
         GLOBAL_DAILY_VISION_CAP: '500',
         GLOBAL_DAILY_GEMINI_CAP: '700',
         GOOGLE_VISION_KEY: 'v-key',
@@ -65,6 +70,7 @@ describe('loadConfig', () => {
       smtpUrl: 'smtp://localhost:1025',
       mailFrom: 'Fripon <a@b.c>',
       trustProxy: true,
+      ownerEmail: 'owner@a.b',
       globalDailyVisionCap: 500,
       globalDailyGeminiCap: 700,
       googleVisionKey: 'v-key',
@@ -117,9 +123,40 @@ describe('loadConfig', () => {
   });
 
   it('accepts a complete production environment, and trusts the proxy only when told to', () => {
-    expect(loadConfig(production)).toMatchObject({ production: true, trustProxy: false });
-    expect(loadConfig({ ...production, TRUST_PROXY: 'true' }).trustProxy).toBe(true);
+    expect(loadConfig(production)).toMatchObject({ production: true, trustProxy: true });
     expect(loadConfig({ ...production, TRUST_PROXY: 'false' }).trustProxy).toBe(false);
+    expect(loadConfig({ ...production, TRUST_PROXY: '1' }).trustProxy).toBe(true);
+  });
+
+  it('refuses to start in production without TRUST_PROXY said either way', () => {
+    const without = Object.fromEntries(
+      Object.entries(production).filter(([key]) => key !== 'TRUST_PROXY'),
+    );
+    expect(catchConfigError(without).problems).toEqual([
+      expect.stringContaining('TRUST_PROXY must be set to true or false'),
+    ]);
+    expect(catchConfigError({ ...production, TRUST_PROXY: '  ' }).problems).toEqual([
+      expect.stringContaining('TRUST_PROXY must be set to true or false'),
+    ]);
+    // A value that is not a boolean is refused too, as ever.
+    expect(catchConfigError({ ...production, TRUST_PROXY: 'maybe' }).problems).toEqual([
+      expect.stringContaining('TRUST_PROXY must be true or false'),
+    ]);
+    // Development and tests keep their default.
+    expect(loadConfig({ NODE_ENV: 'development' }).trustProxy).toBe(false);
+  });
+
+  it('requires OWNER_EMAIL in production, as an address, and leaves it empty in development', () => {
+    const without = Object.fromEntries(
+      Object.entries(production).filter(([key]) => key !== 'OWNER_EMAIL'),
+    );
+    expect(catchConfigError(without).problems).toEqual([
+      expect.stringContaining('OWNER_EMAIL is required in production'),
+    ]);
+    expect(catchConfigError({ ...production, OWNER_EMAIL: 'not an address' }).problems).toEqual([
+      expect.stringContaining('OWNER_EMAIL must be an e-mail address'),
+    ]);
+    expect(loadConfig({ NODE_ENV: 'development' }).ownerEmail).toBe('');
   });
 
   it('requires the secrets, the URL and the mail setup in production, all reported at once', () => {
@@ -134,6 +171,8 @@ describe('loadConfig', () => {
         expect.stringContaining('GEMINI_KEY'),
         expect.stringContaining('STRIPE_SECRET_KEY'),
         expect.stringContaining('STRIPE_WEBHOOK_SECRET'),
+        expect.stringContaining('OWNER_EMAIL'),
+        expect.stringContaining('TRUST_PROXY'),
       ]),
     );
   });

@@ -5,10 +5,12 @@ import {
   CODE_SENDS_PER_WINDOW,
   CODE_TTL_MS,
   CODE_WINDOW_MS,
+  LOGIN_FAILURES_PER_EMAIL_PER_WINDOW,
   LOGIN_FAILURES_PER_WINDOW,
   LOGIN_FAILURE_WINDOW_MS,
   MAX_SESSIONS,
   SESSION_IDLE_MS,
+  SESSION_MAX_AGE_MS,
   SIGNUPS_PER_IP_PER_WINDOW,
   SIGNUP_WINDOW_MS,
   createAuth,
@@ -20,6 +22,7 @@ import { purgeExpired } from './maintenance';
 import { fakeClock, fakeMailer, type Clock, type FakeMailer } from './test-helpers';
 
 const SECRET = 'test-secret';
+const DAY_MS = 24 * 60 * 60 * 1000;
 const EMAIL = 'sam@example.com';
 
 let db: Db;
@@ -382,6 +385,83 @@ describe('the cap on wrong guesses per address', () => {
   });
 });
 
+describe('the cap on wrong guesses per client, and per address whatever the client', () => {
+  /** `n` wrong guesses from `ip`, each code getting its 5 attempts (the clock moves past the send throttle). */
+  async function guessFrom(ip: string | null, n: number, email = EMAIL): Promise<void> {
+    let code = '';
+    for (let i = 0; i < n; i++) {
+      if (i % CODE_MAX_ATTEMPTS === 0) {
+        clock.advance(CODE_WINDOW_MS);
+        code = await codeFor(email);
+      }
+      auth.verifyCode(email, wrongCode(code), ip);
+    }
+  }
+  const failuresOf = (ip: string) =>
+    (
+      db
+        .prepare('SELECT COUNT(*) AS n FROM login_failures WHERE ip_hash = ?')
+        .get(createHmac('sha256', SECRET).update(`ip\n${ip}`).digest('hex')) as { n: number }
+    ).n;
+
+  it('locks one client after 10 wrong guesses, and the address stays open to the others', async () => {
+    await guessFrom('203.0.113.1', LOGIN_FAILURES_PER_WINDOW);
+    expect(failuresOf('203.0.113.1')).toBe(10);
+
+    // The locked client is refused even with the right code, and nothing more is counted.
+    clock.advance(CODE_WINDOW_MS);
+    const code = await codeFor();
+    expect(auth.verifyCode(EMAIL, code, '203.0.113.1')).toBeNull();
+    expect(failuresOf('203.0.113.1')).toBe(10);
+    // Another client of the same address is not: its own 10 guesses are untouched.
+    expect(auth.verifyCode(EMAIL, code, '203.0.113.2')).not.toBeNull();
+  });
+
+  it('counts a client that cannot be told as one client of its own', async () => {
+    await guessFrom(null, LOGIN_FAILURES_PER_WINDOW);
+    clock.advance(CODE_WINDOW_MS);
+    const code = await codeFor();
+    expect(auth.verifyCode(EMAIL, code, null)).toBeNull();
+    expect(auth.verifyCode(EMAIL, code, '203.0.113.2')).not.toBeNull();
+  });
+
+  it('locks the address for everyone after 50 wrong guesses in a day, whatever the clients', async () => {
+    expect(LOGIN_FAILURES_PER_EMAIL_PER_WINDOW).toBe(50);
+    for (let client = 1; client <= 5; client++) {
+      await guessFrom(`198.51.100.${client}`, LOGIN_FAILURES_PER_WINDOW);
+    }
+    expect(count('login_failures')).toBe(50);
+
+    // A sixth client never guessed once, has the right code, and is refused all the same.
+    clock.advance(CODE_WINDOW_MS);
+    const code = await codeFor();
+    expect(auth.verifyCode(EMAIL, wrongCode(code), '198.51.100.6')).toBeNull();
+    expect(auth.verifyCode(EMAIL, code, '198.51.100.6')).toBeNull();
+    expect(auth.verifyCode(EMAIL, code, null)).toBeNull();
+    expect(count('login_failures')).toBe(50);
+    expect(count('sessions')).toBe(0);
+  });
+
+  it('stays open at 49 wrong guesses, and gives the places back as the day goes by', async () => {
+    for (let client = 1; client <= 4; client++) {
+      await guessFrom(`198.51.100.${client}`, LOGIN_FAILURES_PER_WINDOW);
+    }
+    await guessFrom('198.51.100.5', 9);
+    expect(count('login_failures')).toBe(49);
+    clock.advance(CODE_WINDOW_MS);
+    expect(auth.verifyCode(EMAIL, await codeFor(), '198.51.100.6')).not.toBeNull();
+  });
+
+  it('does not let a lock of one address touch another address', async () => {
+    for (let client = 1; client <= 5; client++) {
+      await guessFrom(`198.51.100.${client}`, LOGIN_FAILURES_PER_WINDOW);
+    }
+    clock.advance(CODE_WINDOW_MS);
+    const other = await codeFor('other@example.com');
+    expect(auth.verifyCode('other@example.com', other, '198.51.100.1')).not.toBeNull();
+  });
+});
+
 describe('the free trial of a new account', () => {
   const trialOf = (email: string) =>
     (
@@ -585,6 +665,21 @@ describe('authenticate', () => {
     clock.advance(SESSION_IDLE_MS - 1);
     expect(auth.authenticate(token)).not.toBeNull(); // using it renews it
     clock.advance(SESSION_IDLE_MS);
+    expect(auth.authenticate(token)).toBeNull();
+    expect(count('sessions')).toBe(0);
+  });
+
+  it('ends a year after sign-in even when it is used every day, and forgets the session', async () => {
+    const token = await signIn();
+    // Used every 30 days: never idle for 90.
+    for (let elapsed = 0; elapsed + 30 * DAY_MS < SESSION_MAX_AGE_MS; elapsed += 30 * DAY_MS) {
+      clock.advance(30 * DAY_MS);
+      expect(auth.authenticate(token)).not.toBeNull();
+    }
+    const age = clock.ms() - Date.parse('2026-10-20T12:00:00Z');
+    clock.advance(SESSION_MAX_AGE_MS - age - 1);
+    expect(auth.authenticate(token)).not.toBeNull();
+    clock.advance(1);
     expect(auth.authenticate(token)).toBeNull();
     expect(count('sessions')).toBe(0);
   });

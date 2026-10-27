@@ -7,6 +7,7 @@ import {
   REVIEWS_PER_PHOTO,
   REVIEW_WINDOW_MS,
   allowReview,
+  mayReview,
   releaseAnalysis,
   releaseReview,
   reserveAnalysis,
@@ -494,7 +495,7 @@ describe('allowReview', () => {
     charged(reserve(id));
     for (let i = 0; i < 3; i++) allow(id);
     expect(allow(id)).toBe(false);
-    releaseReview(db, id, photo(1));
+    releaseReview(db, id, photo(1), clock.now());
     expect(allow(id)).toBe(true);
     expect(allow(id)).toBe(false);
   });
@@ -503,11 +504,70 @@ describe('allowReview', () => {
     const { id } = insertSubscriber(db);
     charged(reserve(id));
     allow(id);
-    releaseReview(db, id, photo(1));
-    releaseReview(db, id, photo(1));
-    releaseReview(db, id, 'unknown-photo');
+    releaseReview(db, id, photo(1), clock.now());
+    releaseReview(db, id, photo(1), clock.now());
+    releaseReview(db, id, 'unknown-photo', clock.now());
     const row = db.prepare('SELECT count FROM reviews').get() as { count: number };
     expect(row.count).toBe(0);
+  });
+});
+
+describe('reviews counted per month, for the calls that really go to Gemini', () => {
+  const allow = (accountId: string, key = photo(1)) => allowReview(db, accountId, key, clock.now());
+  const counted = (accountId: string) =>
+    (
+      db
+        .prepare('SELECT month, count FROM reviews WHERE account_id = ? ORDER BY month')
+        .all(accountId) as { month: string; count: number }[]
+    ).map((row) => `${row.month}:${row.count}`);
+
+  it('mayReview only reads: a photo served this week may be reviewed, nothing is counted', () => {
+    const { id } = insertSubscriber(db);
+    expect(mayReview(db, id, photo(1), clock.now())).toBe(false);
+    charged(reserve(id));
+    expect(mayReview(db, id, photo(1), clock.now())).toBe(true);
+    expect(mayReview(db, id, photo(1), clock.now())).toBe(true);
+    expect(counted(id)).toEqual([]);
+    clock.advance(REVIEW_WINDOW_MS);
+    expect(mayReview(db, id, photo(1), clock.now())).toBe(true);
+    clock.advance(1);
+    expect(mayReview(db, id, photo(1), clock.now())).toBe(false);
+  });
+
+  it('gives 3 more reviews of the photo in the next Paris month', () => {
+    const { id } = insertSubscriber(db);
+    clock.set('2026-10-30T12:00:00Z');
+    charged(reserve(id));
+    for (let i = 0; i < REVIEWS_PER_PHOTO; i++) expect(allow(id)).toBe(true);
+    expect(allow(id)).toBe(false);
+
+    // 1 November, 13:00 in Paris: a new month for the counter (the search is still 2 days old).
+    clock.set('2026-11-01T12:00:00Z');
+    expect(allow(id)).toBe(true);
+    expect(counted(id)).toEqual(['2026-10:3', '2026-11:1']);
+  });
+
+  it('counts the month in Paris, not in UTC', () => {
+    const { id } = insertSubscriber(db);
+    clock.set('2026-10-31T22:30:00Z'); // 23:30 in Paris on the 31st
+    charged(reserve(id));
+    allow(id);
+    clock.set('2026-10-31T23:30:00Z'); // 00:30 in Paris on 1 November
+    allow(id);
+    expect(counted(id)).toEqual(['2026-10:1', '2026-11:1']);
+  });
+
+  it('gives a review back in the month it was counted in', () => {
+    const { id } = insertSubscriber(db);
+    clock.set('2026-10-31T12:00:00Z');
+    charged(reserve(id));
+    const countedAt = clock.now();
+    allow(id);
+    clock.set('2026-11-01T12:00:00Z');
+
+    releaseReview(db, id, photo(1), countedAt);
+
+    expect(counted(id)).toEqual(['2026-10:0']);
   });
 });
 

@@ -1,7 +1,9 @@
 import type { Context, Hono, MiddlewareHandler } from 'hono';
+import { createAlerts, type Alert } from './alerts';
 import { createAuth, type Auth } from './auth';
 import type { Config } from './config';
 import type { Account, Db } from './db';
+import { createHealth, type Health } from './health';
 import { bearerToken, clientIp, tooManyRequests } from './http';
 import type { Mailer } from './mailer';
 import { createRateLimiter } from './rate-limit';
@@ -22,9 +24,24 @@ export interface AppEnv {
 /** Per account and per minute, on every route behind `requireAccount`. */
 export const API_REQUESTS_PER_MINUTE = 60;
 
+/**
+ * Where the billing routes plug in the lazy resync of a subscription (see `SubscriptionSync`), for
+ * the routes that read an account's plan (`/v1/me`, `/v1/search`, `DELETE /v1/account`) without
+ * owning the Stripe client. Until `registerBillingRoutes` runs (no Stripe: tests, development) it
+ * answers with the account as it is.
+ */
+export interface SubscriptionRefresher {
+  refresh(account: Account): Promise<Account>;
+}
+
 /** The shared pieces a route module receives. */
 export interface AppContext extends AppDeps {
   auth: Auth;
+  /** Tells the owner, by e-mail, about something only he can fix (at most one mail per kind per hour). */
+  alert: Alert;
+  /** What `/healthz` says about the owner's Google keys. */
+  health: Health;
+  subscriptions: SubscriptionRefresher;
   /**
    * Route middleware for anything that needs a signed-in account: 401 without a valid token,
    * 429 past the per-account limit, otherwise `c.get('account')` is set. Use it as
@@ -66,9 +83,13 @@ export function createContext(deps: AppDeps): AppContext {
     await next();
   };
 
+  const at = () => deps.now().getTime();
   return {
     ...deps,
     auth,
+    alert: createAlerts({ mailer: deps.mailer, ownerEmail: deps.config.ownerEmail, now: at }),
+    health: createHealth(at),
+    subscriptions: { refresh: async (account) => account },
     requireAccount,
     ip: (c) => clientIp(c, deps.config.trustProxy),
   };

@@ -79,10 +79,16 @@ export function loadConfig(env: Env = process.env) {
     smtpUrl: text(env, 'SMTP_URL') ?? null,
     mailFrom: requiredInProduction('MAIL_FROM', 'Fripon <no-reply@localhost>'),
     /**
-     * Read the client address from `X-Forwarded-For`: only right behind the reverse proxy, so it is
-     * off unless asked for (the deployment sets `TRUST_PROXY=true`, see `.env.example`).
+     * Read the client address from `X-Forwarded-For`: only right behind the reverse proxy. In
+     * production it must be said either way (see below): a wrong default makes every client share
+     * the proxy's address, or lets a client write the address it likes.
      */
     trustProxy: flag('TRUST_PROXY', false),
+    /**
+     * Where the owner's alerts go (a refused Google key, a double subscription, a failing webhook,
+     * a dispute, a ceiling reached). Empty in development: nothing is sent.
+     */
+    ownerEmail: requiredInProduction('OWNER_EMAIL', ''),
     /** Vision calls per day (Pacific time), all accounts together, on top of the Google Cloud quota. */
     globalDailyVisionCap: integer('GLOBAL_DAILY_VISION_CAP', 3_000, 1, 1_000_000),
     /** Gemini reviews per day, all accounts together, on top of the Google quota. */
@@ -110,6 +116,13 @@ export function loadConfig(env: Env = process.env) {
     problems.push('AUTH_SECRET must be at least 32 characters in production');
   }
   if (production && config.smtpUrl === null) problems.push('SMTP_URL is required in production');
+  // No default in production: the right value depends on whether a reverse proxy is in front.
+  if (production && text(env, 'TRUST_PROXY') === undefined) {
+    problems.push('TRUST_PROXY must be set to true or false in production');
+  }
+  if (config.ownerEmail !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(config.ownerEmail)) {
+    problems.push(`OWNER_EMAIL must be an e-mail address (got "${config.ownerEmail}")`);
+  }
   if (config.stripeSecretKey !== '' && !/^(sk|rk)_(test|live)_/.test(config.stripeSecretKey)) {
     problems.push('STRIPE_SECRET_KEY must be a Stripe secret or restricted key (sk_... or rk_...)');
   }
