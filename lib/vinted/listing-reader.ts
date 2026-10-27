@@ -339,8 +339,6 @@ function readRsc(doc: Document, itemId: string): RscData {
 
 // ---- Sold items ------------------------------------------------------------------------------
 
-const SOLD_AVAILABILITY = /SoldOut$/;
-
 /**
  * Whether the item page shows a sold item, whatever the site's language. Vinted drops the JSON-LD
  * product of a sold item, and its item object in the RSC payload can no longer be bought though
@@ -354,7 +352,7 @@ export function isSoldListing(doc: Document, url: string): boolean {
   const product = readJsonLdProduct(doc);
   if (product) {
     const availability = firstRecord(product.offers)?.availability;
-    return typeof availability === 'string' && SOLD_AVAILABILITY.test(availability);
+    return typeof availability === 'string' && availability.endsWith('SoldOut');
   }
 
   const text = rscText(doc);
