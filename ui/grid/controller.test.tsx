@@ -283,3 +283,55 @@ describe('analysis of a card', () => {
     expect(running.cards().map((live) => live.id)).toEqual(['9000101', '9000102']);
   });
 });
+
+describe('a card node that Vinted recycles for another item', () => {
+  /** Makes the root element of one card the card of another item, node and children kept. */
+  function recycle(from: number, to: number) {
+    const root = rootOf(from);
+    for (const element of [root, ...root.querySelectorAll('[data-testid]')]) {
+      const testid = element.getAttribute('data-testid') ?? '';
+      element.setAttribute('data-testid', testid.replace(`-${from}`, `-${to}`));
+    }
+    root.querySelector('a')?.setAttribute('href', `/items/${to}-robe-${to}`);
+    return root;
+  }
+
+  it('gets a new block for the new item, which does not show the verdict of the old one', async () => {
+    const running = start(card(9000101));
+    await running.analyze('9000101');
+    const oldBlock = hostOf(9000101) as HTMLElement;
+    expect(shadowText(oldBlock)).toContain('analyse rapide');
+
+    const root = recycle(9000101, 9000102);
+    await until(() => root.querySelector(BUTTON_HOST_TAG) !== oldBlock);
+
+    const block = root.querySelector(BUTTON_HOST_TAG) as HTMLElement;
+    expect(shadowText(block)).toBe('🦊 Analyser');
+    expect(oldBlock.isConnected).toBe(false);
+    expect(hosts()).toHaveLength(1);
+    expect(running.cards().map((live) => live.id)).toEqual(['9000102']);
+  });
+
+  it('analyses the new item from the same node, and finds the old verdict when it comes back', async () => {
+    const running = start(card(9000101));
+    await running.analyze('9000101');
+    const root = recycle(9000101, 9000102);
+    running.rescan();
+    expect(await running.analyze('9000102')).toBe('done');
+
+    recycle(9000102, 9000101);
+    running.rescan();
+    expect(shadowText(root.querySelector(BUTTON_HOST_TAG) as HTMLElement)).toContain(
+      'analyse rapide',
+    );
+    expect(search).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops the block of a card that is no longer a whole card', async () => {
+    const running = start(card(9000101));
+    rootOf(9000101).querySelector('[data-testid$="--description"]')?.remove();
+    running.rescan();
+    expect(hosts()).toHaveLength(0);
+    expect(running.cards()).toEqual([]);
+  });
+});

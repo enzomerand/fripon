@@ -99,6 +99,20 @@ export function findCardRoots(root: ParentNode): Element[] {
   return [...root.querySelectorAll(GRID_SELECTORS.cardCandidates)].filter(isCardRoot);
 }
 
+function idFromTestid(root: Element): string | undefined {
+  return PRODUCT_CARD_TESTID_PATTERN.exec(root.getAttribute('data-testid') ?? '')?.[1];
+}
+
+/**
+ * The item a card root shows right now, null when `root` is not a card root or its item cannot be
+ * told. Cheap (no text, no photo): it is asked of every card on every pass, to notice a node that
+ * Vinted recycled for another item. Always the id `readGridCard` reads.
+ */
+export function cardIdOf(root: Element): string | null {
+  if (!isCardRoot(root)) return null;
+  return idFromTestid(root) ?? itemLinkOf(root, root.ownerDocument.baseURI)?.id ?? null;
+}
+
 /**
  * Where the Fripon block goes in a card: right after the block that ends the card's text, so below
  * the title, the size AND the price (and the fees line under it), never between them. The card's
@@ -138,16 +152,12 @@ export function findButtonAnchor(root: Element): Element | null {
  */
 export function readGridCard(element: Element): GridCard | null {
   if (!isCardRoot(element)) return null;
-  const idFromTestid = PRODUCT_CARD_TESTID_PATTERN.exec(
-    element.getAttribute('data-testid') ?? '',
-  )?.[1];
-
   const anchor = findButtonAnchor(element);
   if (!anchor) return null;
 
   const base = element.ownerDocument.baseURI;
   const link = itemLinkOf(element, base);
-  const id = idFromTestid ?? link?.id;
+  const id = idFromTestid(element) ?? link?.id;
   if (!id) return null;
 
   // Not narrowed with `instanceof`: a content script and the page do not share their prototypes.

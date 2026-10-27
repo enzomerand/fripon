@@ -3,6 +3,7 @@ import { BUTTON_HOST_TAG, createHost, type Host, type SharedStyles } from '../..
 import type { GridStore } from '../../lib/grid/store';
 import type { OptionsSection } from '../../lib/messages';
 import {
+  cardIdOf,
   findButtonAnchor,
   findCardRoots,
   readGridCard,
@@ -102,16 +103,26 @@ export function createGridInjector(options: InjectorOptions): GridInjector {
     draw(entry);
   }
 
+  /** Drops a block: its card is gone, no longer whole, or shows another item. */
+  function forget(entry: Entry, root: Element) {
+    byCard.delete(root);
+    live.delete(entry);
+    render(null, entry.host.container);
+    entry.host.element.remove();
+  }
+
   function scan() {
     if (disposed) return;
     for (const root of findCardRoots(doc)) {
       const known = byCard.get(root);
-      if (known) {
+      const anchor = findButtonAnchor(root);
+      // Vinted may recycle a card node for another item: a block is kept only for its own item.
+      if (known && anchor && cardIdOf(root) === known.id) {
         track(known);
-        const anchor = findButtonAnchor(root);
-        if (anchor) place(known, anchor);
+        place(known, anchor);
         continue;
       }
+      if (known) forget(known, root);
       // A card still being drawn has no description block yet: the next pass takes it.
       const card = readGridCard(root);
       if (!card) continue;
@@ -121,10 +132,7 @@ export function createGridInjector(options: InjectorOptions): GridInjector {
       place(entry, card.anchor);
     }
     for (const entry of live) {
-      if (entry.element.isConnected) continue;
-      live.delete(entry);
-      render(null, entry.host.container);
-      entry.host.element.remove();
+      if (!entry.element.isConnected) forget(entry, entry.element);
     }
     options.onScan?.();
   }
@@ -144,7 +152,14 @@ export function createGridInjector(options: InjectorOptions): GridInjector {
       scan();
       if (observer || disposed) return;
       observer = new MutationObserver(request);
-      observer.observe(doc.documentElement, { childList: true, subtree: true });
+      // A card node that Vinted recycles for another item changes its testids (or, on the home feed,
+      // its link) without necessarily changing its children.
+      observer.observe(doc.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['data-testid', 'href'],
+      });
     },
     // Only cards that are in the page: between the page dropping a card and the next pass, an
     // entry may still be there for a card that is gone.

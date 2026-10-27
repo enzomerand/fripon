@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cardIdOf,
   findButtonAnchor,
   findCardRoots,
   findResultsAnchor,
@@ -389,5 +390,31 @@ describe('findResultsAnchor', () => {
 
   it('is null without any card', () => {
     expect(findResultsAnchor([])).toBeNull();
+  });
+});
+
+describe('cardIdOf', () => {
+  it('is the id readGridCard reads, for every kind of card', () => {
+    const doc = page(catalogCard({ id: '9000101' }) + feedCard('9000201'));
+    for (const root of findCardRoots(doc)) {
+      expect(cardIdOf(root)).toBe(readGridCard(root)?.id);
+    }
+    expect(findCardRoots(doc).map(cardIdOf)).toEqual(['9000101', '9000201']);
+  });
+
+  it('follows the testid of a recycled root', () => {
+    const doc = page(catalogCard({ id: '9000101' }));
+    const root = findCardRoots(doc)[0] as Element;
+    root.setAttribute('data-testid', 'product-item-id-9000102');
+    expect(cardIdOf(root)).toBe('9000102');
+  });
+
+  it('is null for what is not a card root, or has no readable item', () => {
+    const doc = page(
+      `${catalogCard()}<div data-testid="feed-item"><a href="/member/7000001"></a></div>`,
+    );
+    expect(cardIdOf(doc.body)).toBeNull();
+    expect(cardIdOf(doc.querySelector('[data-testid$="--description"]') as Element)).toBeNull();
+    expect(cardIdOf(doc.querySelector('[data-testid="feed-item"]') as Element)).toBeNull();
   });
 });
