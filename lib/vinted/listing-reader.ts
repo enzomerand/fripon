@@ -337,6 +337,35 @@ function readRsc(doc: Document, itemId: string): RscData {
   };
 }
 
+// ---- Sold items ------------------------------------------------------------------------------
+
+const SOLD_AVAILABILITY = /(?:SoldOut|OutOfStock|Discontinued)$/;
+
+/**
+ * Whether the item page shows a sold item, whatever the site's language. Vinted drops the JSON-LD
+ * product of a sold item, and its item object in the RSC payload can no longer be bought though
+ * it is neither reserved nor hidden. Call it once `readListing` has succeeded, so the payload has
+ * streamed in. Anything unclear counts as not sold: the listing is then analysed as before.
+ */
+export function isSoldListing(doc: Document, url: string): boolean {
+  const id = itemIdFromUrl(url);
+  if (!id) return false;
+
+  const product = readJsonLdProduct(doc);
+  if (product) {
+    const availability = firstRecord(product.offers)?.availability;
+    return typeof availability === 'string' && SOLD_AVAILABILITY.test(availability);
+  }
+
+  const text = rscText(doc);
+  for (const match of text.matchAll(/"can_buy":false/g)) {
+    const item = enclosingObject(text, match.index);
+    if (!item || String(item.id ?? item.item_id) !== id) continue;
+    if (item.is_reserved === false && item.is_hidden !== true) return true;
+  }
+  return false;
+}
+
 // ---- Reader ----------------------------------------------------------------------------------
 
 /**

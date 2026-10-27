@@ -15,6 +15,7 @@ import type {
 export type CardState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
+  | { status: 'sold' }
   | { status: 'done'; listing: Listing; verdict: Verdict; checks: CheckResult[] };
 
 export interface ListingCardProps {
@@ -226,6 +227,13 @@ export function ListingCard({ state, onRetry, onOpenOptions, onRunImageSearch }:
     return (
       <section class="fripon fripon--neutral" role="status">
         <span class="fripon__pulse">🦊 Fripon analyse l'annonce…</span>
+      </section>
+    );
+  }
+  if (state.status === 'sold') {
+    return (
+      <section class="fripon fripon--neutral" role="status">
+        <p class="fripon__line">Article vendu : Fripon ne l'analyse pas.</p>
       </section>
     );
   }

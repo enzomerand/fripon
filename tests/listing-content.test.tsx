@@ -690,6 +690,28 @@ describe('listing content script', () => {
     expect(hostCard()).toBe(host);
   }, 15_000);
 
+  it('shows a sold item without analysing it', async () => {
+    const calls = stubFetch();
+    const item = {
+      id: '9000001',
+      seller_id: 7000001,
+      can_buy: false,
+      is_reserved: false,
+      is_hidden: false,
+    };
+    const rsc = JSON.stringify([1, `1c:["$","div",null,${JSON.stringify(item)}]\n`]);
+    document.body.innerHTML = PAGE.replace(
+      /<script type="application\/ld\+json">.*?<\/script>/s,
+      '',
+    ).concat(`<h1>Robe de soirée</h1><script>self.__next_f.push(${rsc})</script>`);
+    await script.main(ctx);
+
+    await until(() => shadowText().includes('Article vendu'));
+    expect(calls.filter((url) => url.startsWith('/api/'))).toEqual([]);
+    expect(sentMessages('analyzeImage')).toHaveLength(0);
+    expect(sentMessages('searchImage')).toHaveLength(0);
+  });
+
   it('shows the error state when the listing cannot be read', async () => {
     stubFetch();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
