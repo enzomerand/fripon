@@ -1,5 +1,6 @@
 import { browser } from 'wxt/browser';
 import { isAiReviewInput, type AiReviewInput } from './ai/input';
+import { BADGES, type BadgeVerdict } from './background/badge';
 import type { Gates } from './gate';
 import type { GeminiFailure } from './google/gemini';
 import type { KeyCheckResult } from './google/key-check';
@@ -82,6 +83,20 @@ export interface GetGatesRequest {
   type: 'getGates';
 }
 
+/**
+ * Ask how many Vision credits are left in the current period. Only a count: the key and the
+ * counters stay in the background. For display (the confirmation before a batch); the background
+ * still `reserve`s a credit before each paid call.
+ */
+export interface GetVisionUsageRequest {
+  type: 'getVisionUsage';
+}
+
+export interface VisionUsage {
+  /** Credits left before the cap, null when there is no cap (or it could not be read). */
+  remaining: number | null;
+}
+
 /** Parts of the options page a message can point at (the page scrolls to the matching id). */
 export const OPTIONS_SECTIONS = ['guide', 'keys', 'credits'] as const;
 export type OptionsSection = (typeof OPTIONS_SECTIONS)[number];
@@ -90,6 +105,19 @@ export type OptionsSection = (typeof OPTIONS_SECTIONS)[number];
 export interface OpenOptionsRequest {
   type: 'openOptions';
   section?: OptionsSection;
+}
+
+/** Longest verdict title the background puts in the tooltip of the toolbar button. */
+const BADGE_TITLE_MAX = 120;
+
+/**
+ * Show the verdict of the open listing on the toolbar button of the sender's tab, or clear it with
+ * `null`. Only the level and the title travel. Only accepted from a content script on a Vinted
+ * page (it needs a tab), never from an extension page.
+ */
+export interface SetVerdictBadgeRequest {
+  type: 'setVerdictBadge';
+  verdict: BadgeVerdict | null;
 }
 
 /**
@@ -109,7 +137,9 @@ export type RuntimeMessage =
   | SearchImageRequest
   | AiReviewRequest
   | GetGatesRequest
+  | GetVisionUsageRequest
   | OpenOptionsRequest
+  | SetVerdictBadgeRequest
   | TestKeyRequest;
 
 /** Response type of each message, keyed by `type`. */
@@ -118,11 +148,27 @@ export interface RuntimeResponses {
   searchImage: SearchImageResponse;
   aiReview: AiReviewResponse;
   getGates: Gates;
+  getVisionUsage: VisionUsage;
   openOptions: void;
+  setVerdictBadge: void;
   testKey: KeyCheckResult;
 }
 
 export type ResponseFor<M extends RuntimeMessage> = RuntimeResponses[M['type']];
+
+/** A verdict as the badge takes it: a known level and a short title, on one line, not blank. */
+function isBadgeVerdict(value: unknown): value is BadgeVerdict {
+  if (typeof value !== 'object' || value === null) return false;
+  const { level, title } = value as { level?: unknown; title?: unknown };
+  return (
+    typeof level === 'string' &&
+    Object.hasOwn(BADGES, level) &&
+    typeof title === 'string' &&
+    title.trim().length > 0 &&
+    title.length <= BADGE_TITLE_MAX &&
+    !/[\r\n]/.test(title)
+  );
+}
 
 /** Narrowing guard for the background's `onMessage` listener. */
 export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
@@ -135,6 +181,7 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
     retry?: unknown;
     input?: unknown;
     section?: unknown;
+    verdict?: unknown;
     provider?: unknown;
     key?: unknown;
   };
@@ -154,12 +201,15 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
         (message.retry === undefined || typeof message.retry === 'boolean')
       );
     case 'getGates':
+    case 'getVisionUsage':
       return true;
     case 'openOptions':
       return (
         message.section === undefined ||
         OPTIONS_SECTIONS.includes(message.section as OptionsSection)
       );
+    case 'setVerdictBadge':
+      return message.verdict === null || isBadgeVerdict(message.verdict);
     case 'testKey':
       return (
         (message.provider === 'vision' || message.provider === 'gemini') &&

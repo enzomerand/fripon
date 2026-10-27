@@ -6,7 +6,7 @@ import { getUsage } from '../lib/credits';
 import { PENDING_SECTION_KEY } from '../lib/options-nav';
 import { loadSettings, saveSettings } from '../lib/settings';
 
-type Sender = { id?: string; url?: string };
+type Sender = { id?: string; url?: string; tab?: { id?: number }; frameId?: number };
 type Listener = (
   message: unknown,
   sender: Sender,
@@ -35,6 +35,11 @@ function start() {
 
 const fromPage = { id: browser.runtime.id, url: 'https://www.vinted.fr/items/1-robe' };
 const fromOptions = { id: browser.runtime.id, url: `${ORIGIN}options.html` };
+const fromTab = (tabId: number, url = fromPage.url) => ({
+  id: browser.runtime.id,
+  url,
+  tab: { id: tabId },
+});
 
 beforeEach(() => {
   fakeBrowser.reset();
@@ -51,6 +56,17 @@ describe('background', () => {
     expect(await send({ type: 'getGates' }, fromPage)).toEqual({ image: 'ready', ai: 'ready' });
     await saveSettings({ mode: 'click' });
     expect(await send({ type: 'getGates' }, fromPage)).toEqual({ image: 'manual', ai: 'manual' });
+  });
+
+  it('answers getVisionUsage with a count only, for a content script', async () => {
+    const send = start();
+    await saveSettings({
+      keys: { vision: 'AIzaSECRETSECRETSECRETSECRETSECRET1234' },
+      caps: { vision: 50 },
+    });
+    const answer = await send({ type: 'getVisionUsage' }, fromPage);
+    expect(answer).toEqual({ remaining: 50 });
+    expect(JSON.stringify(answer)).not.toContain('SECRET');
   });
 
   it('never puts a key in an answer to a content script', async () => {
@@ -447,6 +463,49 @@ describe('background', () => {
       await send({ type: 'aiReview', input: { ...INPUT, price: '2 €' } }, fromPage);
       expect(geminiCalls(fetchMock)).toHaveLength(1);
       vi.unstubAllGlobals();
+    });
+  });
+
+  describe('verdict badge', () => {
+    const dropshipping = { level: 'dropshipping', title: 'Dropshipping probable' };
+    const text = (tabId: number) => browser.action.getBadgeText({ tabId });
+    const title = (tabId: number) => browser.action.getTitle({ tabId });
+
+    it('shows the verdict of a Vinted page on the badge of its tab only', async () => {
+      const send = start();
+      await send({ type: 'setVerdictBadge', verdict: dropshipping }, fromTab(11));
+      expect(await text(11)).toBe('!');
+      expect(await title(11)).toBe('Fripon — Dropshipping probable');
+      expect(await browser.action.getBadgeBackgroundColor({ tabId: 11 })).toEqual([
+        217, 48, 37, 255,
+      ]);
+      expect(await text(12)).toBe('');
+
+      await send(
+        { type: 'setVerdictBadge', verdict: { level: 'clean', title: 'Rien de suspect' } },
+        fromTab(12),
+      );
+      expect(await text(12)).toBe('✓');
+      // The first tab keeps its own.
+      expect(await text(11)).toBe('!');
+    });
+
+    it('answers the sender, and clears the badge for null', async () => {
+      const send = start();
+      expect(await send({ type: 'setVerdictBadge', verdict: dropshipping }, fromTab(11))).toBe(
+        undefined,
+      );
+      await send({ type: 'setVerdictBadge', verdict: null }, fromTab(11));
+      expect(await text(11)).toBe('');
+      expect(await title(11)).toBe('Fripon');
+    });
+
+    it('refuses a page without a tab', async () => {
+      const send = start();
+      expect(await send({ type: 'setVerdictBadge', verdict: dropshipping }, fromPage)).toBe(
+        'no answer',
+      );
+      expect(await text(11)).toBe('');
     });
   });
 

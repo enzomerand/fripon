@@ -11,8 +11,8 @@ import type {
   ImageMatch,
   Listing,
   Verdict,
-  VerdictLevel,
 } from '../lib/model';
+import { LEVEL_COLOUR } from './verdict-colour';
 
 export type CardState =
   | { status: 'loading' }
@@ -77,13 +77,6 @@ export const CHECK_LABELS: Record<CheckId, string> = {
 
 export const PRUDENCE_NOTE =
   "Indices, pas certitudes : un vendeur honnête peut revendre un article Shein qu'il a porté.";
-
-const LEVEL_COLOUR: Record<VerdictLevel, 'red' | 'orange' | 'green'> = {
-  dropshipping: 'red',
-  resold: 'orange',
-  review: 'orange',
-  clean: 'green',
-};
 
 const TAG_COLOUR: Record<CheckStatus, 'bad' | 'mid' | 'ok' | 'off'> = {
   bad: 'bad',

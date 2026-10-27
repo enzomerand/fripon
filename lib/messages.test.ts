@@ -65,6 +65,14 @@ describe('sendMessage (settings messages)', () => {
     expect(spy).toHaveBeenCalledWith({ type: 'getGates' });
   });
 
+  it('returns the Vision credits left', async () => {
+    const spy = vi
+      .spyOn(browser.runtime, 'sendMessage')
+      .mockResolvedValue({ remaining: 12 } as never);
+    expect(await sendMessage({ type: 'getVisionUsage' })).toEqual({ remaining: 12 });
+    expect(spy).toHaveBeenCalledWith({ type: 'getVisionUsage' });
+  });
+
   it('sends the listing to review and returns the review', async () => {
     const input = {
       photoUrl: 'https://images1.vinted.net/a.jpg',
@@ -109,6 +117,10 @@ describe('isRuntimeMessage', () => {
     expect(isRuntimeMessage({ type: 'getImageGate' })).toBe(false);
   });
 
+  it('accepts getVisionUsage with nothing else', () => {
+    expect(isRuntimeMessage({ type: 'getVisionUsage' })).toBe(true);
+  });
+
   it('accepts an aiReview request with a well-formed input only', () => {
     const input = {
       photoUrl: 'https://x.test/a.jpg',
@@ -142,6 +154,62 @@ describe('isRuntimeMessage', () => {
     expect(isRuntimeMessage({ type: 'openOptions', section: 'welcome' })).toBe(false);
     expect(isRuntimeMessage({ type: 'openOptions', section: '../x' })).toBe(false);
     expect(isRuntimeMessage({ type: 'openOptions', section: 3 })).toBe(false);
+  });
+
+  it('accepts setVerdictBadge with a known level and a short title, or with null to clear', () => {
+    const verdict = { level: 'dropshipping', title: 'Dropshipping probable' };
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict })).toBe(true);
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: null })).toBe(true);
+    for (const level of ['dropshipping', 'resold', 'review', 'clean']) {
+      expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: { level, title: 'x' } })).toBe(
+        true,
+      );
+    }
+    expect(
+      isRuntimeMessage({
+        type: 'setVerdictBadge',
+        verdict: { ...verdict, title: 'x'.repeat(120) },
+      }),
+    ).toBe(true);
+  });
+
+  it('refuses a setVerdictBadge without a verdict, or with a malformed one', () => {
+    const verdict = { level: 'clean', title: 'Rien de suspect' };
+    expect(isRuntimeMessage({ type: 'setVerdictBadge' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: 'clean' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: [] })).toBe(false);
+    expect(
+      isRuntimeMessage({ type: 'setVerdictBadge', verdict: { ...verdict, level: 'red' } }),
+    ).toBe(false);
+    // Properties of Object.prototype are not levels.
+    expect(
+      isRuntimeMessage({ type: 'setVerdictBadge', verdict: { ...verdict, level: 'constructor' } }),
+    ).toBe(false);
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: { title: 'Rien' } })).toBe(false);
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: { ...verdict, title: '' } })).toBe(
+      false,
+    );
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: { ...verdict, title: 4 } })).toBe(
+      false,
+    );
+    expect(
+      isRuntimeMessage({
+        type: 'setVerdictBadge',
+        verdict: { ...verdict, title: 'x'.repeat(121) },
+      }),
+    ).toBe(false);
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: { level: 'clean' } })).toBe(false);
+  });
+
+  it('refuses a setVerdictBadge whose title is blank or spans several lines', () => {
+    const send = (title: string) =>
+      isRuntimeMessage({ type: 'setVerdictBadge', verdict: { level: 'clean', title } });
+    for (const blank of [' ', '   ', '\t', '\n', ' \u00a0 ']) expect(send(blank)).toBe(false);
+    for (const lines of ['a\nb', 'a\r\nb', 'a\rb', 'Rien\n', '\nRien']) {
+      expect(send(lines)).toBe(false);
+    }
+    expect(send('Rien de suspect (sans recherche d’image)')).toBe(true);
+    expect(send(' Rien ')).toBe(true);
   });
 
   it('accepts testKey for a known provider only', () => {

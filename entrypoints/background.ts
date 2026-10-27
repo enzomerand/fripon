@@ -2,8 +2,9 @@ import { createAiReviewer } from '../lib/ai/review';
 import { createImageAnalyzer, fetchGuardedImage, type PixelResult } from '../lib/image/analyzer';
 import { createImageSearcher } from '../lib/image/search';
 import { dHash, catalogScore, hashToHex } from '../lib/image/pixels';
+import { setToolbarBadge } from '../lib/background/badge';
 import { handleMessage, isAllowedSender, type BackgroundDeps } from '../lib/background/handlers';
-import { loadGates } from '../lib/gate';
+import { loadGates, loadVisionRemaining } from '../lib/gate';
 import { reviewListing } from '../lib/google/gemini';
 import { checkKey } from '../lib/google/key-check';
 import { webDetect } from '../lib/google/vision';
@@ -51,6 +52,7 @@ const deps: BackgroundDeps = {
   searchImage,
   aiReview,
   loadGates,
+  loadVisionRemaining,
   checkKey: async (provider, key) => {
     const result = await checkKey(provider, key);
     // A key that tests fine: whatever was wrong is fixed, so stop remembering the refusal.
@@ -58,6 +60,9 @@ const deps: BackgroundDeps = {
     return result;
   },
   openOptions: openOptionsAt,
+  // Chrome calls the toolbar button `action`, Firefox MV2 `browserAction`.
+  setBadge: (tabId, verdict) =>
+    setToolbarBadge(browser.action ?? browser.browserAction, tabId, verdict),
 };
 
 export default defineBackground(() => {
@@ -65,7 +70,7 @@ export default defineBackground(() => {
     if (!isRuntimeMessage(message)) return false;
     const own = { id: browser.runtime.id, origin: browser.runtime.getURL('/') };
     if (!isAllowedSender(message, sender, own)) return false;
-    void handleMessage(message, deps).then(sendResponse);
+    void handleMessage(message, deps, { tabId: sender.tab?.id }).then(sendResponse);
     return true;
   });
 

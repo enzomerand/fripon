@@ -12,11 +12,18 @@ import {
   type AiDeps,
   type AnalysisDeps,
   type AnalysisResult,
-  type SearchDeps,
 } from '../lib/analysis';
+import type { BadgeVerdict } from '../lib/background/badge';
+import {
+  analyzeImageViaBackground,
+  askGates,
+  openOptions,
+  searchDeps,
+  setVerdictBadge,
+} from '../lib/background/client';
 import { imageCheckSearching, imageSearchCanBeRetried } from '../lib/checks/image';
 import type { Gate, Gates } from '../lib/gate';
-import { sendMessage, type OptionsSection } from '../lib/messages';
+import { sendMessage } from '../lib/messages';
 import type { Listing } from '../lib/model';
 import { waitFor } from '../lib/wait';
 import { fetchSeller } from '../lib/vinted/api';
@@ -34,20 +41,7 @@ const HOST_TAG = 'fripon-listing-card';
 /** The host element is reset by WXT (`all: initial`): give it back a block box. */
 const HOST_CSS = ':host { display: block !important; margin: 12px 0 !important; }';
 
-const analysisDeps: AnalysisDeps = {
-  fetchSeller,
-  analyzeImage: (url) => sendMessage({ type: 'analyzeImage', url }),
-};
-
-const searchDeps: SearchDeps = {
-  searchImage: (photoUrl, cacheOnly, retry) =>
-    sendMessage({
-      type: 'searchImage',
-      photoUrl,
-      ...(cacheOnly && { cacheOnly: true }),
-      ...(retry && { retry: true }),
-    }),
-};
+const analysisDeps: AnalysisDeps = { fetchSeller, analyzeImage: analyzeImageViaBackground };
 
 const aiDeps: AiDeps = {
   aiReview: (input, cacheOnly, retry) =>
@@ -58,29 +52,6 @@ const aiDeps: AiDeps = {
       ...(retry && { retry: true }),
     }),
 };
-
-const GATE_WORDS: readonly Gate[] = ['ready', 'no_key', 'quota', 'manual'];
-const NO_GATES: Gates = { image: 'no_key', ai: 'no_key' };
-
-const wordOf = (gate: unknown): Gate =>
-  GATE_WORDS.includes(gate as Gate) ? (gate as Gate) : 'no_key';
-
-/**
- * What the background says about the paid steps. The keys never leave it: this is all we learn.
- * Any failure counts as "no key", the safe state in which nothing paid is attempted.
- */
-async function askGates(): Promise<Gates> {
-  try {
-    const gates = await sendMessage({ type: 'getGates' });
-    return { image: wordOf(gates?.image), ai: wordOf(gates?.ai) };
-  } catch {
-    return NO_GATES;
-  }
-}
-
-function openOptions(section: OptionsSection) {
-  void sendMessage({ type: 'openOptions', section }).catch(() => undefined);
-}
 
 type Ui = Awaited<ReturnType<typeof createShadowRootUi<HTMLElement>>>;
 
@@ -131,7 +102,21 @@ function createCardController(ctx: ContentScriptContext) {
   let keepAttached: MutationObserver | null = null;
   /** The finished analysis of the current run, null until there is one. */
   let analysed: Analysed | null = null;
+  /** What this card last put on the toolbar badge, null for nothing. */
+  let sentBadge: BadgeVerdict | null = null;
   ctx.onInvalidated(() => stopKeepingAttached());
+
+  /**
+   * Keeps the toolbar badge in step with the verdict the card shows, null when it shows none. It is
+   * only sent when it differs from the last one sent, so a re-render costs no message. `again` sends
+   * a verdict that has not changed all the same, in case the browser reset the badge.
+   */
+  function updateBadge(shown: BadgeVerdict | null, again = false) {
+    const unchanged = shown?.level === sentBadge?.level && shown?.title === sentBadge?.title;
+    if (unchanged && !(again && shown)) return;
+    sentBadge = shown;
+    setVerdictBadge(shown);
+  }
 
   function show(state: CardState) {
     if (!container) return;
@@ -144,6 +129,9 @@ function createCardController(ctx: ContentScriptContext) {
       />,
       container,
     );
+    // Loading and error never follow a verdict: `start()` disposes the card (which clears the badge)
+    // before any new state, so only a verdict is worth sending.
+    if (state.status === 'done') updateBadge(state.verdict);
   }
 
   /** Shows the current analysis; `searchingImage` puts the "search running" row in the image row's place. */
@@ -329,6 +317,7 @@ function createCardController(ctx: ContentScriptContext) {
     ui = null;
     container = null;
     analysed = null;
+    updateBadge(null);
     // A card left by a previous run of this script (extension reload, bfcache).
     for (const stale of document.querySelectorAll(HOST_TAG)) stale.remove();
   }
@@ -440,7 +429,12 @@ function createCardController(ctx: ContentScriptContext) {
   function handleLocationChange(newUrl: URL) {
     try {
       const nextId = itemIdFromUrl(newUrl.href);
-      if (nextId === currentItemId) return;
+      if (nextId === currentItemId) {
+        // A same-document navigation (query string, hash) that a browser may treat as a reset of the
+        // tab's badge: say it again, which is cheap and sends nothing when no verdict is shown.
+        updateBadge(analysed?.result.verdict ?? null, true);
+        return;
+      }
       if (nextId === null) {
         runId++; // abandon any run still going
         currentItemId = null;
