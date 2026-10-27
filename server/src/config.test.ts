@@ -9,6 +9,8 @@ const production = {
   MAIL_FROM: 'Fripon <hello@fripon.test>',
   GOOGLE_VISION_KEY: 'vision-key',
   GEMINI_KEY: 'gemini-key',
+  STRIPE_SECRET_KEY: 'sk_live_abc',
+  STRIPE_WEBHOOK_SECRET: 'whsec_abc',
 };
 
 describe('loadConfig', () => {
@@ -24,6 +26,10 @@ describe('loadConfig', () => {
       globalDailyVisionCap: 3000,
       googleVisionKey: '',
       geminiKey: '',
+      stripeSecretKey: '',
+      stripeWebhookSecret: '',
+      stripeRequireTerms: false,
+      stripePortalConfiguration: null,
     });
   });
 
@@ -41,6 +47,10 @@ describe('loadConfig', () => {
         GLOBAL_DAILY_VISION_CAP: '500',
         GOOGLE_VISION_KEY: 'v-key',
         GEMINI_KEY: 'g-key',
+        STRIPE_SECRET_KEY: 'rk_test_abc',
+        STRIPE_WEBHOOK_SECRET: 'whsec_xyz',
+        STRIPE_REQUIRE_TERMS: 'true',
+        STRIPE_PORTAL_CONFIGURATION: 'bpc_123',
       }),
     ).toEqual({
       nodeEnv: 'test',
@@ -55,6 +65,10 @@ describe('loadConfig', () => {
       globalDailyVisionCap: 500,
       googleVisionKey: 'v-key',
       geminiKey: 'g-key',
+      stripeSecretKey: 'rk_test_abc',
+      stripeWebhookSecret: 'whsec_xyz',
+      stripeRequireTerms: true,
+      stripePortalConfiguration: 'bpc_123',
     });
   });
 
@@ -78,6 +92,8 @@ describe('loadConfig', () => {
         expect.stringContaining('SMTP_URL'),
         expect.stringContaining('GOOGLE_VISION_KEY'),
         expect.stringContaining('GEMINI_KEY'),
+        expect.stringContaining('STRIPE_SECRET_KEY'),
+        expect.stringContaining('STRIPE_WEBHOOK_SECRET'),
       ]),
     );
   });
@@ -96,6 +112,9 @@ describe('loadConfig', () => {
     [{ TRUST_PROXY: 'maybe' }, 'TRUST_PROXY'],
     [{ NODE_ENV: 'staging' }, 'NODE_ENV'],
     [{ PUBLIC_URL: 'not a url' }, 'PUBLIC_URL'],
+    [{ STRIPE_SECRET_KEY: 'pk_test_123' }, 'STRIPE_SECRET_KEY'],
+    [{ STRIPE_WEBHOOK_SECRET: 'abc' }, 'STRIPE_WEBHOOK_SECRET'],
+    [{ STRIPE_REQUIRE_TERMS: 'yes' }, 'STRIPE_REQUIRE_TERMS'],
   ])('refuses %j', (env, name) => {
     expect(catchConfigError(env).problems.join('\n')).toContain(name);
   });

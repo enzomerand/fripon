@@ -10,7 +10,8 @@
     "build": "esbuild src/main.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/main.js",
     "start": "node dist/main.js",
     "typecheck": "tsc -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "stripe:setup": "esbuild scripts/stripe-setup.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=dist/stripe-setup.js && node --env-file-if-exists=.env dist/stripe-setup.js"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",

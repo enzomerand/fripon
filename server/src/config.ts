@@ -82,12 +82,32 @@ export function loadConfig(env: Env = process.env) {
     /** The owner's Google keys behind the paid steps. Empty in development: Google then refuses. */
     googleVisionKey: requiredInProduction('GOOGLE_VISION_KEY', ''),
     geminiKey: requiredInProduction('GEMINI_KEY', ''),
+    /** Stripe's secret (or restricted) key. Empty in development: Stripe then refuses the call. */
+    stripeSecretKey: requiredInProduction('STRIPE_SECRET_KEY', ''),
+    /** The signing secret of the webhook endpoint (`whsec_...`): what proves an event is Stripe's. */
+    stripeWebhookSecret: requiredInProduction('STRIPE_WEBHOOK_SECRET', ''),
+    /**
+     * Ask the buyer to accept the terms at Checkout (service starts at once, 14-day withdrawal right
+     * waived). Stripe needs a terms-of-service URL in the Dashboard first, hence off by default.
+     */
+    stripeRequireTerms: flag('STRIPE_REQUIRE_TERMS', false),
+    /**
+     * The portal configuration (`bpc_...`) to open when the account has no default one in the
+     * Dashboard; `npm run stripe:setup` prints it. `null` lets Stripe use its default.
+     */
+    stripePortalConfiguration: text(env, 'STRIPE_PORTAL_CONFIGURATION') ?? null,
   };
 
   if (production && config.authSecret.length < 32) {
     problems.push('AUTH_SECRET must be at least 32 characters in production');
   }
   if (production && config.smtpUrl === null) problems.push('SMTP_URL is required in production');
+  if (config.stripeSecretKey !== '' && !/^(sk|rk)_(test|live)_/.test(config.stripeSecretKey)) {
+    problems.push('STRIPE_SECRET_KEY must be a Stripe secret or restricted key (sk_... or rk_...)');
+  }
+  if (config.stripeWebhookSecret !== '' && !config.stripeWebhookSecret.startsWith('whsec_')) {
+    problems.push('STRIPE_WEBHOOK_SECRET must be a webhook signing secret (whsec_...)');
+  }
   try {
     new URL(config.publicUrl);
   } catch {
