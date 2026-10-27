@@ -65,6 +65,63 @@ ask() {
   done
 }
 
+# Percent-encodes a URL part byte by byte (LC_ALL=C), so any password fits in SMTP_URL.
+urlencode() {
+  local LC_ALL=C s=$1 out='' c code hex i
+  for ((i = 0; i < ${#s}; i++)); do
+    c=${s:i:1}
+    case $c in
+      [a-zA-Z0-9.~_-]) out+=$c ;;
+      *)
+        # A byte above 127 reads as negative: keep its low 8 bits.
+        printf -v code '%d' "'$c"
+        printf -v hex '%%%02X' $((code & 255))
+        out+=$hex
+        ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+# SMTP_URL from its parts: nobody has to know the URL form or encode a password by hand.
+ask_smtp() {
+  local answer host port user pass scheme
+  if ! is_placeholder "$(current SMTP_URL)"; then
+    read -r -p "Envoi des e-mails déjà configuré. Le garder ? (O/n) " answer
+    [[ -z $answer || $answer =~ ^[oOyY] ]] && return 0
+  fi
+  echo "Envoi des e-mails (les identifiants SMTP de ton fournisseur, par exemple Brevo > SMTP & API) :"
+  read -r -p "  Serveur [smtp-relay.brevo.com] : " host
+  host=${host:-smtp-relay.brevo.com}
+  while true; do
+    read -r -p "  Port [587] : " port
+    port=${port:-587}
+    [[ $port =~ ^[0-9]+$ ]] && break
+    echo "  Un nombre, par exemple 587."
+  done
+  while true; do
+    read -r -p "  Identifiant : " user
+    [[ -n $user ]] && break
+  done
+  while true; do
+    read -r -s -p "  Mot de passe ou clé SMTP : " pass
+    echo
+    [[ -n $pass ]] && break
+  done
+  scheme=smtp
+  [[ $port == 465 ]] && scheme=smtps
+  set_value SMTP_URL "$scheme://$(urlencode "$user"):$(urlencode "$pass")@$host:$port"
+}
+
+# ask_default KEY LABEL DEFAULT: Entrée takes the current value, else the default.
+ask_default() {
+  local key=$1 label=$2 default=$3 old value
+  old=$(current "$key")
+  if ! is_placeholder "$old"; then default=$old; fi
+  read -r -p "$label [$default] : " value
+  set_value "$key" "${value:-$default}"
+}
+
 # `--google-keys`: the two Google keys arrive on stdin (Vision, then Gemini), piped from gcloud on
 # the owner's machine, so nobody copies them by hand. Nothing else is asked.
 if [[ ${1:-} == --google-keys ]]; then
@@ -86,8 +143,12 @@ echo "Fripon Cloud : configuration de $ENV_FILE"
 echo "Les secrets ne s'affichent pas pendant la saisie."
 echo
 ask OWNER_EMAIL "Adresse qui reçoit les alertes" 0 '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
-ask SMTP_URL "SMTP (smtp://utilisateur:motdepasse@serveur:587, caractères spéciaux encodés)" 1 '^smtps?://[^@]+@[^@]+$'
-ask MAIL_FROM "Expéditeur des codes (ex. Fripon <fripon@ton-domaine.fr>)" 0 '@'
+ask_smtp
+public_host=$(current PUBLIC_URL)
+public_host=${public_host#*://}
+public_host=${public_host%%/*}
+# fripon.example.com -> no-reply@example.com: the sender the SMTP provider already knows.
+ask_default MAIL_FROM "Expéditeur des codes" "Fripon <no-reply@${public_host#*.}>"
 ask GOOGLE_VISION_KEY "Clé Google Vision (AIza…)" 1 '^AIza[0-9A-Za-z_-]{30,}$'
 ask GEMINI_KEY "Clé Gemini (AIza…)" 1 '^AIza[0-9A-Za-z_-]{30,}$'
 ask STRIPE_SECRET_KEY "Clé secrète Stripe de TEST (sk_test_… ou rk_test_…)" 1 '^(sk|rk)_test_[0-9A-Za-z]+$'
