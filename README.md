@@ -1,92 +1,68 @@
-# Fripon
+<p align="center">
+  <img src="assets/logo.svg" width="112" alt="Logo de Fripon : un renard qui fait un clin d’œil">
+</p>
 
-Extension de navigateur qui repère, sur les annonces Vinted, le dropshipping (Shein, Temu,
-AliExpress…) et les prix incohérents. Gratuite et open source (AGPL-3.0).
+<h1 align="center">Fripon</h1>
 
-- Navigateurs : Chrome (bureau), Safari (macOS), Firefox en bonus.
-- Conception : `docs/superpowers/specs/2026-10-20-fripon-extension-design.md`.
-- Pour contribuer, voir `CLAUDE.md` (commandes, architecture, pièges).
+<p align="center">
+  Repère le dropshipping et les annonces douteuses sur Vinted, directement sur la page.<br>
+  Gratuit · Open source · Sans serveur · Chrome, Safari (macOS), Firefox
+</p>
 
-## Installer sur Chrome
+---
+
+Sur Vinted, des vendeurs revendent des articles Shein, Temu ou AliExpress achetés quelques euros.
+Fripon ajoute une carte sur chaque annonce que tu ouvres : un verdict en couleur, et pourquoi.
+
+## Ce que fait Fripon
+
+- **Un verdict sur chaque annonce** : 🔴 Dropshipping probable, 🟠 Article revendu ou À vérifier,
+  🟢 Rien de suspect, avec le détail de chaque vérification.
+- **Gratuit, sans rien configurer** : le vendeur (avis, articles neufs en série, même article en
+  plusieurs tailles), les photos (allure de catalogue, photo réutilisée) et la description (texte de
+  boutique ou traduit).
+- **Recherche de la photo** sur Shein, Temu, AliExpress et sept autres boutiques, avec Google Vision.
+- **Avis de l’IA** (facultatif) : Gemini résume l’annonce en une à trois phrases.
+- **Dans les résultats de recherche**, un bouton « Analyser » sous chaque vignette, ou tous les
+  articles visibles d’un coup.
+- **Les annonces vendues** ne sont pas analysées à leur ouverture.
+
+## Coûts
+
+Pas d’abonnement ni de compte. La recherche de photo et l’IA utilisent **tes propres clés Google** :
+
+- **Google Vision** : 1 000 recherches gratuites par mois, puis environ 3,50 $ les 1 000. Fripon
+  s’arrête à 1 000 par mois (modifiable) et garde les recherches récentes en cache 7 jours.
+- **Gemini** : gratuit, dans un projet Google Cloud sans facturation.
+
+La page de réglages guide pas à pas la création des clés.
+
+## Vie privée
+
+Fripon n’a aucun serveur et ne mesure rien. Tes clés restent dans ton navigateur. Seules la photo de
+l’annonce et, pour l’IA, son texte, son prix et les indices relevés partent chez Google.
+
+## Installer
+
+Fripon n’est pas encore sur les boutiques d’extensions. Il faut [Node.js](https://nodejs.org/).
 
 ```sh
 npm install
 npm run build
 ```
 
-Puis dans Chrome : `chrome://extensions` → activer le « Mode développeur » → « Charger l’extension
-non empaquetée » → choisir le dossier `.output/chrome-mv3`.
+- **Chrome** : `chrome://extensions` → « Mode développeur » → « Charger l’extension non empaquetée »
+  → dossier `.output/chrome-mv3`.
+- **Firefox** : `npm run build:firefox`, puis `about:debugging` → « Ce Firefox » → « Charger un
+  module complémentaire temporaire » → `.output/firefox-mv2/manifest.json`.
+- **Safari (macOS)** : voir [`docs/safari.md`](docs/safari.md).
 
-Pendant le développement, `npm run dev` ouvre Chrome avec l’extension et la recharge à chaque
-modification (`npm run dev:firefox` pour Firefox).
+## Contribuer
 
-## Installer sur Safari (macOS)
-
-Safari ne charge pas un dossier : l’extension doit être emballée dans une petite application macOS.
-Le projet Xcode est déjà dans `safari/`. Il n’y a pas de compte Apple Developer dans ce projet : la
-compilation est signée « ad hoc » (sans identité) et Safari doit être autorisé à charger des
-extensions non signées. Seul macOS est géré (pas iPhone ni iPad).
-
-Prérequis : macOS 13 ou plus récent, Xcode (avec ses outils en ligne de commande) et Node.js.
-
-1. Compiler l’application :
-
-   ```sh
-   npm install
-   npm run safari:app
-   ```
-
-   La commande construit l’extension, la copie dans le projet Xcode puis lance `xcodebuild`
-   (Debug, signature ad hoc). Elle affiche à la fin le chemin de l’application :
-   `.output/safari-xcode/Build/Products/Debug/Fripon.app`.
-
-2. Ouvrir `Fripon.app` une fois (double-clic ou `open` sur ce chemin), puis la quitter. Cela
-   déclare l’extension à Safari.
-3. Dans Safari : Réglages → Avancées → cocher « Afficher les fonctionnalités pour les développeurs
-   web ».
-4. Menu Développement → « Autoriser les extensions non signées » (mot de passe de session
-   demandé). **Ce réglage se désactive à chaque redémarrage de Safari** : il faut le refaire.
-5. Safari → Réglages → Extensions → cocher « Fripon ».
-6. Toujours dans cet écran, autoriser l’extension sur les sites : `vinted.fr` (ou le domaine Vinted
-   utilisé) et, pour l’analyse des photos et la recherche d’image, les autres sites demandés
-   (`vinted.net`, `googleapis.com`). Le plus simple est de mettre « Autres sites web » sur
-   « Autoriser » (bouton « Modifier les sites web »).
-
-Après une nouvelle compilation (`npm run safari:app`), relancer `Fripon.app`, puis recharger la page
-Vinted. Si Safari garde l’ancienne version, le redémarrer (et refaire l’étape 4).
-
-Publier sur l’App Store demande un compte Apple Developer (99 $ par an) : ce n’est pas fait ici.
-
-### Comment ça marche
-
-- `npm run build:safari` construit l’extension pour Safari dans `.output/safari-mv3`.
-- `npm run safari:sync` la copie dans `safari/Fripon/Fripon Extension/Resources/`. Ce dossier est
-  généré et ignoré par Git : ne pas le modifier à la main.
-- `npm run safari:app` enchaîne les deux puis compile l’application.
-- Le projet Xcode (`safari/Fripon/Fripon.xcodeproj`) est versionné et ne dépend d’aucun chemin de
-  machine. On peut aussi l’ouvrir dans Xcode (choisir « Sign to Run Locally » comme signature).
-
-### Régénérer le projet Xcode
-
-À faire seulement si `npm run safari:sync` signale que la compilation ne correspond plus au projet
-(par exemple après l’ajout d’une page ou d’un fichier au premier niveau de l’extension, comme une
-fenêtre de barre d’outils) :
-
-```sh
-npm run build:safari
-xcrun safari-web-extension-converter .output/safari-mv3 --project-location safari \
-  --app-name Fripon --bundle-identifier fr.fripon.Fripon --macos-only --swift \
-  --copy-resources --no-open --no-prompt --force
-```
-
-Le convertisseur réécrit aussi l’application conteneur (textes en français, en-têtes Swift) : avec
-`git diff`, garder le nouveau `project.pbxproj` et rétablir le reste (`git checkout -- <fichier>`).
-
-Le convertisseur vise aussi le macOS de la machine qui l’a lancé (27.0 par exemple), ce qui
-empêcherait l’application de démarrer sur un macOS plus ancien : dans le nouveau `project.pbxproj`,
-remettre toutes les lignes `MACOSX_DEPLOYMENT_TARGET` à `13.0` (le projet et la cible Fripon Extension).
-`npm run safari:sync` refuse de continuer tant qu’une de ces lignes dépasse 13.0.
+`npm run dev` lance Chrome avec l’extension rechargée à chaud. `npm run check` (formatage, lint,
+types, tests) passe avant chaque commit. L’architecture et les pièges de Vinted sont dans
+[`CLAUDE.md`](CLAUDE.md).
 
 ## Licence
 
-AGPL-3.0, voir `LICENSE`.
+[AGPL-3.0](LICENSE).
