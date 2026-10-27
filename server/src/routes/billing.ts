@@ -62,8 +62,8 @@ const PAGE_CSP =
 /** How many of a customer's subscriptions are read to look for a live one. */
 const SUBSCRIPTIONS_READ = 100;
 
-/** How many of a customer's open Checkout Sessions are read to end them (a person opens a handful). */
-const OPEN_SESSIONS_READ = 100;
+/** How many of a customer's open Checkout Sessions are read per page (all pages are read). */
+const OPEN_SESSIONS_PAGE = 100;
 
 /**
  * Billing: Checkout and the customer portal for the extension, the two pages Stripe sends the
@@ -189,26 +189,69 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
     }
 
     /**
+     * Cancels a subscription read as abandoned (`incomplete`). Reading and cancelling are two
+     * calls, so a payment can still land between them: the answer of the cancel says whether the
+     * first invoice was paid by then, and if it was the money is taken for a subscription that is
+     * gone. Nothing can be refunded from here, so the owner is told, to refund it by hand.
+     */
+    async function cancelOne(subscriptionId: string): Promise<void> {
+      const cancelled = await stripe.subscriptions.cancel(subscriptionId, {
+        expand: ['latest_invoice'],
+      });
+      const invoice = cancelled.latest_invoice;
+      if (typeof invoice === 'object' && invoice !== null && invoice.status === 'paid') {
+        const line =
+          `PAID WHILE CANCELLED: the subscription ${subscriptionId} was paid just as it was cancelled ` +
+          'as an abandoned first payment. It is cancelled now, so the customer paid for nothing: ' +
+          'refund the payment in the Stripe Dashboard (nothing was refunded automatically).';
+        console.error(`[stripe] ${line}`);
+        ctx.alert(`paid-while-cancelled:${subscriptionId}`, line);
+      }
+    }
+
+    /**
      * Ends the abandoned first payments of a customer, so that none can be paid later next to a
      * new Checkout (a second charge) or after the account is gone. Each one is read again right
      * before it is cancelled: the list may be seconds old, and a payment that went through since
-     * is a subscription that bills, not an abandoned one, so it is not cancelled and is returned
-     * (the other abandoned ones are left for the next time). One Stripe no longer has is already gone.
+     * is a subscription that bills, not an abandoned one, so it is not cancelled (the first such
+     * one is returned; the others are still ended). A payment that lands between that read and
+     * the cancel cannot be prevented, only noticed (`cancelOne`). One Stripe no longer has is
+     * already gone.
      */
     async function cancelAbandoned(
       subscriptions: StripeSubscription[],
     ): Promise<StripeSubscription | null> {
+      let paidMeanwhile: StripeSubscription | null = null;
       for (const listed of subscriptions) {
         if (listed.status !== 'incomplete') continue;
         try {
           const current = await stripe.subscriptions.retrieve(listed.id);
-          if (ACTIVE_STATUSES.includes(current.status)) return current;
-          if (current.status === 'incomplete') await stripe.subscriptions.cancel(listed.id);
+          if (ACTIVE_STATUSES.includes(current.status)) paidMeanwhile ??= current;
+          else if (current.status === 'incomplete') await cancelOne(listed.id);
         } catch (error) {
           if (!isMissing(error)) throw error;
         }
       }
-      return null;
+      return paidMeanwhile;
+    }
+
+    /**
+     * The customer has a live subscription and goes to the portal: the abandoned first payments
+     * beside it are ended too, or one paid later would make a second subscription. Nothing waits
+     * on it (no Checkout is made), so a failure only leaves them for the next time.
+     */
+    async function cancelAbandonedBesideLive(
+      customer: string,
+      listed?: StripeSubscription[],
+    ): Promise<void> {
+      try {
+        await cancelAbandoned(listed ?? (await subscriptionsOf(customer)));
+      } catch (error) {
+        console.error(
+          `[stripe] the abandoned payments of ${customer} could not be cancelled:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
 
     /**
@@ -231,14 +274,20 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
     ): Promise<string> {
       // One subscription per account: someone who has one changes it in the portal.
       if (isActive(account.subscription_status) && account.stripe_customer_id !== null) {
+        await cancelAbandonedBesideLive(account.stripe_customer_id);
         return portalUrl(account.stripe_customer_id);
       }
       // The local status is only as fresh as the last webhook: two Checkouts opened before the
       // first one's event arrived would make two paid subscriptions. Stripe is asked instead.
       if (account.stripe_customer_id !== null) {
-        const live = await liveOf(await subscriptionsOf(account.stripe_customer_id));
+        const listed = await subscriptionsOf(account.stripe_customer_id);
+        const live = await liveOf(listed);
         if (live) {
           await storeLive(live);
+          // `liveOf` ended the abandoned ones itself, unless it found the live one in the list.
+          if (listed.includes(live)) {
+            await cancelAbandonedBesideLive(account.stripe_customer_id, listed);
+          }
           return portalUrl(account.stripe_customer_id);
         }
       }
@@ -327,13 +376,22 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
     ctx.subscriptions.closeCheckouts = async (account) => {
       const customer = account.stripe_customer_id;
       if (customer === null) return;
-      let open: Array<{ id: string }>;
+      // Every page is read before any session is expired: a cursor must not move under the list.
+      const open: Array<{ id: string }> = [];
       try {
-        ({ data: open } = await stripe.checkout.sessions.list({
-          customer,
-          status: 'open',
-          limit: OPEN_SESSIONS_READ,
-        }));
+        let after: string | undefined;
+        let more = true;
+        while (more) {
+          const page = await stripe.checkout.sessions.list({
+            customer,
+            status: 'open',
+            limit: OPEN_SESSIONS_PAGE,
+            ...(after !== undefined && { starting_after: after }),
+          });
+          open.push(...page.data);
+          after = page.data.at(-1)?.id;
+          more = page.has_more && after !== undefined;
+        }
       } catch (error) {
         // A customer Stripe does not know has nothing to pay.
         if (isCustomerMissing(error)) return;

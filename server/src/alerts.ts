@@ -4,7 +4,8 @@ import type { Mailer } from './mailer';
  * Owner alerts: a plain e-mail to `OWNER_EMAIL` when something only the owner can fix happens (a
  * refused Google key, two paid subscriptions on one account, a webhook that fails, a dispute, a
  * global ceiling reached). At most one e-mail per kind per hour, kept in memory: a restart may
- * send one again, and a revoked key cannot flood the inbox.
+ * send one again, and a revoked key cannot flood the inbox. Problems that are each worth a mail
+ * (one per subscription) carry their id in the kind: `orphan-subscription:sub_...`.
  *
  * The text is scrubbed before it leaves: no key, no token, no full address (a photo URL is the
  * seller's), whatever the caller put in it.

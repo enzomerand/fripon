@@ -182,8 +182,10 @@ export function createSubscriptionSync({
       // customer made by hand): the money can only be given back by hand. One that does not bill
       // (an abandoned payment cancelled at a deletion) is not worth a mail.
       if (isActive(subscription.status)) {
+        // One kind per subscription: two orphans within the hour are two problems, and each one
+        // is mailed (once an hour at most).
         alert(
-          'orphan-subscription',
+          `orphan-subscription:${subscription.id}`,
           `ORPHAN SUBSCRIPTION: ${subscription.id} (customer ${idOf(subscription.customer) ?? 'unknown'}) ` +
             `is ${subscription.status} but belongs to no account, so it is billed for nothing. Cancel it ` +
             'and refund the customer in the Stripe Dashboard: nothing was cancelled automatically.',

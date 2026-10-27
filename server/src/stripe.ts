@@ -25,12 +25,16 @@ export interface StripeApi {
   checkout: {
     sessions: {
       create(params: Stripe.Checkout.SessionCreateParams): Promise<{ url: string | null }>;
-      /** A customer's Checkout Sessions that can still be paid (`status: 'open'`). */
+      /**
+       * A customer's Checkout Sessions that can still be paid (`status: 'open'`), one page at a time:
+       * `has_more` says there are more after the last one (`starting_after` its id).
+       */
       list(params: {
         customer: string;
         status: 'open';
         limit?: number;
-      }): Promise<{ data: Array<{ id: string }> }>;
+        starting_after?: string;
+      }): Promise<{ data: Array<{ id: string }>; has_more: boolean }>;
       /** Makes an open session unpayable (a session that is not open is refused). */
       expire(id: string): Promise<{ id: string }>;
     };
@@ -45,8 +49,15 @@ export interface StripeApi {
     retrieve(id: string, params?: { expand?: string[] }): Promise<StripeSubscription>;
     /** A customer's subscriptions, the canceled ones left out (Stripe's default). */
     list(params: { customer: string; limit?: number }): Promise<{ data: StripeSubscription[] }>;
-    /** Ends a subscription at once (an abandoned `incomplete` one, which must never be paid later). */
-    cancel(id: string): Promise<{ id: string }>;
+    /**
+     * Ends a subscription at once (an abandoned `incomplete` one, which must never be paid later).
+     * The answer is the subscription as it was cancelled: `expand: ['latest_invoice']` tells whether
+     * its first invoice had been paid by then.
+     */
+    cancel(
+      id: string,
+      params?: { expand?: string[] },
+    ): Promise<{ id: string; latest_invoice?: string | { status?: string | null } | null }>;
   };
   webhooks: {
     constructEventAsync(
