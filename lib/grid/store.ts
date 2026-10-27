@@ -12,6 +12,8 @@ export type CardView =
   | { status: 'done'; verdict: CompactVerdict; url: string }
   | { status: 'needsKey'; section: KeySection }
   | { status: 'quota' }
+  /** No photo to search yet; a click reads the card again. */
+  | { status: 'noPhoto' }
   | { status: 'error'; line: string };
 
 export const IDLE: CardView = { status: 'idle' };

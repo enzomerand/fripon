@@ -5,7 +5,10 @@ export const BATCH_SPACING_MS = 1_000;
 /** A batch gives up after this many failures in a row (Google or the network is down). */
 export const MAX_CONSECUTIVE_FAILURES = 3;
 
-/** How the analysis of one card ended: its outcome, or `skipped` when there was nothing to do. */
+/**
+ * How the analysis of one card ended: its outcome, or `skipped` when there was nothing to do.
+ * `noPhoto` is an outcome in which nothing was sent either.
+ */
 export type AnalyzeResult = QuickOutcome['status'] | 'skipped';
 
 /** Everything a batch needs from the page, injected so it can be tested. */
@@ -27,7 +30,7 @@ export type StopReason = 'finished' | 'stopped' | 'quota' | 'needsKey' | 'failur
 
 export interface BatchEnd {
   reason: StopReason;
-  /** Cards that were really analysed (those that were skipped do not count). */
+  /** Cards whose photo was really sent to the search (skipped cards and cards without a photo do not count). */
   analysed: number;
 }
 
@@ -94,15 +97,18 @@ export function createBatch(deps: BatchDeps): Batch {
     for (const [index, id] of ids.entries()) {
       if (isStopping()) return { reason: 'stopped', analysed };
       const result = await analyse(id);
-      if (result !== 'skipped') analysed++;
+      // Nothing was sent for a card that was skipped or has no photo: no count, no pause, and no
+      // word on whether the search works.
+      const sent = result !== 'skipped' && result !== 'noPhoto';
+      if (sent) analysed++;
       if (result === 'quota') return { reason: 'quota', analysed };
       if (result === 'needsKey') return { reason: 'needsKey', analysed };
-      failures = result === 'error' ? failures + 1 : 0;
+      if (sent) failures = result === 'error' ? failures + 1 : 0;
       if (failures >= MAX_CONSECUTIVE_FAILURES) return { reason: 'failures', analysed };
       if (index === ids.length - 1) break;
       if (isStopping()) return { reason: 'stopped', analysed };
       change({ phase: 'running', total: ids.length, position: index + 1, stopping: false });
-      if (result !== 'skipped') await pause(BATCH_SPACING_MS);
+      if (sent) await pause(BATCH_SPACING_MS);
     }
     return { reason: 'finished', analysed };
   }

@@ -196,10 +196,8 @@ describe('quickAnalysis', () => {
 
   it('sends nothing when the card has no usable photo', async () => {
     const { deps, searchImage, analyzeImage } = setup(found());
-    expect(await quickAnalysis(null, deps)).toEqual({
-      status: 'error',
-      line: 'Recherche impossible',
-    });
+    // Not a failure of the search: nothing was tried.
+    expect(await quickAnalysis(null, deps)).toEqual({ status: 'noPhoto' });
     expect(searchImage).not.toHaveBeenCalled();
     expect(analyzeImage).not.toHaveBeenCalled();
   });

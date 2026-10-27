@@ -34,11 +34,17 @@ export type QuickOutcome =
   /** `guide`: no key saved. `keys`: Google refused the saved one. */
   | { status: 'needsKey'; section: KeySection }
   | { status: 'quota' }
+  /**
+   * The card has no photo that can be searched (a placeholder not replaced yet, a thumbnail too
+   * small): nothing was sent, and it is not a failure of the search.
+   */
+  | { status: 'noPhoto' }
   | { status: 'error'; line: string };
 
 export const QUICK_SUFFIX = 'analyse rapide';
 export const NOTHING_FOUND = 'Rien trouvé';
 export const SEARCH_IMPOSSIBLE = 'Recherche impossible';
+export const PHOTO_UNAVAILABLE = 'Photo indisponible';
 
 const ERROR: QuickOutcome = { status: 'error', line: SEARCH_IMPOSSIBLE };
 
@@ -77,7 +83,8 @@ async function localPhotosRow(photoUrl: string, deps: QuickAnalysisDeps): Promis
 /**
  * The reduced analysis of one card, started by a click: the reverse image search of its thumbnail
  * (which spends a Vision credit, unless this photo was searched in the last 7 days) and the local
- * look at the same thumbnail, both at once. Nothing is asked of Vinted. Never rejects.
+ * look at the same thumbnail, both at once. Nothing is asked of Vinted, and nothing is sent at all
+ * for a card without a usable photo (`noPhoto`). Never rejects.
  *
  * `retry` is true when the click follows a failure: the background then tries again a failure it
  * remembers for a moment instead of answering it again.
@@ -87,7 +94,7 @@ export async function quickAnalysis(
   deps: QuickAnalysisDeps,
   retry = false,
 ): Promise<QuickOutcome> {
-  if (!photoUrl) return ERROR;
+  if (!photoUrl) return { status: 'noPhoto' };
   const [response, photos] = await Promise.all([
     searchPhoto(photoUrl, deps, false, retry),
     localPhotosRow(photoUrl, deps),

@@ -209,6 +209,51 @@ describe('running', () => {
   });
 });
 
+describe('cards without a photo', () => {
+  it('are no failure of the search: any number of them in a row does not stop the batch', async () => {
+    const { deps, calls } = setup(['noPhoto', 'noPhoto', 'noPhoto', 'noPhoto', 'done']);
+    const batch = createBatch(deps);
+    await batch.ask([...IDS, '9000105']);
+    await batch.launch();
+    expect(calls).toEqual([...IDS, '9000105']);
+    expect(batch.state()).toMatchObject({ phase: 'idle', last: { reason: 'finished' } });
+  });
+
+  it('neither add to a series of failures nor end it', async () => {
+    const { deps, calls } = setup(['error', 'noPhoto', 'error', 'noPhoto', 'error', 'done']);
+    const batch = createBatch(deps);
+    await batch.ask([...IDS, '9000105', '9000106']);
+    await batch.launch();
+    expect(calls).toEqual([...IDS, '9000105']);
+    expect(batch.state()).toMatchObject({ last: { reason: 'failures' } });
+  });
+
+  it('are not counted among the cards analysed, nor waited for', async () => {
+    const { deps, sleeps } = setup(['noPhoto', 'done', 'noPhoto', 'done']);
+    const batch = createBatch(deps);
+    await batch.ask(IDS);
+    await batch.launch();
+    expect(batch.state()).toEqual({ phase: 'idle', last: { reason: 'finished', analysed: 2 } });
+    expect(sleeps).toEqual([1_000]);
+  });
+
+  it('leave the count of a stopped batch at the cards that were really searched', async () => {
+    const { deps } = setup(['noPhoto', 'noPhoto', 'done', 'done']);
+    const batch = createBatch({
+      ...deps,
+      // The user presses "Arrêter" right after the third card.
+      analyze: async (id) => {
+        const result = await deps.analyze(id);
+        if (id === '9000103') batch.stop();
+        return result;
+      },
+    });
+    await batch.ask(IDS);
+    await batch.launch();
+    expect(batch.state()).toEqual({ phase: 'idle', last: { reason: 'stopped', analysed: 1 } });
+  });
+});
+
 describe('stopping', () => {
   it('lets the card being analysed finish and starts no other', async () => {
     let finish: (result: AnalyzeResult) => void = () => undefined;

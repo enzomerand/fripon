@@ -8,13 +8,13 @@ import { createGridController, type GridController } from './controller';
 // The bar above the results, on a synthetic results page. Every id and photo is made up.
 const THUMB = (id: number) => `https://images1.vinted.net/t/01_aa/310x430/p${id}.webp?s=1`;
 
-function card(id: number): string {
+function card(id: number, src = THUMB(id)): string {
   const p = `product-item-id-${id}`;
   return `
     <div data-testid="grid-item">
       <div data-testid="${p}">
         <a data-testid="${p}--overlay-link" href="/items/${id}-robe-test"></a>
-        <img data-testid="${p}--image--img" src="${THUMB(id)}">
+        <img data-testid="${p}--image--img" src="${src}">
         <div data-testid="${p}--description"><p data-testid="${p}--price-text">9,00 €</p></div>
       </div>
     </div>`;
@@ -32,7 +32,7 @@ let sleep: (ms: number) => Promise<void>;
 let inView: Set<number>;
 let controller: GridController | null;
 
-function start(html = IDS.map(card).join('')) {
+function start(html = IDS.map((id) => card(id)).join('')) {
   document.getElementById('grid')!.innerHTML = html;
   controller = createGridController({
     doc: document,
@@ -156,7 +156,7 @@ describe('the bar above the results', () => {
     start();
     await until(() => bar() !== null);
     const main = document.querySelector('main') as HTMLElement;
-    main.innerHTML = `<h1>Résultats</h1><div id="grid">${IDS.map(card).join('')}</div>`;
+    main.innerHTML = `<h1>Résultats</h1><div id="grid">${IDS.map((id) => card(id)).join('')}</div>`;
     await until(() => bar()?.nextElementSibling === document.getElementById('grid'));
     expect(document.querySelectorAll(BAR_HOST_TAG)).toHaveLength(1);
   });
@@ -316,6 +316,56 @@ describe('a batch', () => {
   });
 });
 
+describe('cards without a photo', () => {
+  const PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+  // Four cards whose first three thumbnails have not loaded: no search can be sent for them.
+  const html = [
+    card(9000101, PLACEHOLDER),
+    card(9000102, PLACEHOLDER),
+    card(9000103, PLACEHOLDER),
+    card(9000104),
+  ].join('');
+
+  it('do not end the batch as a series of failures would, and do not count as analysed', async () => {
+    start(html);
+    await until(() => bar() !== null);
+    barButton('Analyser').click();
+    await until(() => barText().includes('Lancer'));
+    barButton('Lancer').click();
+    await until(() => cardText(9000104).includes('analyse rapide'));
+
+    expect(search).toHaveBeenCalledOnce();
+    expect(cardText(9000101)).toContain('Photo indisponible');
+    // Nothing was searched for the first three cards: no pause for them either.
+    expect(sleeps).toEqual([]);
+  });
+
+  it('are not among the cards "analysed" when the user stops the batch', async () => {
+    let releasePause: () => void = () => undefined;
+    sleep = () => new Promise<void>((resolve) => (releasePause = resolve));
+    start([card(9000101, PLACEHOLDER), card(9000102), card(9000103), card(9000104)].join(''));
+    await until(() => bar() !== null);
+    barButton('Analyser').click();
+    await until(() => barText().includes('Lancer'));
+    barButton('Lancer').click();
+    await until(() => search.mock.calls.length === 1);
+    await until(() => barText().includes('1 / 4') || barText().includes('2 / 4'));
+
+    barButton('Arrêter').click();
+    await until(() => barText().includes('Analyse arrêtée'));
+    releasePause();
+    expect(barText()).toContain('Analyse arrêtée après 1 article.');
+  });
+
+  it('are not counted among the cards a batch would take once the user has looked at them', async () => {
+    const running = start(html);
+    await until(() => barText() === '🦊 Analyser les 4 articles visibles');
+    await running.analyze('9000101');
+    // The first card, now "Photo indisponible", is left to a click of its own.
+    await until(() => barText() === '🦊 Analyser les 3 articles visibles');
+  });
+});
+
 describe('on the shape of the live search page', () => {
   // Cards in `div.feed-grid` inside `section.content-container` (the real class names carry a
   // hashed prefix), the bar before the grid, as seen on vinted.fr.
@@ -331,7 +381,7 @@ describe('on the shape of the live search page', () => {
     const grid = document.createElement('div');
     grid.id = 'grid';
     grid.className = 'Xy9z_feed-grid';
-    grid.innerHTML = ids.map(card).join('');
+    grid.innerHTML = ids.map((id) => card(id)).join('');
     return grid;
   };
 

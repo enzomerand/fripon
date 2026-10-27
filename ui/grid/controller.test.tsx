@@ -228,17 +228,32 @@ describe('analysis of a card', () => {
     expect(search).toHaveBeenCalledWith(THUMB(7), false, false);
   });
 
-  it('fails without a request when the card has no usable photo, and retries with the flag', async () => {
+  it('sends nothing for a card without a usable photo, and says so apart from a failure', async () => {
     const running = start(card(9000101, PLACEHOLDER));
-    expect(await running.analyze('9000101')).toBe('error');
+    expect(await running.analyze('9000101')).toBe('noPhoto');
     expect(search).not.toHaveBeenCalled();
-    expect(shadowText(hostOf(9000101))).toContain('Recherche impossible');
+    expect(shadowText(hostOf(9000101))).toContain('Photo indisponible');
+    expect(shadowText(hostOf(9000101))).not.toContain('Recherche impossible');
+  });
+
+  it('looks at the photo again when the user clicks, and does not ask for a retry of a search that never ran', async () => {
+    const running = start(card(9000101, PLACEHOLDER));
+    await running.analyze('9000101');
 
     (rootOf(9000101).querySelector('img') as HTMLImageElement).src = THUMB(7);
     shadowButton(hostOf(9000101)).click();
     await until(() => shadowText(hostOf(9000101)).includes('analyse rapide'));
-    // Retrying after a failure asks the background to try a remembered failure again.
-    expect(search).toHaveBeenCalledWith(THUMB(7), false, true);
+    expect(search).toHaveBeenCalledOnce();
+    expect(search).toHaveBeenCalledWith(THUMB(7), false, false);
+  });
+
+  it('asks the background to try a failed search again, with the flag', async () => {
+    search.mockResolvedValueOnce({ status: 'error', reason: 'network' });
+    const running = start(card(9000101));
+    expect(await running.analyze('9000101')).toBe('error');
+    shadowButton(hostOf(9000101)).click();
+    await until(() => shadowText(hostOf(9000101)).includes('analyse rapide'));
+    expect(search).toHaveBeenLastCalledWith(THUMB(1), false, true);
   });
 
   it('offers to try again after a failed search', async () => {

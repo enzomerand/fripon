@@ -80,6 +80,7 @@ describe('viewOf', () => {
   it.each<QuickOutcome>([
     { status: 'needsKey', section: 'keys' },
     { status: 'quota' },
+    { status: 'noPhoto' },
     { status: 'error', line: 'Recherche impossible' },
   ])('keeps the other outcomes as they are (%o)', (outcome) => {
     expect(viewOf(outcome, 'https://www.vinted.fr/items/9000101')).toEqual(outcome);

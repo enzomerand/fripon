@@ -47,7 +47,10 @@ export interface GridController {
 
 const RUNNING: CardView = { status: 'running' };
 const IS_BLOCKED = (view: CardView) => view.status === 'needsKey' || view.status === 'quota';
-/** A card a batch may take: not analysed yet, or whose last attempt failed. */
+/**
+ * A card a batch may take: not analysed yet, or whose last attempt failed. A card without a photo
+ * waits for a click (its thumbnail may load later), a batch would only go through it again.
+ */
 const IS_PENDING = (view: CardView) => view.status === 'idle' || view.status === 'error';
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

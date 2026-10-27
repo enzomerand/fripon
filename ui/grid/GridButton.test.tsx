@@ -172,6 +172,15 @@ describe('GridButton', () => {
     expect(onAnalyze).toHaveBeenCalledOnce();
   });
 
+  it('says the photo is not available, apart from a failed search, and offers to look again', async () => {
+    const onAnalyze = vi.fn();
+    await show({ status: 'noPhoto' }, { onAnalyze });
+    expect(root.querySelector('.fripon-grid__note')?.textContent).toBe('Photo indisponible');
+    expect(button().textContent).toBe('Réessayer');
+    click(button());
+    expect(onAnalyze).toHaveBeenCalledOnce();
+  });
+
   it('announces its changes politely', async () => {
     await show({ status: 'idle' });
     expect(root.querySelector('.fripon-grid')?.getAttribute('aria-live')).toBe('polite');

@@ -1,3 +1,4 @@
+import { PHOTO_UNAVAILABLE } from '../../lib/grid/quick-analysis';
 import type { CardView } from '../../lib/grid/store';
 import type { OptionsSection } from '../../lib/messages';
 import { LEVEL_COLOUR } from '../verdict-colour';
@@ -95,6 +96,15 @@ function Body({ view, title, onAnalyze, onOpenOptions }: GridButtonProps) {
         >
           {QUOTA_LABEL}
         </button>
+      );
+    case 'noPhoto':
+      return (
+        <>
+          <p class="fripon-grid__note">{PHOTO_UNAVAILABLE}</p>
+          <button type="button" class="fripon-grid__button" onClick={press(onAnalyze)}>
+            {RETRY_LABEL}
+          </button>
+        </>
       );
     case 'error':
       return (
