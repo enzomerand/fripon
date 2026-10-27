@@ -3,7 +3,7 @@ import { defineConfig } from 'wxt';
 
 // See https://wxt.dev/api/reference/wxt/interfaces/inlineconfig.html
 export default defineConfig({
-  manifest: {
+  manifest: ({ browser }) => ({
     name: 'Fripon',
     description:
       'Repère le dropshipping (Shein, Temu, AliExpress) et les prix incohérents sur Vinted.',
@@ -18,6 +18,11 @@ export default defineConfig({
       'https://vision.googleapis.com/*',
       'https://generativelanguage.googleapis.com/*',
     ],
-  },
+    // Safari 16.4 is the first with `storage.session` and `OffscreenCanvas` (the photo hashing in
+    // the background): refuse older versions rather than run with half the checks.
+    ...(browser === 'safari' && {
+      browser_specific_settings: { safari: { strict_min_version: '16.4' } },
+    }),
+  }),
   vite: () => ({ plugins: [preact()] }),
 });
