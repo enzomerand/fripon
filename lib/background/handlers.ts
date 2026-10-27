@@ -31,6 +31,8 @@ export interface MessageSender {
   url?: string;
   /** Only set for a content script (or any page in a tab). */
   tab?: { id?: number };
+  /** 0 is the top frame of the tab. */
+  frameId?: number;
 }
 
 /** What the listener knows of the sender that the message itself does not say. */
@@ -47,7 +49,8 @@ export interface OwnIdentity {
 /**
  * Only our own content scripts and pages may use the background. Testing a key is further
  * limited to the extension's own pages: a content script runs in the context of a web page. The
- * badge is the other way round: it is for a content script of a Vinted page, in a tab.
+ * badge is the other way round: it is for a content script in the top frame of a real tab (not
+ * `TAB_ID_NONE`, -1) on a Vinted page.
  */
 export function isAllowedSender(
   message: RuntimeMessage,
@@ -61,6 +64,8 @@ export function isAllowedSender(
   if (message.type === 'setVerdictBadge') {
     return (
       typeof sender.tab?.id === 'number' &&
+      sender.tab.id >= 0 &&
+      (sender.frameId === undefined || sender.frameId === 0) &&
       typeof sender.url === 'string' &&
       isVintedPageUrl(sender.url)
     );

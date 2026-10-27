@@ -201,6 +201,17 @@ describe('isRuntimeMessage', () => {
     expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: { level: 'clean' } })).toBe(false);
   });
 
+  it('refuses a setVerdictBadge whose title is blank or spans several lines', () => {
+    const send = (title: string) =>
+      isRuntimeMessage({ type: 'setVerdictBadge', verdict: { level: 'clean', title } });
+    for (const blank of [' ', '   ', '\t', '\n', ' \u00a0 ']) expect(send(blank)).toBe(false);
+    for (const lines of ['a\nb', 'a\r\nb', 'a\rb', 'Rien\n', '\nRien']) {
+      expect(send(lines)).toBe(false);
+    }
+    expect(send('Rien de suspect (sans recherche d’image)')).toBe(true);
+    expect(send(' Rien ')).toBe(true);
+  });
+
   it('accepts testKey for a known provider only', () => {
     expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: 'AIzaX' })).toBe(true);
     expect(isRuntimeMessage({ type: 'testKey', provider: 'gemini', key: 'AIzaX' })).toBe(true);

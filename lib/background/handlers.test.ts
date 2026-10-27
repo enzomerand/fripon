@@ -72,6 +72,14 @@ describe('isAllowedSender', () => {
       ).toBe(true);
     });
 
+    it('refuses a tab that is no real tab, and a frame that is not the top one', () => {
+      // chrome.tabs.TAB_ID_NONE
+      expect(isAllowedSender(badge, { id: 'abc', url: page, tab: { id: -1 } }, own)).toBe(false);
+      expect(isAllowedSender(badge, { id: 'abc', url: page, tab, frameId: 3 }, own)).toBe(false);
+      expect(isAllowedSender(badge, { id: 'abc', url: page, tab: { id: 0 } }, own)).toBe(true);
+      expect(isAllowedSender(badge, { id: 'abc', url: page, tab, frameId: 0 }, own)).toBe(true);
+    });
+
     it('refuses an extension page, which has no tab', () => {
       expect(isAllowedSender(badge, { id: 'abc', url: optionsPage }, own)).toBe(false);
       expect(isAllowedSender(badge, { id: 'abc', url: page }, own)).toBe(false);

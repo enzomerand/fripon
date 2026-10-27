@@ -6,7 +6,7 @@ import { getUsage } from '../lib/credits';
 import { PENDING_SECTION_KEY } from '../lib/options-nav';
 import { loadSettings, saveSettings } from '../lib/settings';
 
-type Sender = { id?: string; url?: string; tab?: { id?: number } };
+type Sender = { id?: string; url?: string; tab?: { id?: number }; frameId?: number };
 type Listener = (
   message: unknown,
   sender: Sender,
@@ -515,30 +515,17 @@ describe('background', () => {
       expect(await text(11)).toBe('');
     });
 
-    it('clears the badge of a tab that starts loading, and only that tab', async () => {
+    it('refuses a tab that is no real tab, and a frame that is not the top one', async () => {
       const send = start();
-      await send({ type: 'setVerdictBadge', verdict: dropshipping }, fromTab(11));
-      await send({ type: 'setVerdictBadge', verdict: dropshipping }, fromTab(12));
-
-      await fakeBrowser.tabs.onUpdated.trigger(11, { status: 'loading' }, { id: 11 } as never);
-      await vi.waitFor(async () => expect(await text(11)).toBe(''));
-      expect(await title(11)).toBe('Fripon');
-      expect(await text(12)).toBe('!');
-    });
-
-    it('keeps the badge for any other update of the tab', async () => {
-      const send = start();
-      await send({ type: 'setVerdictBadge', verdict: dropshipping }, fromTab(11));
-
-      await fakeBrowser.tabs.onUpdated.trigger(11, { status: 'complete' }, { id: 11 } as never);
-      await fakeBrowser.tabs.onUpdated.trigger(11, { title: 'Robe' }, { id: 11 } as never);
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      const message = { type: 'setVerdictBadge', verdict: dropshipping };
+      // chrome.tabs.TAB_ID_NONE
+      expect(await send(message, fromTab(-1))).toBe('no answer');
+      expect(await send(message, { ...fromTab(11), frameId: 3 })).toBe('no answer');
+      expect(await text(-1)).toBe('');
+      expect(await text(11)).toBe('');
+      // The top frame, with or without the frame id, is the page.
+      await send(message, { ...fromTab(11), frameId: 0 });
       expect(await text(11)).toBe('!');
-    });
-
-    it('still starts when the browser has no tabs API', () => {
-      vi.spyOn(browser, 'tabs', 'get').mockReturnValue(undefined as never);
-      expect(() => start()).not.toThrow();
     });
   });
 

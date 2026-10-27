@@ -80,13 +80,6 @@ export default defineBackground(() => {
     void openOptionsAt().catch(() => undefined);
   });
 
-  // A page that starts loading starts without a badge (grid and search pages never keep a stale
-  // one). The card of an item page sends its verdict again once it has one. The event needs no
-  // `tabs` permission to say that a tab is loading.
-  browser.tabs?.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status === 'loading') void deps.setBadge(tabId, null);
-  });
-
   // A refused key is only remembered for as long as it is the stored one: a changed key (even one
   // that is put back later) starts from a clean slate.
   browser.storage.onChanged.addListener((changes, area) => {

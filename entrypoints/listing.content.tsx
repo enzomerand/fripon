@@ -114,7 +114,7 @@ function createCardController(ctx: ContentScriptContext) {
   /**
    * Keeps the toolbar badge in step with the verdict the card shows, null when it shows none. It is
    * only sent when it differs from the last one sent, so a re-render costs no message. `again` sends
-   * a verdict that has not changed all the same: the background may have cleared it.
+   * a verdict that has not changed all the same, in case the browser reset the badge.
    */
   function updateBadge(shown: BadgeVerdict | null, again = false) {
     const unchanged = shown?.level === sentBadge?.level && shown?.title === sentBadge?.title;
@@ -134,8 +134,9 @@ function createCardController(ctx: ContentScriptContext) {
       />,
       container,
     );
-    // Loading and error have no verdict: they must not leave the previous one on the button.
-    updateBadge(state.status === 'done' ? badgeOf(state.verdict) : null);
+    // Loading and error never follow a verdict: `start()` disposes the card (which clears the badge)
+    // before any new state, so only a verdict is worth sending.
+    if (state.status === 'done') updateBadge(badgeOf(state.verdict));
   }
 
   /** Shows the current analysis; `searchingImage` puts the "search running" row in the image row's place. */
@@ -434,7 +435,8 @@ function createCardController(ctx: ContentScriptContext) {
     try {
       const nextId = itemIdFromUrl(newUrl.href);
       if (nextId === currentItemId) {
-        // The background clears the badge of a tab that loads: put the verdict back.
+        // A same-document navigation (query string, hash) that a browser may treat as a reset of the
+        // tab's badge: say it again, which is cheap and sends nothing when no verdict is shown.
         updateBadge(analysed && badgeOf(analysed.result.verdict), true);
         return;
       }

@@ -163,7 +163,7 @@ const VERDICT_LEVELS = Object.keys({
   clean: true,
 } satisfies Record<VerdictLevel, true>);
 
-/** A verdict as the badge takes it: a known level and a short, non-empty title. */
+/** A verdict as the badge takes it: a known level and a short title, on one line, not blank. */
 function isBadgeVerdict(value: unknown): value is BadgeVerdict {
   if (typeof value !== 'object' || value === null) return false;
   const { level, title } = value as { level?: unknown; title?: unknown };
@@ -171,8 +171,9 @@ function isBadgeVerdict(value: unknown): value is BadgeVerdict {
     typeof level === 'string' &&
     VERDICT_LEVELS.includes(level) &&
     typeof title === 'string' &&
-    title.length > 0 &&
-    title.length <= BADGE_TITLE_MAX
+    title.trim().length > 0 &&
+    title.length <= BADGE_TITLE_MAX &&
+    !/[\r\n]/.test(title)
   );
 }
 
