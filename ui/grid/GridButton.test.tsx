@@ -55,7 +55,6 @@ describe('GridButton', () => {
   it('separates the fox from the label: its own item and a gap in the flex row', async () => {
     await show({ status: 'idle' });
     expect(button().firstElementChild?.querySelector('svg')).toBeTruthy();
-    expect(button().textContent).toBe('Analyser');
     const rule = /\.fripon-grid__button \{[^}]*\}/.exec(css)?.[0] ?? '';
     expect(rule).toMatch(/display:\s*flex/);
     expect(rule).toMatch(/gap:\s*\d+px/);

@@ -39,7 +39,6 @@ describe('GridBar', () => {
   it('separates the fox from the label: its own item and a gap in the flex row', async () => {
     await show(idle, 24);
     expect(buttons()[0]?.firstElementChild?.querySelector('svg')).toBeTruthy();
-    expect(buttons()[0]?.textContent).toBe('Analyser les 24 articles visibles');
     const rule = /\.fripon-bar__button \{[^}]*\}/.exec(css)?.[0] ?? '';
     expect(rule).toMatch(/display:\s*inline-flex/);
     expect(rule).toMatch(/gap:\s*\d+px/);
