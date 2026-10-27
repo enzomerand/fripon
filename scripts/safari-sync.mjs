@@ -21,7 +21,7 @@ if (!existsSync(join(source, 'manifest.json'))) {
 
 if (!existsSync(project)) {
   fail(
-    `Xcode project not found: ${relative(root, project)}. See README.md ("Régénérer le projet Xcode").`,
+    `Xcode project not found: ${relative(root, project)}. See docs/safari.md ("Régénérer le projet Xcode").`,
   );
 }
 const pbxproj = readFileSync(project, 'utf8');
@@ -63,7 +63,7 @@ if (unknown.length > 0 || missingFiles.length > 0) {
       missingFiles.length > 0
         ? `  missing from the build: ${missingFiles.map(([n]) => n).join(', ')}`
         : '',
-      'Regenerate the project as described in README.md ("Régénérer le projet Xcode").',
+      'Regenerate the project as described in docs/safari.md ("Régénérer le projet Xcode").',
     ]
       .filter(Boolean)
       .join('\n'),
