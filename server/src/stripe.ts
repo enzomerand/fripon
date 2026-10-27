@@ -25,6 +25,14 @@ export interface StripeApi {
   checkout: {
     sessions: {
       create(params: Stripe.Checkout.SessionCreateParams): Promise<{ url: string | null }>;
+      /** A customer's Checkout Sessions that can still be paid (`status: 'open'`). */
+      list(params: {
+        customer: string;
+        status: 'open';
+        limit?: number;
+      }): Promise<{ data: Array<{ id: string }> }>;
+      /** Makes an open session unpayable (a session that is not open is refused). */
+      expire(id: string): Promise<{ id: string }>;
     };
   };
   billingPortal: {

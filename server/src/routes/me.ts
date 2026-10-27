@@ -25,11 +25,14 @@ export const registerMeRoute: RouteModule = (app, ctx) => {
    * Deletes the account and everything that belongs to it: its sessions, usage and reviews (they
    * go with the row), and the rows keyed by its e-mail address (the sign-in code, the wrong
    * guesses). 204 on success; 409 `active_subscription` while Stripe still bills it (active,
-   * trialing, past_due, or an incomplete payment that may still go through): it must be cancelled
-   * in the portal first, or the card would go on being charged for nothing. Stripe is asked, not
-   * only the row, which is as fresh as the last webhook; if Stripe cannot be read the answer is 503
-   * `unavailable` and nothing is deleted. The Stripe customer stays at Stripe (invoices must be
-   * kept by law); the account's link to it goes with the row.
+   * trialing, past_due): it must be cancelled in the portal first, or the card would go on being
+   * charged for nothing. An abandoned `incomplete` first payment is not that: the portal cannot
+   * cancel it, so it is cancelled here, and the account is deleted. Stripe is asked, not only the
+   * row, which is as fresh as the last webhook. The customer's open Checkout Sessions are expired
+   * first, or one paid after the deletion would make a subscription nobody owns (and the check
+   * for a live subscription comes after, so a session paid meanwhile is seen). If Stripe cannot be
+   * read the answer is 503 `unavailable` and nothing is deleted. The Stripe customer stays at
+   * Stripe (invoices must be kept by law); the account's link to it goes with the row.
    */
   app.delete('/v1/account', ctx.requireAccount, async (c) => {
     // The stored status may be late: a subscription that ended is not allowed to block this.
@@ -42,6 +45,7 @@ export const registerMeRoute: RouteModule = (app, ctx) => {
     }
     // The row may be late, or never have heard of a subscription Stripe bills: Stripe decides.
     try {
+      await ctx.subscriptions.closeCheckouts(account);
       if (await ctx.subscriptions.hasLiveSubscription(account)) {
         return c.json({ error: 'active_subscription' }, 409);
       }

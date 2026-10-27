@@ -402,6 +402,16 @@ describe('aiReview', () => {
     expect(review).toHaveBeenCalledTimes(3);
   });
 
+  it('does not remember an unusable review for 90 seconds: it is not an outage, a new ask may answer', async () => {
+    const review = vi.fn<CloudClient['review']>(() =>
+      Promise.resolve({ ok: false as const, reason: 'invalid_answer' as const }),
+    );
+    const { steps } = setup(makeClient({ review }));
+    expect(await steps.aiReview(INPUT)).toEqual({ status: 'error', reason: 'invalid_answer' });
+    await steps.aiReview(INPUT);
+    expect(review).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps the memory of the search and the one of the review apart', async () => {
     const { steps, client } = setup(
       makeClient({

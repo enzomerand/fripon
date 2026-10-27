@@ -59,19 +59,11 @@ p { margin: 0; }
 const PAGE_CSP =
   "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'";
 
-/**
- * What stops the deletion of an account: a subscription Stripe has charging the customer
- * (`ACTIVE_STATUSES`, which also blocks a new Checkout, whatever the local row says: it only moves
- * when a webhook arrives), and `incomplete` too, a payment that may still go through after the
- * account (and the only way to cancel it) is gone. `incomplete` (the first payment never went
- * through, Stripe lets it expire in 23 hours) does not block a Checkout: the customer must be able
- * to try again. It is cancelled instead (`cancelAbandoned`), or it could still be paid later and
- * bill the customer a second time.
- */
-const BLOCKS_DELETION: readonly string[] = [...ACTIVE_STATUSES, 'incomplete'];
-
 /** How many of a customer's subscriptions are read to look for a live one. */
 const SUBSCRIPTIONS_READ = 100;
+
+/** How many of a customer's open Checkout Sessions are read to end them (a person opens a handful). */
+const OPEN_SESSIONS_READ = 100;
 
 /**
  * Billing: Checkout and the customer portal for the extension, the two pages Stripe sends the
@@ -196,16 +188,40 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
       }
     }
 
-    /** Ends the abandoned first payments of a customer; one Stripe no longer has is already gone. */
-    async function cancelAbandoned(subscriptions: StripeSubscription[]): Promise<void> {
-      for (const abandoned of subscriptions) {
-        if (abandoned.status !== 'incomplete') continue;
+    /**
+     * Ends the abandoned first payments of a customer, so that none can be paid later next to a
+     * new Checkout (a second charge) or after the account is gone. Each one is read again right
+     * before it is cancelled: the list may be seconds old, and a payment that went through since
+     * is a subscription that bills, not an abandoned one, so it is not cancelled and is returned
+     * (the other abandoned ones are left for the next time). One Stripe no longer has is already gone.
+     */
+    async function cancelAbandoned(
+      subscriptions: StripeSubscription[],
+    ): Promise<StripeSubscription | null> {
+      for (const listed of subscriptions) {
+        if (listed.status !== 'incomplete') continue;
         try {
-          await stripe.subscriptions.cancel(abandoned.id);
+          const current = await stripe.subscriptions.retrieve(listed.id);
+          if (ACTIVE_STATUSES.includes(current.status)) return current;
+          if (current.status === 'incomplete') await stripe.subscriptions.cancel(listed.id);
         } catch (error) {
           if (!isMissing(error)) throw error;
         }
       }
+      return null;
+    }
+
+    /**
+     * The subscription of a customer that bills it (`ACTIVE_STATUSES`), wherever it is in the list;
+     * only when there is none are the abandoned `incomplete` ones ended (which can turn up a
+     * payment that just went through). An `incomplete` one is never "live": it does not block a
+     * new Checkout, nor the deletion of the account, which the portal could not cancel it for.
+     */
+    async function liveOf(subscriptions: StripeSubscription[]): Promise<StripeSubscription | null> {
+      return (
+        subscriptions.find((subscription) => ACTIVE_STATUSES.includes(subscription.status)) ??
+        (await cancelAbandoned(subscriptions))
+      );
     }
 
     async function checkoutUrl(
@@ -220,17 +236,11 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
       // The local status is only as fresh as the last webhook: two Checkouts opened before the
       // first one's event arrived would make two paid subscriptions. Stripe is asked instead.
       if (account.stripe_customer_id !== null) {
-        const subscriptions = await subscriptionsOf(account.stripe_customer_id);
-        const live = subscriptions.find((subscription) =>
-          ACTIVE_STATUSES.includes(subscription.status),
-        );
+        const live = await liveOf(await subscriptionsOf(account.stripe_customer_id));
         if (live) {
           await storeLive(live);
           return portalUrl(account.stripe_customer_id);
         }
-        // A first payment left unfinished is not a subscription, but it is not dead either: it
-        // must not be payable later, next to the one about to be bought.
-        await cancelAbandoned(subscriptions);
       }
 
       const customer = await customerOf(account, replaced);
@@ -309,12 +319,33 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
         if (isCustomerMissing(error)) return false;
         throw error;
       }
-      const live = subscriptions.find((subscription) =>
-        BLOCKS_DELETION.includes(subscription.status),
-      );
+      const live = await liveOf(subscriptions);
       if (!live) return false;
       await storeLive(live);
       return true;
+    };
+    ctx.subscriptions.closeCheckouts = async (account) => {
+      const customer = account.stripe_customer_id;
+      if (customer === null) return;
+      let open: Array<{ id: string }>;
+      try {
+        ({ data: open } = await stripe.checkout.sessions.list({
+          customer,
+          status: 'open',
+          limit: OPEN_SESSIONS_READ,
+        }));
+      } catch (error) {
+        // A customer Stripe does not know has nothing to pay.
+        if (isCustomerMissing(error)) return;
+        throw error;
+      }
+      for (const session of open) {
+        try {
+          await stripe.checkout.sessions.expire(session.id);
+        } catch (error) {
+          if (!isMissing(error)) throw error;
+        }
+      }
     };
     const wasHandled = ctx.db.prepare('SELECT 1 FROM stripe_events WHERE id = ?');
     const recordEvent = ctx.db.prepare(

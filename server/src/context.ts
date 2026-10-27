@@ -34,12 +34,19 @@ export const API_REQUESTS_PER_MINUTE = 60;
 export interface SubscriptionRefresher {
   refresh(account: Account): Promise<Account>;
   /**
-   * Whether Stripe has a subscription for the account's customer that bills it or still may
-   * (active, trialing, past_due, incomplete), whatever the local row says (it only moves when a
-   * webhook arrives). A live one the row did not know is stored. Rejects when Stripe cannot be
-   * read: the caller must not decide "no" from that.
+   * Whether Stripe has a subscription for the account's customer that bills it (active, trialing,
+   * past_due), whatever the local row says (it only moves when a webhook arrives). A live one the
+   * row did not know is stored. An abandoned `incomplete` first payment is not live: it is
+   * cancelled, so it cannot be paid after the account. Rejects when Stripe cannot be read: the
+   * caller must not decide "no" from that.
    */
   hasLiveSubscription(account: Account): Promise<boolean>;
+  /**
+   * Expires the open Checkout Sessions of the account's customer, so that none can be paid once
+   * the account is gone (a subscription nobody owns). Rejects when Stripe cannot be read or a
+   * session cannot be expired.
+   */
+  closeCheckouts(account: Account): Promise<void>;
 }
 
 /** The shared pieces a route module receives. */
@@ -97,7 +104,11 @@ export function createContext(deps: AppDeps): AppContext {
     auth,
     alert: createAlerts({ mailer: deps.mailer, ownerEmail: deps.config.ownerEmail, now: at }),
     health: createHealth(at),
-    subscriptions: { refresh: async (account) => account, hasLiveSubscription: async () => false },
+    subscriptions: {
+      refresh: async (account) => account,
+      hasLiveSubscription: async () => false,
+      closeCheckouts: async () => undefined,
+    },
     requireAccount,
     ip: (c) => clientIp(c, deps.config.trustProxy),
   };

@@ -219,6 +219,27 @@ describe('search', () => {
     const { client } = setup(() => json(status, body));
     expect(await client.search(PHOTO)).toEqual({ ok: false, reason });
   });
+
+  it.each([
+    ['network', 'network'],
+    ['unavailable', 'unavailable'],
+    ['photo', 'photo'],
+    // A search has no answer to be unusable.
+    ['invalid_answer', 'unavailable'],
+    // Anything else, key words included, is just "unavailable".
+    ['billing', 'unavailable'],
+    ['invalid', 'unavailable'],
+    [42, 'unavailable'],
+    [undefined, 'unavailable'],
+  ])('reads a 502 upstream reason %j as %s', async (upstream, reason) => {
+    const { client } = setup(() => json(502, { error: 'upstream', reason: upstream }));
+    expect(await client.search(PHOTO)).toEqual({ ok: false, reason });
+  });
+
+  it('reads the reason of a 502 only when the server says it is an upstream failure', async () => {
+    const { client } = setup(() => json(502, { error: 'internal', reason: 'photo' }));
+    expect(await client.search(PHOTO)).toEqual({ ok: false, reason: 'unavailable' });
+  });
 });
 
 describe('review', () => {
@@ -270,6 +291,20 @@ describe('review', () => {
     [503, { error: 'capacity' }, 'unavailable'],
   ])('reads %i %j as %s', async (status, body, reason) => {
     const { client } = setup(() => json(status, body));
+    expect(await client.review(REVIEW_INPUT)).toEqual({ ok: false, reason });
+  });
+
+  it.each([
+    ['network', 'network'],
+    ['unavailable', 'unavailable'],
+    ['photo', 'photo'],
+    ['invalid_answer', 'invalid_answer'],
+    ['billing', 'unavailable'],
+    ['invalid', 'unavailable'],
+    [42, 'unavailable'],
+    [undefined, 'unavailable'],
+  ])('reads a 502 upstream reason %j as %s', async (upstream, reason) => {
+    const { client } = setup(() => json(502, { error: 'upstream', reason: upstream }));
     expect(await client.review(REVIEW_INPUT)).toEqual({ ok: false, reason });
   });
 });

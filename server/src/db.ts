@@ -158,6 +158,16 @@ const MIGRATIONS: Migration[] = [
 /** Brings the schema up to date; safe to call on every start. */
 export function migrate(db: Db): void {
   const current = Number(db.pragma('user_version', { simple: true }));
+  // A version this code has no migration for: a database from a newer server, or from the old
+  // multi-step schema (versions 2 and 3, folded into migration 1). Running on it would leave tables
+  // or columns missing, and fail later in a request: stop at the start instead.
+  if (current > MIGRATIONS.length) {
+    throw new Error(
+      `The database is at schema version ${current}, but this server only knows versions 0 to ` +
+        `${MIGRATIONS.length}. It comes from a newer server or from the old multi-step schema: ` +
+        'use a database made by this version (or start from an empty one).',
+    );
+  }
   for (let version = current; version < MIGRATIONS.length; version++) {
     const migration = MIGRATIONS[version] as Migration;
     db.transaction(() => {

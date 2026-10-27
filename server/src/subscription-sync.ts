@@ -178,6 +178,17 @@ export function createSubscriptionSync({
       console.error(
         `[stripe] subscription ${subscription.id} belongs to no account, event ignored`,
       );
+      // One that bills with nobody to serve (an account deleted while its Checkout was paid, or a
+      // customer made by hand): the money can only be given back by hand. One that does not bill
+      // (an abandoned payment cancelled at a deletion) is not worth a mail.
+      if (isActive(subscription.status)) {
+        alert(
+          'orphan-subscription',
+          `ORPHAN SUBSCRIPTION: ${subscription.id} (customer ${idOf(subscription.customer) ?? 'unknown'}) ` +
+            `is ${subscription.status} but belongs to no account, so it is billed for nothing. Cancel it ` +
+            'and refund the customer in the Stripe Dashboard: nothing was cancelled automatically.',
+        );
+      }
       return 'ignored';
     }
 

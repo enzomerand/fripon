@@ -77,6 +77,30 @@ describe('openDb', () => {
     raw.close();
   });
 
+  it.each([2, 3, 99])(
+    'refuses a database at schema version %i: no migration of this server makes it',
+    (version) => {
+      const raw = new Database(':memory:');
+      raw.pragma(`user_version = ${version}`);
+      expect(() => migrate(raw)).toThrow(new RegExp(`schema version ${version}\\b`));
+      // Nothing was run on it: no table, the version is the one it came with.
+      expect(tables(raw)).toEqual([]);
+      expect(raw.pragma('user_version', { simple: true })).toBe(version);
+      raw.close();
+    },
+  );
+
+  it('does not open a database file of the old multi-step schema', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fripon-db-'));
+    dirs.push(dir);
+    const path = join(dir, 'fripon.db');
+    const old = new Database(path);
+    old.pragma('user_version = 3');
+    old.close();
+
+    expect(() => openDb(path)).toThrow(/schema version 3/);
+  });
+
   it('uses WAL and enforces foreign keys', () => {
     const dir = mkdtempSync(join(tmpdir(), 'fripon-db-'));
     dirs.push(dir);

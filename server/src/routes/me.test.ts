@@ -29,6 +29,13 @@ const withLiveCheck = (check: (account: Account) => Promise<boolean>): RouteModu
   };
 };
 
+/** Plugs in how the open Checkout Sessions of the customer are closed, the way the billing routes do. */
+const withCheckoutCloser = (close: (account: Account) => Promise<void>): RouteModule => {
+  return (_app, ctx) => {
+    ctx.subscriptions.closeCheckouts = close;
+  };
+};
+
 /** Plugs a refresher in the way the billing routes do. */
 const withRefresher = (refresh: (account: Account) => Promise<Account>): RouteModule => {
   return (_app, ctx) => {
@@ -191,6 +198,65 @@ describe('DELETE /v1/account', () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: 'unavailable' });
     expect(count(t, 'accounts', 'id = ?', ann.id)).toBe(1);
+  });
+
+  it('closes the open Checkout Sessions before asking whether Stripe still bills, and before deleting', async () => {
+    const calls: string[] = [];
+    const t = createTestApp([
+      withCheckoutCloser(async () => {
+        calls.push('close');
+      }),
+      withLiveCheck(async () => {
+        calls.push('live');
+        return false;
+      }),
+    ]);
+    const ann = await signedIn(t, 'ann@example.com', { stripe_customer_id: 'cus_ann' });
+
+    expect(
+      (await t.app.request('/v1/account', { method: 'DELETE', headers: bearer(ann.token) })).status,
+    ).toBe(204);
+
+    expect(calls).toEqual(['close', 'live']);
+    expect(count(t, 'accounts', 'id = ?', ann.id)).toBe(0);
+  });
+
+  it('answers 503 `unavailable` and deletes nothing when the open Checkout Sessions cannot be closed', async () => {
+    const live = vi.fn(async () => false);
+    const t = createTestApp([
+      withCheckoutCloser(async () => {
+        throw new Error('Stripe is down');
+      }),
+      withLiveCheck(live),
+    ]);
+    const ann = await signedIn(t, 'ann@example.com', { stripe_customer_id: 'cus_ann' });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const response = await t.app.request('/v1/account', {
+      method: 'DELETE',
+      headers: bearer(ann.token),
+    });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'unavailable' });
+    expect(live).not.toHaveBeenCalled();
+    expect(count(t, 'accounts', 'id = ?', ann.id)).toBe(1);
+  });
+
+  it('closes nothing when the row alone says the subscription bills (409)', async () => {
+    const close = vi.fn(async () => undefined);
+    const t = createTestApp([withCheckoutCloser(close)]);
+    const ann = await signedIn(t, 'ann@example.com', {
+      stripe_customer_id: 'cus_ann',
+      plan: 'essentiel',
+      subscription_id: 'sub_1',
+      subscription_status: 'active',
+    });
+
+    expect(
+      (await t.app.request('/v1/account', { method: 'DELETE', headers: bearer(ann.token) })).status,
+    ).toBe(409);
+    expect(close).not.toHaveBeenCalled();
   });
 
   it('asks Stripe again first when the row looks stale: a subscription that ended no longer blocks', async () => {

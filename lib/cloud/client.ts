@@ -101,6 +101,18 @@ type Reply = { status: number; body: unknown } | null;
 const errorWord = (body: unknown): string | undefined =>
   isRecord(body) && typeof body.error === 'string' ? body.error : undefined;
 
+/** What the server may say of a Google failure (`502 { error: 'upstream', reason }`), in the words of the personal mode. */
+const UPSTREAM_REASONS = ['network', 'unavailable', 'photo', 'invalid_answer'] as const;
+
+/**
+ * Why Google did not serve, as the server tells it. Only these words are read, and never a key
+ * word (the server keeps the owner's key problems to itself): anything else is `unavailable`.
+ */
+function upstreamReason(body: unknown): (typeof UPSTREAM_REASONS)[number] {
+  const reason = isRecord(body) && body.error === 'upstream' ? body.reason : undefined;
+  return UPSTREAM_REASONS.find((word) => word === reason) ?? 'unavailable';
+}
+
 /** The matches of a search, as the extension's cache and card take them: no price, a real link. */
 function parseMatches(raw: unknown): ImageMatch[] | null {
   if (!Array.isArray(raw)) return null;
@@ -181,11 +193,14 @@ export function createCloudClient(deps: CloudClientDeps): CloudClient {
     return reply;
   }
 
-  /** The words of a refused search or review, shared by both. */
+  /**
+   * The words of a refused search or review, shared by both. `invalid_answer` only means something
+   * to a review (Gemini's answer was unusable): a search reads it as `unavailable`.
+   */
   function refused(reply: {
     status: number;
     body: unknown;
-  }): SearchFailure | 'not_searched' | 'review_limit' {
+  }): SearchFailure | 'not_searched' | 'review_limit' | 'invalid_answer' {
     const word = errorWord(reply.body);
     switch (reply.status) {
       case 400:
@@ -198,6 +213,7 @@ export function createCloudClient(deps: CloudClientDeps): CloudClient {
       case 429:
         return 'rate_limited';
       case 502:
+        return upstreamReason(reply.body);
       case 503:
         return 'unavailable';
       default:
@@ -264,10 +280,14 @@ export function createCloudClient(deps: CloudClientDeps): CloudClient {
       if (reply === null) return { ok: false, reason: 'network' };
       if (reply.status !== 200) {
         const reason = refused(reply);
-        // Nothing here asks for a review: a 403 is the server not liking the request.
+        // Nothing here asks for a review: a 403 is the server not liking the request, and a
+        // search has no answer to be unusable.
         return {
           ok: false,
-          reason: reason === 'not_searched' || reason === 'review_limit' ? 'unavailable' : reason,
+          reason:
+            reason === 'not_searched' || reason === 'review_limit' || reason === 'invalid_answer'
+              ? 'unavailable'
+              : reason,
         };
       }
       const matches = isRecord(reply.body) ? parseMatches(reply.body.matches) : null;
