@@ -7,6 +7,8 @@ const production = {
   AUTH_SECRET: 'x'.repeat(32),
   SMTP_URL: 'smtps://user:pass@smtp.example.com:465',
   MAIL_FROM: 'Fripon <hello@fripon.test>',
+  GOOGLE_VISION_KEY: 'vision-key',
+  GEMINI_KEY: 'gemini-key',
 };
 
 describe('loadConfig', () => {
@@ -20,6 +22,8 @@ describe('loadConfig', () => {
       smtpUrl: null,
       trustProxy: false,
       globalDailyVisionCap: 3000,
+      googleVisionKey: '',
+      geminiKey: '',
     });
   });
 
@@ -35,6 +39,8 @@ describe('loadConfig', () => {
         MAIL_FROM: 'Fripon <a@b.c>',
         TRUST_PROXY: 'true',
         GLOBAL_DAILY_VISION_CAP: '500',
+        GOOGLE_VISION_KEY: 'v-key',
+        GEMINI_KEY: 'g-key',
       }),
     ).toEqual({
       nodeEnv: 'test',
@@ -47,6 +53,8 @@ describe('loadConfig', () => {
       mailFrom: 'Fripon <a@b.c>',
       trustProxy: true,
       globalDailyVisionCap: 500,
+      googleVisionKey: 'v-key',
+      geminiKey: 'g-key',
     });
   });
 
@@ -68,6 +76,8 @@ describe('loadConfig', () => {
         expect.stringContaining('AUTH_SECRET'),
         expect.stringContaining('MAIL_FROM'),
         expect.stringContaining('SMTP_URL'),
+        expect.stringContaining('GOOGLE_VISION_KEY'),
+        expect.stringContaining('GEMINI_KEY'),
       ]),
     );
   });

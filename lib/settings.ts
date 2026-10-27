@@ -2,11 +2,12 @@ import { browser } from 'wxt/browser';
 import { CREDIT_POLICY } from './credits';
 import { isRecord } from './json';
 import { withLock } from './lock';
+import type { Provider } from './provider';
+
+export type { Provider };
 
 /** auto: every check runs on page open. click: paid checks wait for a click (free ones still run). */
 export type AnalysisMode = 'auto' | 'click';
-/** Paid services reached with the user's own key. */
-export type Provider = 'vision' | 'gemini';
 
 export const PROVIDERS: readonly Provider[] = ['vision', 'gemini'];
 

@@ -3,6 +3,7 @@ import type { GeminiFailure, ReviewInput, ReviewResult } from '../google/gemini'
 import { createFailureMemo } from '../google/failure-memo';
 import { isAllowedImageUrl } from '../image/analyzer';
 import { blobToBase64 } from '../image/base64';
+import { mimeTypeOf } from '../image/guarded-fetch';
 import type { AiReviewResponse } from '../messages';
 import { loadSettings } from '../settings';
 import { clampReviewInput, type AiReviewInput } from './input';
@@ -17,22 +18,10 @@ interface AiReviewerDeps {
   now?(): number;
 }
 
+// Pure, so the Fripon Cloud server shares it; kept exported from here for the existing importers.
+export { mimeTypeOf };
+
 const NETWORK_ERROR: AiReviewResponse = { status: 'error', reason: 'network' };
-
-/** Gemini reads these image types; Vinted serves WEBP and JPEG. */
-const IMAGE_MIME_TYPES: ReadonlySet<string> = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/heic',
-  'image/heif',
-]);
-
-/** The MIME type to announce for a downloaded photo (JPEG when the server said nothing usable). */
-export function mimeTypeOf(blob: Blob): string {
-  const type = (blob.type.split(';')[0] ?? '').trim().toLowerCase();
-  return IMAGE_MIME_TYPES.has(type) ? type : 'image/jpeg';
-}
 
 /**
  * What `createAiReviewer` returns: the `aiReview` handler (see `AiReviewRequest` for its

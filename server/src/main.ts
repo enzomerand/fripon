@@ -2,14 +2,18 @@ import { serve } from '@hono/node-server';
 import { createApp } from './app';
 import { loadConfig } from './config';
 import { openDb } from './db';
+import { realGoogleDeps } from './google';
 import { purgeExpired } from './maintenance';
 import { createMailer } from './mailer';
+import { registerProxyRoutes } from './routes/proxy';
 
 const config = loadConfig();
 const db = openDb(config.databasePath);
 const now = () => new Date();
 
-const app = createApp({ db, mailer: createMailer(config), config, now });
+const app = createApp({ db, mailer: createMailer(config), config, now }, [
+  registerProxyRoutes(realGoogleDeps()),
+]);
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`Fripon Cloud listening on :${info.port} (${config.nodeEnv})`);

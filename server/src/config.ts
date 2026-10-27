@@ -79,6 +79,9 @@ export function loadConfig(env: Env = process.env) {
     trustProxy: flag('TRUST_PROXY', production),
     /** Vision calls per day, all accounts together, on top of the Google Cloud quota. */
     globalDailyVisionCap: integer('GLOBAL_DAILY_VISION_CAP', 3_000, 1, 1_000_000),
+    /** The owner's Google keys behind the paid steps. Empty in development: Google then refuses. */
+    googleVisionKey: requiredInProduction('GOOGLE_VISION_KEY', ''),
+    geminiKey: requiredInProduction('GEMINI_KEY', ''),
   };
 
   if (production && config.authSecret.length < 32) {

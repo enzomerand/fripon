@@ -1,6 +1,6 @@
 import type { FetchLike } from '../fetch';
 import { isRecord } from '../json';
-import type { Provider } from '../settings';
+import type { Provider } from '../provider';
 
 /** A key check that takes longer than this counts as a network failure. */
 export const KEY_CHECK_TIMEOUT_MS = 10_000;
