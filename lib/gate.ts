@@ -13,13 +13,11 @@ import { loadSettings, type Settings } from './settings';
 export type Gate = 'ready' | 'no_key' | 'quota' | 'manual';
 /** The reverse image search (Google Vision). */
 export type ImageGate = Gate;
-/** The AI review (Gemini). */
-export type AiGate = Gate;
 
-/** One gate per paid step. */
+/** One gate per paid step: the image search (Vision) and the AI review (Gemini). */
 export interface Gates {
   image: ImageGate;
-  ai: AiGate;
+  ai: Gate;
 }
 
 function gateFor(key: string, state: UsageState, settings: Settings): Gate {
@@ -33,10 +31,6 @@ export function imageGate(settings: Settings, visionState: UsageState): ImageGat
   return gateFor(settings.keys.vision, visionState, settings);
 }
 
-export function aiGate(settings: Settings, geminiState: UsageState): AiGate {
-  return gateFor(settings.keys.gemini, geminiState, settings);
-}
-
 /** The gates for right now, from the stored settings and the counters. */
 export async function loadGates(now: Date = new Date()): Promise<Gates> {
   const settings = await loadSettings();
@@ -47,8 +41,8 @@ export async function loadGates(now: Date = new Date()): Promise<Gates> {
       .then((usage) => imageGate(settings, usage.state))
       .catch((): ImageGate => 'no_key'),
     getUsage('gemini', settings.caps.gemini, now)
-      .then((usage) => aiGate(settings, usage.state))
-      .catch((): AiGate => 'no_key'),
+      .then((usage) => gateFor(settings.keys.gemini, usage.state, settings))
+      .catch((): Gate => 'no_key'),
   ]);
   return { image, ai };
 }

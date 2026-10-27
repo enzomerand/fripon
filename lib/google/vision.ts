@@ -62,11 +62,6 @@ function perImageFailure(error: unknown): VisionFailure {
   return 'network';
 }
 
-/** An HTTP refusal; `readRefusal` holds the rule that says which ones are free of charge. */
-async function refusal(response: Response): Promise<WebDetectResult> {
-  return { ok: false, ...(await readRefusal(response)) };
-}
-
 /**
  * Keeps the objects of a list that are records, dropping whatever else Google (or a proxy) put
  * there. The values inside are read defensively by the caller.
@@ -131,7 +126,8 @@ export async function webDetect(
     });
     // Google having a bad moment says nothing about the key, and may have billed the call.
     if (response.status >= 500) return { ok: false, reason: 'network', refundable: false };
-    if (!response.ok) return await refusal(response);
+    // `readRefusal` holds the rule that says which refusals are free of charge.
+    if (!response.ok) return { ok: false, ...(await readRefusal(response)) };
 
     const body: unknown = await response.json();
     const first = isRecord(body) && Array.isArray(body.responses) ? body.responses[0] : undefined;

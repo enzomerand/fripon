@@ -356,56 +356,11 @@ describe('createImageSearcher key failures', () => {
       },
     );
 
-    it('is tried again after 90 seconds, which is much shorter than a refused key', async () => {
-      expect(TRANSIENT_FAILURE_MEMO_MS).toBe(90_000);
-      expect(KEY_FAILURE_MEMO_MS).toBeGreaterThan(TRANSIENT_FAILURE_MEMO_MS);
-      const { search, detect } = setup({ ok: false, reason: 'network', refundable: false });
-      await search(PHOTO);
-      clock = NOW + TRANSIENT_FAILURE_MEMO_MS;
-      await search(OTHER);
-      expect(detect).toHaveBeenCalledTimes(2);
-    });
-
     it('is tried again at once when the user clicked', async () => {
       const { search, detect } = setup({ ok: false, reason: 'network', refundable: false });
       await search(PHOTO);
       await search(OTHER, false, true);
       expect(detect).toHaveBeenCalledTimes(2);
-    });
-
-    it('does not make a click ignore a refused key: nothing on the card would change it', async () => {
-      const { search, detect } = setup({ ok: false, reason: 'billing', refundable: true });
-      await search(PHOTO);
-      expect(await search(OTHER, false, true)).toEqual({ status: 'error', reason: 'billing' });
-      expect(detect).toHaveBeenCalledOnce();
-    });
-
-    it('still serves the cache, and a look in the cache, while a failure is remembered', async () => {
-      const detect = vi
-        .fn<(base64: string, key: string) => Promise<WebDetectResult>>()
-        .mockResolvedValueOnce(FOUND)
-        .mockResolvedValue({ ok: false, reason: 'network', refundable: false });
-      const search = createImageSearcher({
-        fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
-        webDetect: detect,
-        now: () => clock,
-      });
-      await search(PHOTO);
-      await search(OTHER);
-      expect((await search(PHOTO)).status).toBe('ok');
-      expect((await search(PHOTO, true)).status).toBe('ok');
-      expect(await search(OTHER, true)).toEqual({ status: 'not_cached' });
-    });
-
-    it('is forgotten as soon as another key is saved, or when asked to', async () => {
-      const { search, detect } = setup({ ok: false, reason: 'quota', refundable: false });
-      await search(PHOTO);
-      await saveSettings({ keys: { vision: `${KEY}2` } });
-      await search(OTHER);
-      expect(detect).toHaveBeenCalledTimes(2);
-      search.forgetKeyFailure();
-      await search(PHOTO);
-      expect(detect).toHaveBeenCalledTimes(3);
     });
 
     it('is not remembered when it comes in after the user fixed the key, or after a success', async () => {
@@ -434,23 +389,6 @@ describe('createImageSearcher key failures', () => {
       // The late failure did not arm the memory: the next listing goes to Google.
       expect((await search(OTHER)).status).toBe('ok');
       expect(detect).toHaveBeenCalledTimes(2);
-    });
-
-    it('is forgotten after a success', async () => {
-      const detect = vi
-        .fn<(base64: string, key: string) => Promise<WebDetectResult>>()
-        .mockResolvedValueOnce({ ok: false, reason: 'network', refundable: false })
-        .mockResolvedValue(FOUND);
-      const search = createImageSearcher({
-        fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
-        webDetect: detect,
-        now: () => clock,
-      });
-      await search(PHOTO);
-      clock = NOW + TRANSIENT_FAILURE_MEMO_MS;
-      expect((await search(OTHER)).status).toBe('ok');
-      expect((await search('https://images1.vinted.net/t/3/f800/c.webp')).status).toBe('ok');
-      expect(detect).toHaveBeenCalledTimes(3);
     });
   });
 

@@ -109,7 +109,7 @@ const ROW_NAMES: Array<[CheckId, string]> = [
  * cache key). A row that did not run says nothing: the AI must not guess at what was not read.
  */
 export function signalLines(rawChecks: CheckResult[]): string[] {
-  const lines = [imageLine(rawChecks.find((check) => check.id === 'image'))];
+  const lines = [imageBasis(rawChecks)];
   for (const [id, name] of ROW_NAMES) {
     const row = rawChecks.find((check) => check.id === id);
     if (row && row.status !== 'off') lines.push(`${name} (${row.tag}) : ${row.detail}`);

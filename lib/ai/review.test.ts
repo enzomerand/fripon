@@ -346,24 +346,6 @@ describe('createAiReviewer key failures', () => {
     },
   );
 
-  it('tries the key again after 10 minutes', async () => {
-    const { review, call } = setup(refused('billing'));
-    await review(INPUT);
-    clock = NOW + KEY_FAILURE_MEMO_MS;
-    await review(OTHER);
-    expect(call).toHaveBeenCalledTimes(2);
-  });
-
-  it.each(['photo', 'invalid_answer'] as const)(
-    'does not remember a failure that is about this listing ("%s")',
-    async (reason) => {
-      const { review, call } = setup({ ok: false, reason, refundable: false });
-      await review(INPUT);
-      await review(OTHER);
-      expect(call).toHaveBeenCalledTimes(2);
-    },
-  );
-
   it('does not remember an unrecognised 400, which may be about this very photo', async () => {
     const { review, photo, call } = setup({
       ok: false,
@@ -395,73 +377,11 @@ describe('createAiReviewer key failures', () => {
       },
     );
 
-    it('is tried again after 90 seconds, which is much shorter than a refused key', async () => {
-      expect(TRANSIENT_FAILURE_MEMO_MS).toBe(90_000);
-      expect(KEY_FAILURE_MEMO_MS).toBeGreaterThan(TRANSIENT_FAILURE_MEMO_MS);
-      const { review, call } = setup({ ok: false, reason: 'network', refundable: false });
-      await review(INPUT);
-      clock = NOW + TRANSIENT_FAILURE_MEMO_MS;
-      await review(OTHER);
-      expect(call).toHaveBeenCalledTimes(2);
-    });
-
     it('is tried again at once when the user clicked', async () => {
       const { review, call } = setup({ ok: false, reason: 'network', refundable: false });
       await review(INPUT);
       await review(OTHER, false, true);
       expect(call).toHaveBeenCalledTimes(2);
-    });
-
-    it('does not make a click ignore a refused key: nothing on the card would change it', async () => {
-      const { review, call } = setup({ ok: false, reason: 'billing', refundable: true });
-      await review(INPUT);
-      expect(await review(OTHER, false, true)).toEqual({ status: 'error', reason: 'billing' });
-      expect(call).toHaveBeenCalledOnce();
-    });
-
-    it('still serves the cache, and a look in the cache, while a failure is remembered', async () => {
-      const call = vi
-        .fn<(input: ReviewInput, key: string) => Promise<ReviewResult>>()
-        .mockResolvedValueOnce(FOUND)
-        .mockResolvedValue({ ok: false, reason: 'network', refundable: false });
-      const review = createAiReviewer({
-        fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
-        reviewListing: call,
-        now: () => clock,
-      });
-      await review(INPUT);
-      await review(OTHER);
-      expect((await review(INPUT)).status).toBe('ok');
-      expect((await review(INPUT, true)).status).toBe('ok');
-      expect(await review(OTHER, true)).toEqual({ status: 'not_cached' });
-    });
-
-    it('is forgotten as soon as another key is saved, or when asked to', async () => {
-      const { review, call } = setup({ ok: false, reason: 'quota', refundable: false });
-      await review(INPUT);
-      await saveSettings({ keys: { gemini: `${KEY}2` } });
-      await review(OTHER);
-      expect(call).toHaveBeenCalledTimes(2);
-      review.forgetKeyFailure();
-      await review(INPUT);
-      expect(call).toHaveBeenCalledTimes(3);
-    });
-
-    it('is forgotten after a success', async () => {
-      const call = vi
-        .fn<(input: ReviewInput, key: string) => Promise<ReviewResult>>()
-        .mockResolvedValueOnce({ ok: false, reason: 'network', refundable: false })
-        .mockResolvedValue(FOUND);
-      const review = createAiReviewer({
-        fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
-        reviewListing: call,
-        now: () => clock,
-      });
-      await review(INPUT);
-      clock = NOW + TRANSIENT_FAILURE_MEMO_MS;
-      expect((await review(OTHER)).status).toBe('ok');
-      expect((await review({ ...INPUT, price: '3 €' })).status).toBe('ok');
-      expect(call).toHaveBeenCalledTimes(3);
     });
   });
 

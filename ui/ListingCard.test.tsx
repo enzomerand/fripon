@@ -52,18 +52,11 @@ async function show(
   state: CardState,
   onRetry?: () => void,
   onOpenOptions?: (section: OptionsSection) => void,
-  onRunImageSearch?: () => void,
-  onRunAiReview?: () => void,
+  onRun?: () => void,
 ) {
   await act(() =>
     render(
-      <ListingCard
-        state={state}
-        onRetry={onRetry}
-        onOpenOptions={onOpenOptions}
-        onRunImageSearch={onRunImageSearch}
-        onRunAiReview={onRunAiReview}
-      />,
+      <ListingCard state={state} onRetry={onRetry} onOpenOptions={onOpenOptions} onRun={onRun} />,
       root,
     ),
   );
@@ -508,7 +501,7 @@ describe('ListingCard', () => {
     });
 
     it('says the AI is reading while the review runs, with no note and no button', async () => {
-      await show(withAi({ status: 'running' }), undefined, undefined, vi.fn(), vi.fn());
+      await show(withAi({ status: 'running' }), undefined, undefined, vi.fn());
       await expand();
       expect(block()?.querySelector('[role="status"]')?.textContent).toBe("L'IA lit l'annonce…");
       expect(block()?.textContent).not.toContain('Résumé par Gemini');
@@ -554,7 +547,7 @@ describe('ListingCard', () => {
 
       it('puts "Lancer l\'avis IA" under the verdict lines of the collapsed card, and runs the review', async () => {
         const run = vi.fn();
-        await show(withAi({ status: 'waiting' }, imageOnly), undefined, undefined, undefined, run);
+        await show(withAi({ status: 'waiting' }, imageOnly), undefined, undefined, run);
         expect(topButtons().map((b) => b.textContent)).toEqual(["Lancer l'avis IA"]);
         const card = root.querySelector('.fripon') as HTMLElement;
         const order = [...card.children].map((el) => el.className);
@@ -565,7 +558,7 @@ describe('ListingCard', () => {
 
       it('hands over to the AI block once the checks are expanded: one button at a time', async () => {
         const run = vi.fn();
-        await show(withAi({ status: 'waiting' }, imageOnly), undefined, undefined, undefined, run);
+        await show(withAi({ status: 'waiting' }, imageOnly), undefined, undefined, run);
         await expand();
         expect(topButtons()).toHaveLength(0);
         // The image row has its own button (the guide's); the AI one is in the block.
@@ -578,15 +571,8 @@ describe('ListingCard', () => {
       });
 
       it('leaves the review to the image search button when the image row has one', async () => {
-        const runImage = vi.fn();
-        const runAi = vi.fn();
-        await show(
-          withAi({ status: 'waiting' }, imageButton),
-          undefined,
-          undefined,
-          runImage,
-          runAi,
-        );
+        const run = vi.fn();
+        await show(withAi({ status: 'waiting' }, imageButton), undefined, undefined, run);
         expect(topButtons().map((b) => b.textContent)).toEqual(["Lancer la recherche d'image"]);
         await expand();
         // One button for both, on the image row; no block, no second button.
@@ -596,8 +582,8 @@ describe('ListingCard', () => {
           "Lancer la recherche d'image",
         );
         await act(() => (root.querySelector('.fripon__action') as HTMLButtonElement).click());
-        expect(runImage).toHaveBeenCalledOnce();
-        expect(runAi).not.toHaveBeenCalled();
+        // The one callback runs both steps: the page decides what the click starts.
+        expect(run).toHaveBeenCalledOnce();
       });
 
       it('has no button and no block when nobody handles the click', async () => {
@@ -614,7 +600,7 @@ describe('ListingCard', () => {
           { status: 'running' },
           { status: 'done', summary: 'Un résumé.' },
         ] as const) {
-          await show(withAi(ai, imageOnly), undefined, undefined, undefined, run);
+          await show(withAi(ai, imageOnly), undefined, undefined, run);
           expect(topButtons()).toHaveLength(0);
           await expand();
           expect(aiButtons()).toHaveLength(0);

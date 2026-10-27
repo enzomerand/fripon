@@ -19,13 +19,11 @@ interface ImageSearcherDeps {
 
 const NETWORK_ERROR: SearchImageResponse = { status: 'error', reason: 'network' };
 
-/** What `createImageSearcher` returns: the `searchImage` handler, and a way to forget a failure. */
+/**
+ * What `createImageSearcher` returns: the `searchImage` handler (see `SearchImageRequest` for its
+ * arguments), and a way to forget a failure.
+ */
 interface ImageSearcher {
-  /**
-   * With `cacheOnly` nothing is ever spent: the answer is the cached result or `not_cached`. With
-   * `retry` (the user clicked) a quota or a network failure remembered for a moment is tried
-   * again instead of being answered from the memory.
-   */
   (photoUrl: string, cacheOnly?: boolean, retry?: boolean): Promise<SearchImageResponse>;
   /** Forgets a remembered failure: the user just fixed something (their key tested fine). */
   forgetKeyFailure(): void;

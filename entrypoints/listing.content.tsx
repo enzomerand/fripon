@@ -118,24 +118,8 @@ interface Analysed {
  */
 type Trigger = 'auto' | 'click';
 
-/**
- * What the image search does in one run. lookup: only a look in the cache, which costs nothing
- * and shows nothing but a result. run: the real request (the background has the last word on
- * keys and credits). skip: not this time.
- */
-type StepMode = 'lookup' | 'run' | 'skip';
-
 /** Whether a step with this gate can really spend a credit. */
 const canSpend = (gate: Gate) => gate === 'ready' || gate === 'manual';
-
-/**
- * The AI block a card starts with, from the gate the page was given: the button of the "Au clic"
- * mode, or nothing. In the other modes the block appears when the review starts, which is after
- * the image search is final.
- */
-function initialAiBlock(gate: Gate): AiBlock | null {
-  return gate === 'manual' ? { status: 'waiting' } : null;
-}
 
 /** Owns the card of this page: mounts it, updates it, and replaces it on a new run. */
 function createCardController(ctx: ContentScriptContext) {
@@ -156,8 +140,7 @@ function createCardController(ctx: ContentScriptContext) {
         state={state}
         onRetry={() => void start()}
         onOpenOptions={openOptions}
-        onRunImageSearch={() => runPaidSteps('click')}
-        onRunAiReview={() => runPaidSteps('click')}
+        onRun={() => runPaidSteps('click')}
       />,
       container,
     );
@@ -210,25 +193,17 @@ function createCardController(ctx: ContentScriptContext) {
     const current = analysed;
     if (!current) return;
     const { gates } = current;
+    if (trigger === 'click') current.retryAsked = true;
     const imageHasButton =
       current.result.checks.find((check) => check.id === 'image')?.action === 'run_image_search';
-    const imageStep: StepMode =
-      trigger === 'click'
-        ? imageHasButton
-          ? 'run'
-          : 'skip'
-        : gates.image === 'manual'
-          ? 'lookup'
-          : 'run';
-    if (trigger === 'click') current.retryAsked = true;
+    const lookup = trigger === 'auto' && gates.image === 'manual';
     // A search already running is not started twice, and the review waits for its own turn.
     if (
-      imageStep !== 'skip' &&
-      !(await imageSearchStep(current, imageStep === 'lookup', trigger))
+      (trigger === 'auto' || imageHasButton) &&
+      !(await imageSearchStep(current, lookup, trigger))
     ) {
       return;
     }
-    if (analysed !== current || ctx.isInvalid) return;
     await aiReviewSteps(current, trigger);
     // Unless a review that another call is running still has to use it.
     if (!current.busyAi) current.retryAsked = false;
@@ -422,7 +397,9 @@ function createCardController(ctx: ContentScriptContext) {
       listing,
       result,
       gates,
-      ai: initialAiBlock(gates.ai),
+      // The button of the "Au clic" mode; otherwise the block appears when the review starts, which
+      // is after the image search is final.
+      ai: gates.ai === 'manual' ? { status: 'waiting' } : null,
       busyImage: false,
       busyAi: false,
       retryAsked: false,

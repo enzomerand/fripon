@@ -34,33 +34,23 @@ export function mimeTypeOf(blob: Blob): string {
   return IMAGE_MIME_TYPES.has(type) ? type : 'image/jpeg';
 }
 
-/** What `createAiReviewer` returns: the `aiReview` handler, and a way to forget a failure. */
+/**
+ * What `createAiReviewer` returns: the `aiReview` handler (see `AiReviewRequest` for its
+ * arguments), and a way to forget a failure.
+ */
 interface AiReviewer {
-  /**
-   * With `cacheOnly` nothing is ever spent: the answer is the cached review or `not_cached`. With
-   * `retry` (the user clicked) a quota or a network failure remembered for a moment is tried
-   * again instead of being answered from the memory.
-   */
   (input: AiReviewInput, cacheOnly?: boolean, retry?: boolean): Promise<AiReviewResponse>;
   /** Forgets a remembered failure: the user just fixed something (their key tested fine). */
   forgetKeyFailure(): void;
 }
 
 /**
- * Builds the `aiReview` handler of the background. Same steps as the image search, cheapest first,
- * each one answering before the next costs anything:
- * 1. A review made in the last 7 days for the same photo and the same signals is answered from the
- *    cache, for free, even without a key.
- * 2. No key: `no_key`. A key that Google refused less than 10 minutes ago, or a quota, a network
- *    failure or an unavailable service less than 90 seconds ago: the same failure, without
- *    downloading the photo or calling Google again (`createFailureMemo`).
- * 3. The cap, checked without spending: `quota` when it is reached.
- * 4. The photo is downloaded (the browser's HTTP cache usually serves it).
- * 5. A Gemini credit is reserved right before the paid call, and given back only when Google
- *    certainly did not bill it (see `ReviewResult.refundable`).
- *
- * The same review asked twice at once is made once. Failures are never cached. The key and
- * Google's raw answer stay in here. The returned function never rejects.
+ * Builds the `aiReview` handler of the background: the same steps as `createImageSearcher`
+ * (cache for 7 days even without a key, no key, the memory of failures, the cap read without
+ * spending, the guarded photo download, `reserve` right before the paid call, `refund` only when
+ * Google certainly did not bill it), with Gemini, its own counter and its own cache. The same
+ * review asked twice at once is made once. Failures are never cached. The key and Google's raw
+ * answer stay in here. The returned function never rejects.
  */
 export function createAiReviewer(deps: AiReviewerDeps): AiReviewer {
   const now = deps.now ?? (() => Date.now());

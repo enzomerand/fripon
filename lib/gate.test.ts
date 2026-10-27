@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { reserve } from './credits';
-import { aiGate, imageGate, loadGates } from './gate';
+import { imageGate, loadGates } from './gate';
 import { DEFAULT_SETTINGS, saveSettings, type Settings } from './settings';
 
 const withKey: Settings = {
@@ -35,35 +35,6 @@ describe('imageGate', () => {
   it('is ready with a key, credits left and automatic mode (a warning does not block)', () => {
     expect(imageGate(withKey, 'ok')).toBe('ready');
     expect(imageGate(withKey, 'warning')).toBe('ready');
-  });
-});
-
-describe('aiGate', () => {
-  const withGemini: Settings = { ...DEFAULT_SETTINGS, keys: { vision: '', gemini: 'AIzaGemini' } };
-
-  it('is no_key without a Gemini key, whatever the rest says', () => {
-    expect(aiGate(DEFAULT_SETTINGS, 'ok')).toBe('no_key');
-    expect(aiGate({ ...DEFAULT_SETTINGS, mode: 'click' }, 'ok')).toBe('no_key');
-    expect(aiGate(DEFAULT_SETTINGS, 'reached')).toBe('no_key');
-  });
-
-  it('ignores a Vision key', () => {
-    expect(aiGate(withKey, 'ok')).toBe('no_key');
-  });
-
-  it('is quota once the Gemini cap is reached, even in click mode', () => {
-    expect(aiGate(withGemini, 'reached')).toBe('quota');
-    expect(aiGate({ ...withGemini, mode: 'click' }, 'reached')).toBe('quota');
-  });
-
-  it('is manual in click mode', () => {
-    expect(aiGate({ ...withGemini, mode: 'click' }, 'ok')).toBe('manual');
-    expect(aiGate({ ...withGemini, mode: 'click' }, 'warning')).toBe('manual');
-  });
-
-  it('is ready with a key, credits left and automatic mode (a warning does not block)', () => {
-    expect(aiGate(withGemini, 'ok')).toBe('ready');
-    expect(aiGate(withGemini, 'warning')).toBe('ready');
   });
 });
 

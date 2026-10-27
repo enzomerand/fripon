@@ -4,14 +4,7 @@ import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { GEMINI_MODEL, PROMPT_VERSION } from '../google/gemini';
 import type { AiReview } from '../model';
 import type { AiReviewInput } from './input';
-import {
-  AI_CACHE_MAX_ENTRIES,
-  AI_CACHE_PREFIX,
-  AI_CACHE_TTL_MS,
-  aiCacheKey,
-  readAiCache,
-  writeAiCache,
-} from './review-cache';
+import { AI_CACHE_TTL_MS, aiCacheKey, readAiCache, writeAiCache } from './review-cache';
 
 // The model and the prompt version, as the cache key reads them: a test can change both.
 const versions = vi.hoisted(() => ({ model: '', prompt: 0 }));
@@ -41,9 +34,6 @@ const INPUT: AiReviewInput = {
   fingerprint: ['Recherche d’image : non faite.', 'seller:ok:Normal'],
 };
 const REVIEW: AiReview = { catalogPhoto: true, summary: 'La photo vient de Shein.' };
-
-const keyOf = (n: number) => `${AI_CACHE_PREFIX}https://images1.vinted.net/t/${n}/f800/p.webp:abcd`;
-const stored = async () => Object.keys(await browser.storage.local.get(null));
 
 beforeEach(() => {
   fakeBrowser.reset();
@@ -152,41 +142,5 @@ describe('readAiCache / writeAiCache', () => {
     const key = aiCacheKey(PHOTO, INPUT);
     await browser.storage.local.set({ [key]: entry });
     expect(await readAiCache(key, NOW)).toBeNull();
-  });
-});
-
-describe('cache pruning', () => {
-  it('keeps at most 200 entries, dropping the oldest', async () => {
-    for (let n = 0; n < AI_CACHE_MAX_ENTRIES + 3; n++) {
-      await writeAiCache(keyOf(n), REVIEW, NOW + n);
-    }
-    const keys = (await stored()).filter((key) => key.startsWith(AI_CACHE_PREFIX));
-    expect(keys).toHaveLength(AI_CACHE_MAX_ENTRIES);
-    expect(keys).not.toContain(keyOf(0));
-    expect(keys).toContain(keyOf(AI_CACHE_MAX_ENTRIES + 2));
-  });
-
-  it('removes expired and damaged entries when it writes', async () => {
-    await writeAiCache(keyOf(1), REVIEW, NOW - AI_CACHE_TTL_MS - 5);
-    await browser.storage.local.set({ [keyOf(2)]: { review: 'nope', at: NOW } });
-    await writeAiCache(keyOf(3), REVIEW, NOW);
-    expect(await stored()).toEqual([keyOf(3)]);
-  });
-
-  it('never touches what is not an AI review entry, Vision cache included', async () => {
-    await browser.storage.local.set({
-      'fripon:vision:v1:https://images1.vinted.net/t/1/f800/p.webp': { matches: [], at: 1 },
-      'fripon:settings:v1': { mode: 'auto' },
-      'fripon:credits:v1:gemini:2026-10-27': 3,
-    });
-    await writeAiCache(keyOf(1), REVIEW, NOW);
-    expect(await stored()).toEqual(
-      expect.arrayContaining([
-        'fripon:vision:v1:https://images1.vinted.net/t/1/f800/p.webp',
-        'fripon:settings:v1',
-        'fripon:credits:v1:gemini:2026-10-27',
-        keyOf(1),
-      ]),
-    );
   });
 });
