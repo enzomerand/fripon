@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { findCardRoots, pickPhotoUrl, readGridCard, readGridCards } from './grid';
+import {
+  findCardRoots,
+  findResultsAnchor,
+  pickPhotoUrl,
+  readGridCard,
+  readGridCards,
+} from './grid';
 
 // Synthetic cards shaped like Vinted's grids. Every id, name and photo is made up.
 const THUMB = 'https://images1.vinted.net/t/01_aa/310x430/aa.webp?s=1';
@@ -238,5 +244,42 @@ describe('pickPhotoUrl', () => {
     expect(pickPhotoUrl(['https://images1.vinted.net/t/01/100x100/a.webp'])).toBeNull();
     expect(pickPhotoUrl(['https://images1.vinted.net/t/01/70x100/a.webp'])).toBeNull();
     expect(pickPhotoUrl(['https://images1.vinted.net/t/01/150x210/a.webp'])).not.toBeNull();
+  });
+});
+
+describe('findResultsAnchor', () => {
+  const rootsOf = (doc: Document) => findCardRoots(doc);
+
+  it('is the grid: the first container that holds every card', () => {
+    const doc = page(`
+      <main><h1>Résultats</h1><div id="grid" class="feed-grid">
+        ${catalogCard({ id: '9000101' })}${catalogCard({ id: '9000102' })}
+      </div><nav id="pagination"></nav></main>`);
+    expect(findResultsAnchor(rootsOf(doc))?.id).toBe('grid');
+  });
+
+  it('is the grid of a lone card, not its cell', () => {
+    const doc = page(`<main><div id="grid">${catalogCard()}</div></main>`);
+    expect(findResultsAnchor(rootsOf(doc))?.id).toBe('grid');
+  });
+
+  it('is the block that holds the first card when the cards share only the page', () => {
+    const doc = page(`
+      <main>
+        <section id="first">${feedCard('9000201')}</section>
+        <section id="second">${feedCard('9000202')}</section>
+      </main>`);
+    expect(findResultsAnchor(rootsOf(doc))?.id).toBe('first');
+  });
+
+  it('never goes above the page: the body is not a place for the bar either', () => {
+    const doc = page(`
+      <div id="a">${feedCard('9000201')}</div>
+      <div id="b">${feedCard('9000202')}</div>`);
+    expect(findResultsAnchor(rootsOf(doc))?.id).toBe('a');
+  });
+
+  it('is null without any card', () => {
+    expect(findResultsAnchor([])).toBeNull();
   });
 });

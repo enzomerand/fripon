@@ -62,6 +62,7 @@ beforeEach(() => {
   searchAnswer = { status: 'ok', matches: [] };
   vi.spyOn(browser.runtime, 'sendMessage').mockImplementation(((message: Sent) => {
     if (message.type === 'searchImage') return Promise.resolve(searchAnswer);
+    if (message.type === 'getGates') return Promise.resolve({ image: 'ready', ai: 'no_key' });
     if (message.type === 'openOptions') return Promise.resolve(undefined);
     return Promise.resolve({ ok: true, hash: '0f0f0f0f0f0f0f0f', catalogScore: 0.1 });
   }) as never);
@@ -79,11 +80,14 @@ describe('grid content script', () => {
     expect(script.excludeMatches).toEqual(VINTED_ITEM_MATCHES);
   });
 
-  it('puts a button under every card, and asks nothing before a click', async () => {
+  it('puts a button under every card, and searches nothing before a click', async () => {
     await script.main(ctx);
     expect(hosts()).toHaveLength(2);
     expect(hosts().map((host) => shadowText(host))).toEqual(['🦊 Analyser', '🦊 Analyser']);
-    expect(vi.mocked(browser.runtime.sendMessage)).not.toHaveBeenCalled();
+    // The gate is all it asks (for the bar above the results): no search, no photo analysis.
+    expect(sent('getGates')).toEqual([{ type: 'getGates' }]);
+    expect(sent('searchImage')).toEqual([]);
+    expect(sent('analyzeImage')).toEqual([]);
   });
 
   it('searches the thumbnail on a click and shows the compact verdict', async () => {

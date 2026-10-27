@@ -55,6 +55,8 @@ function start(html: string) {
         Promise.resolve({ ok: true, hash: '0f0f0f0f0f0f0f0f', catalogScore: 0.1 }),
     },
     openOptions,
+    askImageGate: () => Promise.resolve('ready'),
+    askRemaining: () => Promise.resolve(40),
   });
   controller.start();
   return controller;

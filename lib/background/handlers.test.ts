@@ -24,6 +24,7 @@ function makeDeps(overrides: Partial<BackgroundDeps> = {}): BackgroundDeps {
       Promise.resolve({ status: 'ok' as const, review: { catalogPhoto: false, summary: 'Ok.' } }),
     ),
     loadGates: vi.fn(() => Promise.resolve({ image: 'ready' as const, ai: 'ready' as const })),
+    loadVisionRemaining: vi.fn(() => Promise.resolve(640)),
     checkKey: vi.fn(() => Promise.resolve({ ok: true as const })),
     openOptions: vi.fn(() => Promise.resolve()),
     ...overrides,
@@ -35,18 +36,19 @@ describe('isAllowedSender', () => {
   const search: RuntimeMessage = { type: 'searchImage', photoUrl: 'https://x.test/a.jpg' };
   const review: RuntimeMessage = { type: 'aiReview', input: REVIEW_INPUT };
   const gates: RuntimeMessage = { type: 'getGates' };
+  const usage: RuntimeMessage = { type: 'getVisionUsage' };
   const open: RuntimeMessage = { type: 'openOptions', section: 'guide' };
   const test: RuntimeMessage = { type: 'testKey', provider: 'vision', key: 'AIzaX' };
 
   it('rejects every message from another extension or from nowhere', () => {
-    for (const message of [analyze, search, review, gates, open, test]) {
+    for (const message of [analyze, search, review, gates, usage, open, test]) {
       expect(isAllowedSender(message, { id: 'other', url: optionsPage }, own)).toBe(false);
       expect(isAllowedSender(message, { url: optionsPage }, own)).toBe(false);
     }
   });
 
-  it('lets our content scripts ask for the gates, an image analysis, a search, a review or the options page', () => {
-    for (const message of [analyze, search, review, gates, open]) {
+  it('lets our content scripts ask for the gates, the credits left, an image analysis, a search, a review or the options page', () => {
+    for (const message of [analyze, search, review, gates, usage, open]) {
       expect(isAllowedSender(message, { id: 'abc', url: page }, own)).toBe(true);
     }
   });
@@ -158,6 +160,18 @@ describe('handleMessage', () => {
       image: 'no_key',
       ai: 'no_key',
     });
+  });
+
+  it('answers getVisionUsage with the credits left and nothing else', async () => {
+    const deps = makeDeps({ loadVisionRemaining: vi.fn(() => Promise.resolve(37)) });
+    expect(await handleMessage({ type: 'getVisionUsage' }, deps)).toEqual({ remaining: 37 });
+  });
+
+  it('answers getVisionUsage with no count when there is no cap or it cannot be read', async () => {
+    const noCap = makeDeps({ loadVisionRemaining: vi.fn(() => Promise.resolve(null)) });
+    expect(await handleMessage({ type: 'getVisionUsage' }, noCap)).toEqual({ remaining: null });
+    const broken = makeDeps({ loadVisionRemaining: vi.fn(() => Promise.reject(new Error('x'))) });
+    expect(await handleMessage({ type: 'getVisionUsage' }, broken)).toEqual({ remaining: null });
   });
 
   it('opens the options page at the requested section', async () => {

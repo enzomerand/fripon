@@ -53,6 +53,17 @@ describe('background', () => {
     expect(await send({ type: 'getGates' }, fromPage)).toEqual({ image: 'manual', ai: 'manual' });
   });
 
+  it('answers getVisionUsage with a count only, for a content script', async () => {
+    const send = start();
+    await saveSettings({
+      keys: { vision: 'AIzaSECRETSECRETSECRETSECRETSECRET1234' },
+      caps: { vision: 50 },
+    });
+    const answer = await send({ type: 'getVisionUsage' }, fromPage);
+    expect(answer).toEqual({ remaining: 50 });
+    expect(JSON.stringify(answer)).not.toContain('SECRET');
+  });
+
   it('never puts a key in an answer to a content script', async () => {
     const send = start();
     await saveSettings({

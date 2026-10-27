@@ -65,6 +65,14 @@ describe('sendMessage (settings messages)', () => {
     expect(spy).toHaveBeenCalledWith({ type: 'getGates' });
   });
 
+  it('returns the Vision credits left', async () => {
+    const spy = vi
+      .spyOn(browser.runtime, 'sendMessage')
+      .mockResolvedValue({ remaining: 12 } as never);
+    expect(await sendMessage({ type: 'getVisionUsage' })).toEqual({ remaining: 12 });
+    expect(spy).toHaveBeenCalledWith({ type: 'getVisionUsage' });
+  });
+
   it('sends the listing to review and returns the review', async () => {
     const input = {
       photoUrl: 'https://images1.vinted.net/a.jpg',
@@ -107,6 +115,10 @@ describe('isRuntimeMessage', () => {
   it('accepts getGates with nothing else, and no longer knows getImageGate', () => {
     expect(isRuntimeMessage({ type: 'getGates' })).toBe(true);
     expect(isRuntimeMessage({ type: 'getImageGate' })).toBe(false);
+  });
+
+  it('accepts getVisionUsage with nothing else', () => {
+    expect(isRuntimeMessage({ type: 'getVisionUsage' })).toBe(true);
   });
 
   it('accepts an aiReview request with a well-formed input only', () => {

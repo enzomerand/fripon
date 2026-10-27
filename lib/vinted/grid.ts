@@ -144,3 +144,30 @@ export function readGridCards(root: ParentNode): GridCard[] {
   }
   return cards;
 }
+
+/** Containers the bar must not be put before: it would end up outside the results. */
+const PAGE_CONTAINERS: ReadonlySet<string> = new Set(['HTML', 'BODY', 'MAIN']);
+
+const isPageContainer = (element: Element) =>
+  PAGE_CONTAINERS.has(element.tagName) || element.getAttribute('role') === 'main';
+
+/**
+ * The element the bar above the results goes before: the first container that holds every card,
+ * the grid itself. When that is the whole page (the home feed has its cards in several blocks), the
+ * block of the page that holds the first card instead. Null without any card.
+ */
+export function findResultsAnchor(cards: readonly Element[]): Element | null {
+  const first = cards[0];
+  if (!first) return null;
+  // A lone card has only its own cell around it: the grid is one level up.
+  let container = first.parentElement;
+  if (cards.length === 1 && container?.parentElement) container = container.parentElement;
+  while (container && !cards.every((card) => container?.contains(card))) {
+    container = container.parentElement;
+  }
+  if (!container) return null;
+  if (!isPageContainer(container)) return container;
+  let block: Element = first;
+  while (block.parentElement && block.parentElement !== container) block = block.parentElement;
+  return block;
+}

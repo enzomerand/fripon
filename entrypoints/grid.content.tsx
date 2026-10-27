@@ -1,4 +1,10 @@
-import { analyzeImageViaBackground, openOptions, searchDeps } from '../lib/background/client';
+import {
+  analyzeImageViaBackground,
+  askGates,
+  askVisionRemaining,
+  openOptions,
+  searchDeps,
+} from '../lib/background/client';
 import { VINTED_ITEM_MATCHES, VINTED_PAGE_MATCHES } from '../lib/vinted/domains';
 import { createGridController } from '../ui/grid/controller';
 // The CSS is a string: it goes into the shadow roots by hand, one shared sheet for all of them.
@@ -17,6 +23,8 @@ export default defineContentScript({
       css,
       deps: { ...searchDeps, analyzeImage: analyzeImageViaBackground },
       openOptions,
+      askImageGate: async () => (await askGates()).image,
+      askRemaining: askVisionRemaining,
     });
     grid.start();
     ctx.onInvalidated(() => grid.dispose());
