@@ -339,7 +339,7 @@ function readRsc(doc: Document, itemId: string): RscData {
 
 // ---- Sold items ------------------------------------------------------------------------------
 
-const SOLD_AVAILABILITY = /(?:SoldOut|OutOfStock|Discontinued)$/;
+const SOLD_AVAILABILITY = /SoldOut$/;
 
 /**
  * Whether the item page shows a sold item, whatever the site's language. Vinted drops the JSON-LD
