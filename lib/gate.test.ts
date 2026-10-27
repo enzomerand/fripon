@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { reserve } from './credits';
-import { imageGate, loadImageGate } from './gate';
+import { aiGate, imageGate, loadGates } from './gate';
 import { DEFAULT_SETTINGS, saveSettings, type Settings } from './settings';
 
 const withKey: Settings = {
@@ -37,38 +37,85 @@ describe('imageGate', () => {
   });
 });
 
-describe('loadImageGate', () => {
+describe('aiGate', () => {
+  const withGemini: Settings = { ...DEFAULT_SETTINGS, keys: { vision: '', gemini: 'AIzaGemini' } };
+
+  it('is no_key without a Gemini key, whatever the rest says', () => {
+    expect(aiGate(DEFAULT_SETTINGS, 'ok')).toBe('no_key');
+    expect(aiGate({ ...DEFAULT_SETTINGS, mode: 'click' }, 'ok')).toBe('no_key');
+    expect(aiGate(DEFAULT_SETTINGS, 'reached')).toBe('no_key');
+  });
+
+  it('ignores a Vision key', () => {
+    expect(aiGate(withKey, 'ok')).toBe('no_key');
+  });
+
+  it('is quota once the Gemini cap is reached, even in click mode', () => {
+    expect(aiGate(withGemini, 'reached')).toBe('quota');
+    expect(aiGate({ ...withGemini, mode: 'click' }, 'reached')).toBe('quota');
+  });
+
+  it('is manual in click mode', () => {
+    expect(aiGate({ ...withGemini, mode: 'click' }, 'ok')).toBe('manual');
+    expect(aiGate({ ...withGemini, mode: 'click' }, 'warning')).toBe('manual');
+  });
+
+  it('is ready with a key, credits left and automatic mode (a warning does not block)', () => {
+    expect(aiGate(withGemini, 'ok')).toBe('ready');
+    expect(aiGate(withGemini, 'warning')).toBe('ready');
+  });
+});
+
+describe('loadGates', () => {
   const now = new Date('2026-10-20T21:30:00Z');
 
   beforeEach(() => {
     fakeBrowser.reset();
   });
 
-  it('is no_key on a fresh install', async () => {
-    expect(await loadImageGate(now)).toBe('no_key');
+  it('is no_key for both on a fresh install', async () => {
+    expect(await loadGates(now)).toEqual({ image: 'no_key', ai: 'no_key' });
   });
 
-  it('is ready once a Vision key is saved', async () => {
+  it('gives each step its own gate from its own key', async () => {
     await saveSettings({ keys: { vision: 'AIzaVision' } });
-    expect(await loadImageGate(now)).toBe('ready');
+    expect(await loadGates(now)).toEqual({ image: 'ready', ai: 'no_key' });
+    await saveSettings({ keys: { gemini: 'AIzaGemini' } });
+    expect(await loadGates(now)).toEqual({ image: 'ready', ai: 'ready' });
   });
 
-  it('turns into quota when the stored counter hits the stored cap, and back next month', async () => {
+  it('turns each into manual in click mode', async () => {
+    await saveSettings({ mode: 'click', keys: { vision: 'AIzaVision', gemini: 'AIzaGemini' } });
+    expect(await loadGates(now)).toEqual({ image: 'manual', ai: 'manual' });
+  });
+
+  it('turns the image gate into quota when the stored counter hits the stored cap, and back next month', async () => {
     await saveSettings({ keys: { vision: 'AIzaVision' }, caps: { vision: 3 } });
     await reserve('vision', 3, null, now);
-    expect(await loadImageGate(now)).toBe('quota');
-    expect(await loadImageGate(new Date('2026-11-01T07:00:00Z'))).toBe('ready');
+    expect(await loadGates(now)).toEqual({ image: 'quota', ai: 'no_key' });
+    expect(await loadGates(new Date('2026-11-01T07:00:00Z'))).toEqual({
+      image: 'ready',
+      ai: 'no_key',
+    });
   });
 
   it('lifts the quota when the cap is removed', async () => {
     await saveSettings({ keys: { vision: 'AIzaVision' }, caps: { vision: 3 } });
     await reserve('vision', 3, null, now);
     await saveSettings({ caps: { vision: null } });
-    expect(await loadImageGate(now)).toBe('ready');
+    expect(await loadGates(now)).toEqual({ image: 'ready', ai: 'no_key' });
   });
 
-  it('is manual in click mode', async () => {
-    await saveSettings({ mode: 'click', keys: { vision: 'AIzaVision' } });
-    expect(await loadImageGate(now)).toBe('manual');
+  it('turns the AI gate into quota on its own counter, and back the next day', async () => {
+    await saveSettings({
+      keys: { vision: 'AIzaVision', gemini: 'AIzaGemini' },
+      caps: { gemini: 2 },
+    });
+    await reserve('gemini', 2, null, now);
+    expect(await loadGates(now)).toEqual({ image: 'ready', ai: 'quota' });
+    expect(await loadGates(new Date('2026-10-21T08:00:00Z'))).toEqual({
+      image: 'ready',
+      ai: 'ready',
+    });
   });
 });

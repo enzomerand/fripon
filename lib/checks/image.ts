@@ -1,4 +1,5 @@
-import { isKeyFailure, type VisionFailure } from '../google/vision';
+import { isKeyFailure } from '../google/refusal';
+import type { VisionFailure } from '../google/vision';
 import type { SearchImageResponse } from '../messages';
 import type { CheckAction, CheckResult, ImageMatch } from '../model';
 

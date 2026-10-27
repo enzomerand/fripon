@@ -57,10 +57,29 @@ describe('sendMessage (searchImage)', () => {
 });
 
 describe('sendMessage (settings messages)', () => {
-  it('returns the image gate', async () => {
-    const spy = vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue('quota' as never);
-    expect(await sendMessage({ type: 'getImageGate' })).toBe('quota');
-    expect(spy).toHaveBeenCalledWith({ type: 'getImageGate' });
+  it('returns the gates', async () => {
+    const spy = vi
+      .spyOn(browser.runtime, 'sendMessage')
+      .mockResolvedValue({ image: 'quota', ai: 'ready' } as never);
+    expect(await sendMessage({ type: 'getGates' })).toEqual({ image: 'quota', ai: 'ready' });
+    expect(spy).toHaveBeenCalledWith({ type: 'getGates' });
+  });
+
+  it('sends the listing to review and returns the review', async () => {
+    const input = {
+      photoUrl: 'https://images1.vinted.net/a.jpg',
+      title: 'Robe',
+      description: 'Belle robe',
+      price: '12,00 €',
+      signals: ['Vendeur : rien de notable.'],
+    };
+    const answer = {
+      status: 'ok',
+      review: { catalogPhoto: true, summary: 'Une photo de studio.' },
+    };
+    const spy = vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue(answer as never);
+    expect(await sendMessage({ type: 'aiReview', input, cacheOnly: true })).toEqual(answer);
+    expect(spy).toHaveBeenCalledWith({ type: 'aiReview', input, cacheOnly: true });
   });
 
   it('sends the candidate key to test and returns the result', async () => {
@@ -84,8 +103,30 @@ describe('sendMessage (settings messages)', () => {
 });
 
 describe('isRuntimeMessage', () => {
-  it('accepts getImageGate with nothing else', () => {
-    expect(isRuntimeMessage({ type: 'getImageGate' })).toBe(true);
+  it('accepts getGates with nothing else, and no longer knows getImageGate', () => {
+    expect(isRuntimeMessage({ type: 'getGates' })).toBe(true);
+    expect(isRuntimeMessage({ type: 'getImageGate' })).toBe(false);
+  });
+
+  it('accepts an aiReview request with a well-formed input only', () => {
+    const input = {
+      photoUrl: 'https://x.test/a.jpg',
+      title: 'Robe',
+      description: '',
+      price: '12,00 €',
+      signals: ['a', 'b'],
+    };
+    expect(isRuntimeMessage({ type: 'aiReview', input })).toBe(true);
+    expect(isRuntimeMessage({ type: 'aiReview', input, cacheOnly: true })).toBe(true);
+    expect(isRuntimeMessage({ type: 'aiReview', input, cacheOnly: 'yes' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'aiReview' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'aiReview', input: null })).toBe(false);
+    expect(isRuntimeMessage({ type: 'aiReview', input: { ...input, signals: 'a' } })).toBe(false);
+    expect(isRuntimeMessage({ type: 'aiReview', input: { ...input, signals: [1] } })).toBe(false);
+    expect(isRuntimeMessage({ type: 'aiReview', input: { ...input, title: 3 } })).toBe(false);
+    expect(isRuntimeMessage({ type: 'aiReview', input: { ...input, photoUrl: undefined } })).toBe(
+      false,
+    );
   });
 
   it('accepts openOptions without a section or with a known one', () => {

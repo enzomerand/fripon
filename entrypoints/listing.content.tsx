@@ -10,7 +10,7 @@ import {
   type SearchDeps,
 } from '../lib/analysis';
 import { imageCheckSearching } from '../lib/checks/image';
-import type { ImageGate } from '../lib/gate';
+import type { Gate, ImageGate } from '../lib/gate';
 import { sendMessage, type OptionsSection } from '../lib/messages';
 import type { Listing } from '../lib/model';
 import { waitFor } from '../lib/wait';
@@ -39,16 +39,16 @@ const searchDeps: SearchDeps = {
     sendMessage({ type: 'searchImage', photoUrl, ...(cacheOnly && { cacheOnly: true }) }),
 };
 
-const IMAGE_GATES: readonly ImageGate[] = ['ready', 'no_key', 'quota', 'manual'];
+const GATE_WORDS: readonly Gate[] = ['ready', 'no_key', 'quota', 'manual'];
 
 /**
- * What the background says about the image search. The keys never leave it: this is all we learn.
+ * What the background says about the paid steps. The keys never leave it: this is all we learn.
  * Any failure counts as "no key", the safe state in which nothing paid is attempted.
  */
 async function askImageGate(): Promise<ImageGate> {
   try {
-    const gate = await sendMessage({ type: 'getImageGate' });
-    return IMAGE_GATES.includes(gate) ? gate : 'no_key';
+    const { image } = await sendMessage({ type: 'getGates' });
+    return GATE_WORDS.includes(image) ? image : 'no_key';
   } catch {
     return 'no_key';
   }

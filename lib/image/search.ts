@@ -1,9 +1,11 @@
 import { parseWebDetection } from '../checks/image-matches';
 import { getUsage, refund, reserve } from '../credits';
-import { isKeyFailure, type VisionFailure, type WebDetectResult } from '../google/vision';
+import { isKeyFailure } from '../google/refusal';
+import type { VisionFailure, WebDetectResult } from '../google/vision';
 import type { SearchImageResponse } from '../messages';
 import { loadSettings } from '../settings';
 import { isAllowedImageUrl } from './analyzer';
+import { blobToBase64 } from './base64';
 import { readVisionCache, visionCacheKey, writeVisionCache } from './search-cache';
 
 /** Everything the search does with the outside world, injected so it can be tested. */
@@ -13,18 +15,6 @@ interface ImageSearcherDeps {
   /** The paid call: one Vision unit. */
   webDetect(base64: string, key: string): Promise<WebDetectResult>;
   now?(): number;
-}
-
-/** Characters turned into a binary string at once: `fromCharCode` chokes on very long argument lists. */
-const BASE64_CHUNK = 0x8000;
-
-/** Base64 of some bytes, with no `Buffer` (the service worker has none). */
-export function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += BASE64_CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + BASE64_CHUNK));
-  }
-  return btoa(binary);
 }
 
 const NETWORK_ERROR: SearchImageResponse = { status: 'error', reason: 'network' };
@@ -85,7 +75,7 @@ export function createImageSearcher(deps: ImageSearcherDeps): ImageSearcher {
 
     let image: string;
     try {
-      image = bytesToBase64(new Uint8Array(await (await deps.fetchPhoto(photoUrl)).arrayBuffer()));
+      image = await blobToBase64(await deps.fetchPhoto(photoUrl));
     } catch {
       return { status: 'error', reason: 'photo' };
     }

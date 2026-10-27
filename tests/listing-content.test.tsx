@@ -115,8 +115,10 @@ async function until(predicate: () => boolean, timeoutMs = 8_000) {
   }
 }
 
-/** What the background answers to `getImageGate`; an Error makes the message fail. */
+/** What the background answers to `getGates` for the image search; an Error makes the message fail. */
 let imageGate: string | Error;
+/** ... and for the AI review. */
+let aiGate: string;
 
 type SentMessage = {
   type: string;
@@ -174,6 +176,7 @@ beforeEach(() => {
   document.head.innerHTML = '';
   document.body.innerHTML = PAGE;
   imageGate = 'no_key';
+  aiGate = 'no_key';
   searchAnswer = (message) =>
     Promise.resolve(
       message.cacheOnly
@@ -185,8 +188,10 @@ beforeEach(() => {
             : { status: 'no_key' },
     );
   vi.spyOn(browser.runtime, 'sendMessage').mockImplementation(((message: SentMessage) => {
-    if (message.type === 'getImageGate') {
-      return imageGate instanceof Error ? Promise.reject(imageGate) : Promise.resolve(imageGate);
+    if (message.type === 'getGates') {
+      return imageGate instanceof Error
+        ? Promise.reject(imageGate)
+        : Promise.resolve({ image: imageGate, ai: aiGate });
     }
     if (message.type === 'openOptions') return Promise.resolve(undefined);
     if (message.type === 'searchImage') return searchAnswer(message);
@@ -220,8 +225,8 @@ describe('listing content script', () => {
       '/api/v2/wardrobe/7000001/items?page=1&per_page=96',
     ]);
     expect(sentMessages('analyzeImage')).toHaveLength(2);
-    // The gate is asked once per run, and only that: no key ever travels to the page.
-    expect(sentMessages('getImageGate')).toEqual([{ type: 'getImageGate' }]);
+    // The gates are asked once per run, and only that: no key ever travels to the page.
+    expect(sentMessages('getGates')).toEqual([{ type: 'getGates' }]);
   }, 15_000);
 
   describe('when Vinted re-renders the item sidebar', () => {
@@ -249,7 +254,7 @@ describe('listing content script', () => {
       // Same shadow tree: the verdict and the expanded checks survive.
       expect(shadowText()).toContain('Chercher moi-même sur Google Lens');
       expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(apiCalls);
-      expect(sentMessages('getImageGate')).toHaveLength(1);
+      expect(sentMessages('getGates')).toHaveLength(1);
     }, 15_000);
 
     it('waits for the price block to come back when it is removed alone', async () => {
@@ -537,7 +542,7 @@ describe('listing content script', () => {
       // No new free check: neither a Vinted request nor a photo download.
       expect(apiCalls(calls)).toHaveLength(requests);
       expect(sentMessages('analyzeImage')).toHaveLength(photoAnalyses);
-      expect(sentMessages('getImageGate')).toHaveLength(1);
+      expect(sentMessages('getGates')).toHaveLength(1);
       expect(paidSearches()).toHaveLength(1);
       // The checks stayed expanded through the updates.
       expect(shadowText()).toContain('Chercher moi-même sur Google Lens');

@@ -42,27 +42,33 @@ beforeEach(() => {
 });
 
 describe('background', () => {
-  it('answers getImageGate from the stored settings', async () => {
+  it('answers getGates from the stored settings, one gate per paid step', async () => {
     const send = start();
-    expect(await send({ type: 'getImageGate' }, fromPage)).toBe('no_key');
+    expect(await send({ type: 'getGates' }, fromPage)).toEqual({ image: 'no_key', ai: 'no_key' });
     await saveSettings({ keys: { vision: 'AIzaVision' } });
-    expect(await send({ type: 'getImageGate' }, fromPage)).toBe('ready');
+    expect(await send({ type: 'getGates' }, fromPage)).toEqual({ image: 'ready', ai: 'no_key' });
+    await saveSettings({ keys: { gemini: 'AIzaGemini' } });
+    expect(await send({ type: 'getGates' }, fromPage)).toEqual({ image: 'ready', ai: 'ready' });
     await saveSettings({ mode: 'click' });
-    expect(await send({ type: 'getImageGate' }, fromPage)).toBe('manual');
+    expect(await send({ type: 'getGates' }, fromPage)).toEqual({ image: 'manual', ai: 'manual' });
   });
 
   it('never puts a key in an answer to a content script', async () => {
     const send = start();
-    await saveSettings({ keys: { vision: 'AIzaSECRETSECRETSECRETSECRETSECRET1234' } });
-    const answer = await send({ type: 'getImageGate' }, fromPage);
+    await saveSettings({
+      keys: {
+        vision: 'AIzaSECRETSECRETSECRETSECRETSECRET1234',
+        gemini: 'AIzaSECRETSECRETSECRETSECRETSECRET5678',
+      },
+    });
+    const answer = await send({ type: 'getGates' }, fromPage);
     expect(JSON.stringify(answer)).not.toContain('SECRET');
   });
 
   it('ignores messages from another extension and unknown messages', async () => {
     const send = start();
-    expect(await send({ type: 'getImageGate' }, { id: 'other', url: fromPage.url })).toBe(
-      'no answer',
-    );
+    expect(await send({ type: 'getGates' }, { id: 'other', url: fromPage.url })).toBe('no answer');
+    expect(await send({ type: 'getImageGate' }, fromPage)).toBe('no answer');
     expect(await send({ type: 'whatever' }, fromPage)).toBe('no answer');
   });
 
@@ -255,6 +261,190 @@ describe('background', () => {
       await saveSettings({ mode: 'click' });
       await send({ type: 'searchImage', photoUrl: photo(4) }, fromPage);
       expect(visionCalls(fetchMock)).toHaveLength(2);
+      vi.unstubAllGlobals();
+    });
+  });
+
+  describe('aiReview', () => {
+    const PHOTO = 'https://images1.vinted.net/t/01_a/f800/main.webp?s=aa';
+    const INPUT = {
+      photoUrl: PHOTO,
+      title: 'Robe de soirée',
+      description: 'Robe portée une fois.',
+      price: '12,50 €',
+      signals: ['La photo est identique à celle d’articles vendus sur Shein.'],
+    };
+    // The background remembers a refused key in memory across tests: each test gets its own key.
+    let KEY = '';
+    let keyCount = 0;
+    beforeEach(() => {
+      KEY = `AIzaSECRETSECRETSECRETSECRETSECRET${String(++keyCount).padStart(4, '0')}`;
+    });
+    const GOOD = {
+      candidates: [
+        {
+          content: {
+            parts: [{ text: '{"catalogPhoto":true,"summary":"La photo vient de Shein."}' }],
+          },
+        },
+      ],
+    };
+
+    /** The Vinted CDN answers with a few bytes, Gemini with `geminiAnswer`. */
+    function stubWeb(geminiAnswer: () => Response) {
+      const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>((url) =>
+        Promise.resolve(
+          String(url).startsWith('https://generativelanguage.googleapis.com/')
+            ? geminiAnswer()
+            : new Response(new Uint8Array([1, 2, 3]), {
+                status: 200,
+                headers: { 'content-type': 'image/webp' },
+              }),
+        ),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      return fetchMock;
+    }
+    const billingOff = () =>
+      Response.json(
+        {
+          error: {
+            code: 403,
+            status: 'PERMISSION_DENIED',
+            message: 'This API method requires billing to be enabled.',
+          },
+        },
+        { status: 403 },
+      );
+    const geminiCalls = (fetchMock: ReturnType<typeof stubWeb>) =>
+      fetchMock.mock.calls.filter(([url]) => String(url).includes('generativelanguage.googleapis'));
+    const used = async () => (await getUsage('gemini', null)).used;
+
+    it('reviews the listing with the saved key, spends one credit and answers with the review only', async () => {
+      const fetchMock = stubWeb(() => Response.json(GOOD));
+      await saveSettings({ keys: { gemini: KEY } });
+      const send = start();
+
+      const answer = await send({ type: 'aiReview', input: INPUT }, fromPage);
+      expect(answer).toEqual({
+        status: 'ok',
+        review: { catalogPhoto: true, summary: 'La photo vient de Shein.' },
+      });
+      expect(JSON.stringify(answer)).not.toContain('SECRET');
+
+      const calls = geminiCalls(fetchMock);
+      expect(calls).toHaveLength(1);
+      const [url, init] = calls[0] as [string, RequestInit];
+      expect(url).not.toContain('SECRET');
+      expect((init.headers as Record<string, string>)['x-goog-api-key']).toBe(KEY);
+      // The photo travels as base64, the listing as text; the key is in the header only.
+      expect(String(init.body)).toContain('AQID');
+      expect(String(init.body)).toContain('Robe de soirée');
+      expect(String(init.body)).not.toContain(KEY);
+      expect(await used()).toBe(1);
+      expect((await getUsage('vision', null)).used).toBe(0);
+
+      // The same listing reloaded: no second call, no second credit.
+      expect(await send({ type: 'aiReview', input: INPUT }, fromPage)).toEqual(answer);
+      expect(geminiCalls(fetchMock)).toHaveLength(1);
+      expect(await used()).toBe(1);
+      vi.unstubAllGlobals();
+    });
+
+    it('only looks in the cache when asked to, and spends nothing', async () => {
+      const fetchMock = stubWeb(() => Response.json(GOOD));
+      await saveSettings({ keys: { gemini: KEY } });
+      const send = start();
+
+      expect(await send({ type: 'aiReview', input: INPUT, cacheOnly: true }, fromPage)).toEqual({
+        status: 'not_cached',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(await used()).toBe(0);
+      vi.unstubAllGlobals();
+    });
+
+    it('answers no_key without a Gemini key, whatever the Vision key', async () => {
+      const fetchMock = stubWeb(() => Response.json(GOOD));
+      await saveSettings({ keys: { vision: KEY } });
+      const send = start();
+
+      expect(await send({ type: 'aiReview', input: INPUT }, fromPage)).toEqual({
+        status: 'no_key',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    });
+
+    it('forgets a refused key when the key tests fine in the options page', async () => {
+      let gemini = billingOff;
+      const fetchMock = stubWeb(() => gemini());
+      await saveSettings({ keys: { gemini: KEY } });
+      const send = start();
+      const other = { ...INPUT, price: '99,00 €' };
+
+      const refused = { status: 'error', reason: 'billing' };
+      expect(await send({ type: 'aiReview', input: INPUT }, fromPage)).toEqual(refused);
+      expect(await send({ type: 'aiReview', input: other }, fromPage)).toEqual(refused);
+      expect(geminiCalls(fetchMock)).toHaveLength(1);
+      // Google said no without billing: the credit came back.
+      expect(await used()).toBe(0);
+
+      // The user fixes the project and tests the key in the options page.
+      gemini = () => Response.json({});
+      expect(await send({ type: 'testKey', provider: 'gemini', key: KEY }, fromOptions)).toEqual({
+        ok: true,
+      });
+      gemini = () => Response.json(GOOD);
+      const probes = geminiCalls(fetchMock).length;
+      expect(
+        (await send({ type: 'aiReview', input: other }, fromPage)) as { status: string },
+      ).toMatchObject({ status: 'ok' });
+      expect(geminiCalls(fetchMock)).toHaveLength(probes + 1);
+      vi.unstubAllGlobals();
+    });
+
+    it('forgets a refused key when the stored key changes, even back to the same one', async () => {
+      const fetchMock = stubWeb(billingOff);
+      await saveSettings({ keys: { gemini: KEY } });
+      const send = start();
+      const listing = (n: number) => ({ ...INPUT, price: `${n} €` });
+
+      await send({ type: 'aiReview', input: listing(1) }, fromPage);
+      await send({ type: 'aiReview', input: listing(2) }, fromPage);
+      expect(geminiCalls(fetchMock)).toHaveLength(1);
+
+      // Another key, then the first one again: the refusal is no longer remembered.
+      await saveSettings({ keys: { gemini: `${KEY}x` } });
+      await saveSettings({ keys: { gemini: KEY } });
+      await send({ type: 'aiReview', input: listing(3) }, fromPage);
+      expect(geminiCalls(fetchMock)).toHaveLength(2);
+
+      // Saving something else, or the other provider's key, leaves the memory alone.
+      await saveSettings({ mode: 'click' });
+      await saveSettings({ keys: { vision: 'AIzaVision' } });
+      await send({ type: 'aiReview', input: listing(4) }, fromPage);
+      expect(geminiCalls(fetchMock)).toHaveLength(2);
+      vi.unstubAllGlobals();
+    });
+
+    it('keeps the two providers apart: a Vision key tested fine does not forget a Gemini refusal', async () => {
+      const fetchMock = stubWeb(billingOff);
+      await saveSettings({ keys: { gemini: KEY } });
+      const send = start();
+
+      await send({ type: 'aiReview', input: INPUT }, fromPage);
+      await send({ type: 'aiReview', input: { ...INPUT, price: '1 €' } }, fromPage);
+      expect(geminiCalls(fetchMock)).toHaveLength(1);
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => Promise.resolve(new Response('{}', { status: 200 }))),
+      );
+      await send({ type: 'testKey', provider: 'vision', key: 'AIzaVision' }, fromOptions);
+      vi.stubGlobal('fetch', fetchMock);
+      await send({ type: 'aiReview', input: { ...INPUT, price: '2 €' } }, fromPage);
+      expect(geminiCalls(fetchMock)).toHaveLength(1);
       vi.unstubAllGlobals();
     });
   });

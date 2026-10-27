@@ -4,7 +4,7 @@ import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { getUsage, reserve } from '../credits';
 import type { WebDetectResult } from '../google/vision';
 import { saveSettings } from '../settings';
-import { KEY_FAILURE_MEMO_MS, bytesToBase64, createImageSearcher } from './search';
+import { KEY_FAILURE_MEMO_MS, createImageSearcher } from './search';
 import { VISION_CACHE_PREFIX, VISION_CACHE_TTL_MS } from './search-cache';
 
 const KEY = 'AIzaSyFakeKeyForTestsOnly_0123456789abcd';
@@ -60,15 +60,6 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-});
-
-describe('bytesToBase64', () => {
-  it('encodes small and large inputs like the standard base64', () => {
-    expect(bytesToBase64(new Uint8Array([]))).toBe('');
-    expect(bytesToBase64(new Uint8Array([1, 2, 3]))).toBe('AQID');
-    const big = Uint8Array.from({ length: 100_003 }, (_, i) => (i * 31) % 256);
-    expect(bytesToBase64(big)).toBe(Buffer.from(big).toString('base64'));
-  });
 });
 
 describe('createImageSearcher search', () => {

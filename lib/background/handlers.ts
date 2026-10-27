@@ -1,7 +1,9 @@
-import type { ImageGate } from '../gate';
+import type { AiReviewInput } from '../ai/input';
+import type { Gates } from '../gate';
 import type { KeyCheckResult } from '../google/key-check';
 import type { PendingSection } from '../options-nav';
 import type {
+  AiReviewResponse,
   AnalyzeImageResponse,
   ResponseFor,
   RuntimeMessage,
@@ -13,7 +15,8 @@ import type { Provider } from '../settings';
 export interface BackgroundDeps {
   analyzeImage(url: string): Promise<AnalyzeImageResponse>;
   searchImage(photoUrl: string, cacheOnly: boolean): Promise<SearchImageResponse>;
-  loadImageGate(): Promise<ImageGate>;
+  aiReview(input: AiReviewInput, cacheOnly: boolean): Promise<AiReviewResponse>;
+  loadGates(): Promise<Gates>;
   checkKey(provider: Provider, key: string): Promise<KeyCheckResult>;
   openOptions(section?: PendingSection): Promise<void>;
 }
@@ -65,9 +68,14 @@ async function respond(message: RuntimeMessage, deps: BackgroundDeps) {
       return deps
         .searchImage(message.photoUrl, message.cacheOnly === true)
         .catch((): SearchImageResponse => ({ status: 'error', reason: 'network' }));
-    case 'getImageGate':
+    case 'aiReview':
+      // The reviewer never rejects either.
+      return deps
+        .aiReview(message.input, message.cacheOnly === true)
+        .catch((): AiReviewResponse => ({ status: 'error', reason: 'network' }));
+    case 'getGates':
       // When storage cannot be read, behave as if there were no key: nothing is spent.
-      return deps.loadImageGate().catch((): ImageGate => 'no_key');
+      return deps.loadGates().catch((): Gates => ({ image: 'no_key', ai: 'no_key' }));
     case 'openOptions':
       await deps.openOptions(message.section).catch(() => undefined);
       return undefined;
