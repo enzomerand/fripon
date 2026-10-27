@@ -35,6 +35,7 @@ function makeDeps(overrides: Partial<BackgroundDeps> = {}): BackgroundDeps {
       signOut: vi.fn(() => Promise.resolve()),
       checkout: vi.fn(() => Promise.resolve({ ok: true as const })),
       portal: vi.fn(() => Promise.resolve({ ok: true as const })),
+      deleteAccount: vi.fn(() => Promise.resolve({ ok: true as const })),
     },
     ...overrides,
   };

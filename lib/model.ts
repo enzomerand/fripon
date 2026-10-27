@@ -88,7 +88,8 @@ export interface CheckResult {
  * open_keys: the keys section of the options page. run_image_search: the "Au clic" button, which
  * runs the image search from the card itself.
  */
-export type CheckAction = 'open_guide' | 'open_settings' | 'open_keys' | 'run_image_search';
+export type CheckAction =
+  'open_guide' | 'open_settings' | 'open_keys' | 'open_cloud' | 'run_image_search';
 
 /** One page where the reverse image search found the listing photo. */
 export interface ImageMatch {

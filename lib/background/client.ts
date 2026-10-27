@@ -38,7 +38,7 @@ export function setVerdictBadge(verdict: BadgeVerdict | null) {
   void sendMessage({ type: 'setVerdictBadge', verdict: badge }).catch(() => undefined);
 }
 
-const GATE_WORDS: readonly Gate[] = ['ready', 'no_key', 'quota', 'manual'];
+const GATE_WORDS: readonly Gate[] = ['ready', 'no_key', 'quota', 'manual', 'expired'];
 const NO_GATES: Gates = { image: 'no_key', ai: 'no_key' };
 
 const wordOf = (gate: unknown): Gate =>

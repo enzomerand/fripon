@@ -45,6 +45,7 @@ export function makeClient(overrides: Partial<CloudClient> = {}): CloudClient {
     portal: vi.fn(() =>
       Promise.resolve({ ok: true as const, url: 'https://billing.stripe.com/p/session/x' }),
     ),
+    deleteAccount: vi.fn(() => Promise.resolve({ ok: true as const })),
     ...overrides,
   };
 }

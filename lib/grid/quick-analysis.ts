@@ -33,6 +33,8 @@ export type QuickOutcome =
   /** `guide`: no key saved. `keys`: Google refused the saved one. */
   | { status: 'needsKey'; section: KeySection }
   | { status: 'quota' }
+  /** The Fripon subscription's session has ended: the button says to sign in again. */
+  | { status: 'expired' }
   /**
    * The card has no photo that can be searched (a placeholder not replaced yet, a thumbnail too
    * small): nothing was sent, and it is not a failure of the search.
@@ -90,6 +92,8 @@ export async function quickAnalysis(
       return { status: 'done', verdict: compactVerdict(imageCheckForSearch(response), photos) };
     case 'no_key':
       return { status: 'needsKey', section: 'guide' };
+    case 'expired':
+      return { status: 'expired' };
     case 'quota':
       return { status: 'quota' };
     case 'error':

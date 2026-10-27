@@ -114,6 +114,7 @@ describe('endNotice', () => {
   it.each([
     ['quota', 'Plafond atteint'],
     ['needsKey', 'Clé Google à vérifier'],
+    ['expired', 'Ta session Fripon a expiré : reconnecte-toi.'],
     ['failures', 'Plusieurs recherches ont échoué'],
   ] as const)('explains a stop on %s', (reason, start) => {
     expect(endNotice({ reason, analysed: 2 })).toContain(start);

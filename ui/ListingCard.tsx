@@ -53,6 +53,7 @@ const OPTIONS_ACTIONS: Record<
   open_guide: { section: 'guide', label: 'Activer en 2 minutes' },
   open_settings: { section: 'credits', label: 'Voir mes réglages' },
   open_keys: { section: 'keys', label: 'Vérifier ma clé' },
+  open_cloud: { section: 'cloud', label: 'Me reconnecter' },
 };
 
 /** Where the buttons of the AI block lead: the keys, or the subscription for a subscriber. */

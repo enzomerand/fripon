@@ -33,12 +33,15 @@ describe('googleLensUrl', () => {
 });
 
 describe('imageCheckOff', () => {
-  it.each(['no_key', 'quota', 'manual'] as const)('is an off image row for %s', (reason) => {
-    const result = imageCheckOff(reason);
-    expect(result).toMatchObject({ id: 'image', status: 'off', signals: [] });
-    expect(result.tag.length).toBeGreaterThan(3);
-    expect(result.detail.length).toBeGreaterThan(10);
-  });
+  it.each(['no_key', 'quota', 'manual', 'expired'] as const)(
+    'is an off image row for %s',
+    (reason) => {
+      const result = imageCheckOff(reason);
+      expect(result).toMatchObject({ id: 'image', status: 'off', signals: [] });
+      expect(result.tag.length).toBeGreaterThan(3);
+      expect(result.detail.length).toBeGreaterThan(10);
+    },
+  );
 
   it('says the search is disabled without a key, the cap reached on quota, "au clic" in manual mode', () => {
     expect(imageCheckOff('no_key').tag).toBe('Désactivée');
@@ -66,9 +69,17 @@ describe('imageCheckOff', () => {
 
   it('gives a different explanation per reason', () => {
     const details = new Set(
-      (['no_key', 'quota', 'manual'] as const).map((r) => imageCheckOff(r).detail),
+      (['no_key', 'quota', 'manual', 'expired'] as const).map((r) => imageCheckOff(r).detail),
     );
-    expect(details.size).toBe(3);
+    expect(details.size).toBe(4);
+  });
+
+  it('asks an expired subscriber to sign in again, and never to add a Google key', () => {
+    const row = imageCheckOff('expired');
+    expect(row.tag).toBe('Session expirée');
+    expect(row.detail).toBe('Ta session Fripon a expiré : reconnecte-toi.');
+    expect(row.action).toBe('open_cloud');
+    expect(JSON.stringify(row)).not.toContain('clé');
   });
 });
 
@@ -232,6 +243,7 @@ describe('imageCheckForSearch', () => {
     );
     expect(imageCheckForSearch({ status: 'no_key' })).toEqual(imageCheckOff('no_key'));
     expect(imageCheckForSearch({ status: 'quota' })).toEqual(imageCheckOff('quota'));
+    expect(imageCheckForSearch({ status: 'expired' })).toEqual(imageCheckOff('expired'));
     // Asked for the cache alone and not there: back to the row that waits for a click.
     expect(imageCheckForSearch({ status: 'not_cached' })).toEqual(imageCheckOff('manual'));
     expect(imageCheckForSearch({ status: 'error', reason: 'billing' })).toEqual(

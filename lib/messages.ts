@@ -4,6 +4,7 @@ import { BADGES, type BadgeVerdict } from './background/badge';
 import {
   PRICE_KEYS,
   type CloudStatus,
+  type DeleteAccountResult,
   type LinkResult,
   type PriceKey,
   type RequestCodeResult,
@@ -51,6 +52,8 @@ export type SearchImageResponse =
   | { status: 'ok'; matches: ImageMatch[] }
   /** No Vision key saved: nothing was sent. */
   | { status: 'no_key' }
+  /** The Fripon subscription's session has ended: nothing was sent, the card says to sign in again. */
+  | { status: 'expired' }
   /** The Vision cap is reached for this period: nothing was sent. */
   | { status: 'quota' }
   /** Only for `cacheOnly`: this photo was not searched in the last 7 days. */
@@ -76,6 +79,8 @@ export type AiReviewResponse =
   | { status: 'ok'; review: AiReview }
   /** No Gemini key saved: nothing was sent. */
   | { status: 'no_key' }
+  /** The Fripon subscription's session has ended: nothing was sent (the image row says so). */
+  | { status: 'expired' }
   /**
    * The Gemini cap is reached for this period: nothing was sent. `source: 'cloud'` when it is the
    * subscription that has nothing left (the month, a daily cap or the trial), not a personal cap.
@@ -182,6 +187,11 @@ export interface CloudPortalRequest {
   type: 'cloudPortal';
 }
 
+/** Delete the account and its history at the server; on success the session is gone here too. */
+export interface CloudDeleteAccountRequest {
+  type: 'cloudDeleteAccount';
+}
+
 /** The messages that only an extension page may send. */
 export const EXTENSION_PAGE_ONLY: readonly RuntimeMessage['type'][] = [
   'testKey',
@@ -191,6 +201,7 @@ export const EXTENSION_PAGE_ONLY: readonly RuntimeMessage['type'][] = [
   'cloudSignOut',
   'cloudCheckout',
   'cloudPortal',
+  'cloudDeleteAccount',
 ];
 
 /** Every message the background understands. Add new requests here. */
@@ -208,7 +219,8 @@ export type RuntimeMessage =
   | CloudVerifyRequest
   | CloudSignOutRequest
   | CloudCheckoutRequest
-  | CloudPortalRequest;
+  | CloudPortalRequest
+  | CloudDeleteAccountRequest;
 
 /** Response type of each message, keyed by `type`. */
 export interface RuntimeResponses {
@@ -226,6 +238,7 @@ export interface RuntimeResponses {
   cloudSignOut: void;
   cloudCheckout: LinkResult;
   cloudPortal: LinkResult;
+  cloudDeleteAccount: DeleteAccountResult;
 }
 
 export type ResponseFor<M extends RuntimeMessage> = RuntimeResponses[M['type']];
@@ -300,6 +313,7 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
     case 'cloudStatus':
     case 'cloudSignOut':
     case 'cloudPortal':
+    case 'cloudDeleteAccount':
       return true;
     case 'cloudRequestCode':
       return isEmailText(message.email);

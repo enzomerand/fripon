@@ -4,11 +4,14 @@ import { withLock } from '../lock';
 import { parseStatus, type CloudStatus } from './types';
 
 /**
- * `storage.local` key of the session: `{ token, email }`. The token is a secret like an API key:
- * only the background reads it and sends it (in the `Authorization` header, to the Fripon server),
- * and nothing hands it to a page: the messages carry no token, and the options page follows
- * `STATUS_KEY` only. `storage.local` itself is readable by every context of the extension, content
- * scripts included, so this holds by what the code does, not by an access rule of the storage.
+ * `storage.local` key of the session: `{ token, email }`, or `{ expired: true, email }` once the
+ * server has refused the token (a 401): the marker keeps the address, so the options page can
+ * offer the sign-in again, and holds no token. The token is a secret like an API key: only the
+ * background reads it and sends it (in the `Authorization` header, to the Fripon server), and
+ * nothing hands it to a page: the messages carry no token, and the options page follows
+ * `STATUS_KEY` for the account and reads this key only through `loadExpired` (the address of the
+ * marker). `storage.local` itself is readable by every context of the extension, content scripts
+ * included, so this holds by what the code does, not by an access rule of the storage.
  */
 export const SESSION_KEY = 'fripon:cloud:v1';
 /**
@@ -24,6 +27,14 @@ export interface CloudSession {
   email: string;
 }
 
+/** What a session leaves once the server has refused it: the address, never a token. */
+export interface ExpiredSession {
+  email: string;
+}
+
+/** signed_in: a token is stored. expired: only the marker is. signed_out: nothing usable. */
+export type SessionState = 'signed_in' | 'expired' | 'signed_out';
+
 /** null for anything this version did not write. */
 function parseSession(raw: unknown): CloudSession | null {
   if (!isRecord(raw)) return null;
@@ -32,9 +43,30 @@ function parseSession(raw: unknown): CloudSession | null {
   return { token, email };
 }
 
-/** The stored session, null when signed out. */
+/** null for anything that is not the marker of an expired session. */
+function parseExpired(raw: unknown): ExpiredSession | null {
+  if (!isRecord(raw) || raw.expired !== true || typeof raw.email !== 'string') return null;
+  return { email: raw.email };
+}
+
+const readSession = async (): Promise<unknown> =>
+  (await browser.storage.local.get(SESSION_KEY))[SESSION_KEY];
+
+/** The stored session, null when signed out (or expired: there is no token then). */
 export async function loadSession(): Promise<CloudSession | null> {
-  return parseSession((await browser.storage.local.get(SESSION_KEY))[SESSION_KEY]);
+  return parseSession(await readSession());
+}
+
+/** The marker of an expired session, null when there is none (signed in, or signed out). */
+export async function loadExpired(): Promise<ExpiredSession | null> {
+  return parseExpired(await readSession());
+}
+
+/** Where the session stands, from one read. */
+export async function sessionState(): Promise<SessionState> {
+  const raw = await readSession();
+  if (parseSession(raw)) return 'signed_in';
+  return parseExpired(raw) ? 'expired' : 'signed_out';
 }
 
 /** The stored status, null when there is none (signed out, or not written yet). */
@@ -53,13 +85,35 @@ export function saveSession(session: CloudSession): Promise<void> {
 }
 
 /**
- * Signs out. With `onlyToken`, only when that token is still the stored one: a request that was
- * answered 401 must not sign out a session that replaced its own in the meantime.
+ * Signs out, the marker of an expired session included. With `onlyToken`, only when that token is
+ * still the stored one.
  */
 export function clearSession(onlyToken?: string): Promise<void> {
   return withLock(SESSION_LOCK, async () => {
     if (onlyToken !== undefined && (await loadSession())?.token !== onlyToken) return;
     await browser.storage.local.remove([SESSION_KEY, STATUS_KEY]);
+  });
+}
+
+/**
+ * The server refused `token` (a 401): the token and the status go, a marker with the address
+ * stays. Only while that token is still the stored one: a request that was answered 401 must not
+ * end a session that replaced its own in the meantime.
+ */
+export function expireSession(token: string): Promise<void> {
+  return withLock(SESSION_LOCK, async () => {
+    const session = await loadSession();
+    if (session?.token !== token) return;
+    // The status first: a marker with a status left behind would show a signed-in account.
+    await browser.storage.local.remove(STATUS_KEY);
+    await browser.storage.local.set({ [SESSION_KEY]: { expired: true, email: session.email } });
+  });
+}
+
+/** Forgets the marker of an expired session, and never touches a live session. */
+export function clearExpired(): Promise<void> {
+  return withLock(SESSION_LOCK, async () => {
+    if (await loadExpired()) await browser.storage.local.remove(SESSION_KEY);
   });
 }
 

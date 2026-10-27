@@ -32,8 +32,8 @@ function setup(handler: Handler, token: string | null = 'tok-1') {
   const fetch = vi.fn<(input: string, init: RequestInit) => Promise<Response>>(async (...args) =>
     handler(...args),
   );
-  const clear = vi.fn<(token: string) => Promise<void>>(() => Promise.resolve());
-  const session: SessionAccess = { token: () => Promise.resolve(token), clear };
+  const expire = vi.fn<(token: string) => Promise<void>>(() => Promise.resolve());
+  const session: SessionAccess = { token: () => Promise.resolve(token), expire };
   const client = createCloudClient({ fetch, session, origin: ORIGIN });
   const call = (index = 0) => {
     const [url, init] = fetch.mock.calls[index] as [string, RequestInit];
@@ -45,7 +45,7 @@ function setup(handler: Handler, token: string | null = 'tok-1') {
       body: typeof init.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined,
     };
   };
-  return { client, fetch, clear, call };
+  return { client, fetch, expire, call };
 }
 
 afterEach(() => {
@@ -137,19 +137,20 @@ describe('the account', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('signs the session out on a 401, whatever the call', async () => {
+  it('ends the session (keeping its address) on a 401, whatever the call', async () => {
     const calls: [string, () => Promise<unknown>][] = [];
-    const { client, clear } = setup(() => json(401, { error: 'unauthorized' }));
+    const { client, expire } = setup(() => json(401, { error: 'unauthorized' }));
     calls.push(['me', () => client.me()]);
     calls.push(['search', () => client.search(PHOTO)]);
     calls.push(['review', () => client.review(REVIEW_INPUT)]);
     calls.push(['checkout', () => client.checkout('revendeur_monthly')]);
     calls.push(['portal', () => client.portal()]);
+    calls.push(['deleteAccount', () => client.deleteAccount()]);
     for (const [, run] of calls) {
       expect(await run()).toEqual({ ok: false, reason: 'signed_out' });
     }
-    expect(clear).toHaveBeenCalledTimes(calls.length);
-    expect(clear).toHaveBeenCalledWith('tok-1');
+    expect(expire).toHaveBeenCalledTimes(calls.length);
+    expect(expire).toHaveBeenCalledWith('tok-1');
   });
 
   it('reads an answer it cannot use as network', async () => {
@@ -272,6 +273,8 @@ describe('review', () => {
   it.each([
     [400, { error: 'invalid_photo' }, 'photo'],
     [403, { error: 'not_searched' }, 'not_searched'],
+    // The review is never refused for want of analyses: a 402 here is not the server's contract.
+    [402, { error: 'quota', reason: 'month' }, 'unavailable'],
     [429, { error: 'rate_limited' }, 'rate_limited'],
     [502, { error: 'upstream' }, 'unavailable'],
     [503, { error: 'capacity' }, 'unavailable'],
@@ -367,5 +370,43 @@ describe('timeouts', () => {
     });
     // An unreadable body is still an answer: it is the answer that is not usable.
     expect(await client.me()).toEqual({ ok: false, reason: 'network' });
+  });
+});
+
+describe('deleteAccount', () => {
+  it('asks the server to delete the account with the token, and succeeds on a 204', async () => {
+    const { client, call, expire } = setup(() => new Response(null, { status: 204 }));
+    expect(await client.deleteAccount()).toEqual({ ok: true });
+    expect(call().url).toBe(`${ORIGIN}/v1/account`);
+    expect(call().init.method).toBe('DELETE');
+    expect(call().headers.authorization).toBe('Bearer tok-1');
+    expect(call().body).toBeUndefined();
+    expect(expire).not.toHaveBeenCalled();
+  });
+
+  it('says an active subscription must end first on a 409', async () => {
+    const { client } = setup(() => json(409, { error: 'active_subscription' }));
+    expect(await client.deleteAccount()).toEqual({ ok: false, reason: 'active_subscription' });
+  });
+
+  it('is signed out without a token, and sends nothing', async () => {
+    const { client, fetch } = setup(() => json(204), null);
+    expect(await client.deleteAccount()).toEqual({ ok: false, reason: 'signed_out' });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [409, { error: 'something_else' }, 'unavailable'],
+    [429, { error: 'rate_limited' }, 'rate_limited'],
+    [500, undefined, 'unavailable'],
+    [503, { error: 'capacity' }, 'unavailable'],
+  ])('reads %i %j as %s', async (status, body, reason) => {
+    const { client } = setup(() => json(status, body));
+    expect(await client.deleteAccount()).toEqual({ ok: false, reason });
+  });
+
+  it('reads a call that never got an answer as network', async () => {
+    const { client } = setup(() => Promise.reject(new Error('offline')));
+    expect(await client.deleteAccount()).toEqual({ ok: false, reason: 'network' });
   });
 });

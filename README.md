@@ -49,9 +49,17 @@ faire, au choix dans la page de réglages :
 
 Fripon ne mesure rien. Sans abonnement, il n’a aucun serveur : tes clés restent dans ton navigateur,
 et seules la photo de l’annonce et, pour l’IA, son texte, son prix et les indices relevés partent
-chez Google. Avec l’abonnement, l’adresse de la photo, le titre, la description, le prix et les
-indices relevés partent vers le serveur de Fripon, qui appelle Google avec sa propre clé payante
-(Google ne les utilise pas pour améliorer ses produits) ; ton e-mail sert à te connecter.
+chez Google.
+
+Avec l’abonnement, l’adresse de la photo, le titre, la description, le prix et les indices relevés
+partent vers le serveur de Fripon, qui appelle Google avec sa propre clé payante (Google ne les
+utilise pas pour améliorer ses produits). Le serveur garde ton adresse e-mail, l’état de ton
+abonnement et la liste des photos analysées (2 mois au plus) ; les résultats sont gardés 35 jours
+pour une recherche de photo et 7 jours pour un avis de l’IA ; les adresses IP ne sont gardées que
+sous forme d’empreinte (hash), pour limiter les abus. Fripon s’appuie sur Google (l’analyse), Stripe
+(le paiement), un service d’envoi d’e-mails (les codes de connexion) et un hébergeur. Tu peux
+supprimer ton compte et son historique depuis la page de réglages ; tes factures restent chez
+Stripe.
 
 ## Installer
 

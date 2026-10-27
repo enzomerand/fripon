@@ -1,7 +1,7 @@
 import { createAiReviewer } from '../lib/ai/review';
 import { createCloudAccount } from '../lib/cloud/account';
 import { createCloudClient, storedSession } from '../lib/cloud/client';
-import { loadSession } from '../lib/cloud/session';
+import { clearExpired, loadSession, sessionState } from '../lib/cloud/session';
 import { createRouter, sectionFor } from '../lib/cloud/router';
 import { createCloudGates, createStatusKeeper } from '../lib/cloud/status';
 import { createCloudSteps } from '../lib/cloud/steps';
@@ -65,10 +65,8 @@ const cloudAccount = createCloudAccount({
   openTab: (url) => browser.tabs.create({ url }),
 });
 
-const signedIn = async () => (await loadSession()) !== null;
-
 const paidSteps = createRouter({
-  signedIn,
+  sessionState,
   cloud: { ...cloudSteps, ...createCloudGates(cloudStatus) },
   personal: { searchImage, aiReview, loadGates, loadVisionRemaining },
 });
@@ -87,10 +85,12 @@ const deps: BackgroundDeps = {
     if (result.ok) forgetKeyFailure(provider);
     return result;
   },
-  // The guide, the keys and the credits are the user's own keys' business: a signed-in account
-  // is led to its subscription instead.
+  // The guide, the keys and the credits are the user's own keys' business: a subscriber (signed in,
+  // or whose session expired and has to sign in again) is led to its subscription instead.
   openOptions: async (section) =>
-    openOptionsAt(sectionFor(await signedIn().catch(() => false), section)),
+    openOptionsAt(
+      sectionFor(await sessionState().catch((): 'signed_out' => 'signed_out'), section),
+    ),
   // Chrome calls the toolbar button `action`, Firefox MV2 `browserAction`.
   setBadge: (tabId, verdict) =>
     setToolbarBadge(browser.action ?? browser.browserAction, tabId, verdict),
@@ -121,6 +121,13 @@ export default defineBackground(() => {
     const after = parseSettings(change.newValue).keys;
     for (const provider of PROVIDERS) {
       if (before[provider] !== after[provider]) forgetKeyFailure(provider);
+    }
+    // A key saved is the user choosing their own keys: an expired subscription session no longer
+    // has anything to say.
+    if (
+      PROVIDERS.some((provider) => after[provider] !== '' && after[provider] !== before[provider])
+    ) {
+      void clearExpired().catch(() => undefined);
     }
   });
 

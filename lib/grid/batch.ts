@@ -23,10 +23,10 @@ export interface BatchDeps {
 
 /**
  * finished: every card was gone through. stopped: the user pressed "Arrêter". quota: the cap was
- * reached, the cards that remain were not tried. needsKey: no key, or a refused one. failures: too
- * many searches failed in a row.
+ * reached, the cards that remain were not tried. needsKey: no key, or a refused one. expired: the
+ * subscription's session ended. failures: too many searches failed in a row.
  */
-export type StopReason = 'finished' | 'stopped' | 'quota' | 'needsKey' | 'failures';
+export type StopReason = 'finished' | 'stopped' | 'quota' | 'needsKey' | 'expired' | 'failures';
 
 export interface BatchEnd {
   reason: StopReason;
@@ -113,6 +113,7 @@ export function createBatch(deps: BatchDeps): Batch {
       if (sent) analysed++;
       if (result === 'quota') return { reason: 'quota', analysed };
       if (result === 'needsKey') return { reason: 'needsKey', analysed };
+      if (result === 'expired') return { reason: 'expired', analysed };
       if (sent) failures = result === 'error' ? failures + 1 : 0;
       if (failures >= MAX_CONSECUTIVE_FAILURES) return { reason: 'failures', analysed };
       if (index === ids.length - 1) break;

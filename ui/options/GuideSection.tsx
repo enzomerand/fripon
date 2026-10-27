@@ -1,4 +1,5 @@
 import type { ComponentChildren } from 'preact';
+import { CLOUD_PRIVACY } from './CloudSection';
 
 /** Links to Google open in a new tab, so the options page (and the key being pasted) stays put. */
 function Ext({ href, children }: { href: string; children: ComponentChildren }) {
@@ -32,8 +33,15 @@ export function GuideSection({
       <p class="muted">
         Ce guide sert à créer tes propres clés Google, directement dans Google Cloud : tes photos et
         tes annonces ne passent alors par aucun serveur de Fripon. Avec l'abonnement Fripon, tu n'en
-        as pas besoin.
+        as pas besoin, mais l'analyse passe par le serveur de Fripon :
       </p>
+      <div class="guide__privacy">
+        {CLOUD_PRIVACY.map((paragraph) => (
+          <p class="muted" key={paragraph}>
+            {paragraph}
+          </p>
+        ))}
+      </div>
       <p class="callout callout--warn" role="note">
         <strong>Important :</strong> utilise un projet Google différent pour Gemini et pour Vision.
         Dès qu'un projet a la facturation activée (c'est obligatoire pour Vision), Gemini y passe en

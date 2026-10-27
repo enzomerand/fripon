@@ -3,7 +3,7 @@ import { act } from 'preact/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import { clearSession, saveSession, saveStatusFor } from '../../lib/cloud/session';
+import { clearSession, expireSession, saveSession, saveStatusFor } from '../../lib/cloud/session';
 import type { CloudUsage } from '../../lib/cloud/types';
 import { PLAN_USAGE, TRIAL_USAGE } from '../../lib/cloud/test-helpers';
 import { saveSettings } from '../../lib/settings';
@@ -104,10 +104,13 @@ describe('the subscription section', () => {
     expect(text($('#cloud-title'))).toBe('Abonnement Fripon');
   });
 
-  it('says what is sent to the Fripon server, in both states', async () => {
+  it('says what is sent, kept and shared, and that the account can be deleted, in both states', async () => {
     background({});
     await mount();
-    expect(text($('.cloud__privacy'))).toBe(CLOUD_PRIVACY);
+    const privacy = () => text($('.cloud__privacy'));
+    const paragraphs = () =>
+      [...root.querySelectorAll('.cloud__privacy p')].map((paragraph) => text(paragraph));
+    expect(paragraphs()).toEqual(CLOUD_PRIVACY);
     for (const part of [
       "l'adresse de la photo",
       'le titre',
@@ -117,13 +120,35 @@ describe('the subscription section', () => {
       'serveur de Fripon',
       'clé payante',
       'Google ne les utilise pas pour améliorer ses produits',
+      'ton adresse e-mail',
+      "l'état de ton abonnement",
+      '2 mois au plus',
+      'gardés 35 jours',
+      "ceux d'un avis de l'IA 7 jours",
+      "adresses IP ne sont gardées que sous forme d'empreinte (hash), pour limiter les abus",
+      "Google (l'analyse)",
+      'Stripe (le paiement)',
+      "service d'envoi d'e-mails",
+      'un hébergeur',
+      'supprimer ton compte et son historique depuis cette page',
     ]) {
-      expect(text($('.cloud__privacy'))).toContain(part);
+      expect(privacy()).toContain(part);
     }
+    // No e-mail provider, no host, no country: none of them is decided.
+    expect(privacy()).not.toMatch(
+      /resend|postmark|mailgun|sendgrid|brevo|scaleway|ovh|hetzner|aws|vercel|france|allemagne|irlande|états-unis/i,
+    );
     render(null, root);
     await signIn(TRIAL_USAGE);
     await mount();
-    expect(text($('.cloud__privacy'))).toBe(CLOUD_PRIVACY);
+    expect(paragraphs()).toEqual(CLOUD_PRIVACY);
+  });
+
+  it('says the same in the guide', async () => {
+    background({});
+    await mount();
+    const paragraphs = [...root.querySelectorAll('#guide .guide__privacy p')].map(text);
+    expect(paragraphs).toEqual(CLOUD_PRIVACY);
   });
 });
 
@@ -258,6 +283,72 @@ describe('signed out', () => {
   });
 });
 
+describe('an expired session', () => {
+  async function expired() {
+    await saveSession({ token: 'tok-1', email: 'moi@exemple.fr' });
+    await expireSession('tok-1');
+  }
+
+  it('says so, with the address already in the sign-in form', async () => {
+    await expired();
+    background({});
+    await mount();
+    expect(text(cloud())).toContain('Ta session a expiré. Reconnecte-toi pour continuer.');
+    expect(($('#cloud-email') as HTMLInputElement).value).toBe('moi@exemple.fr');
+    expect(button('Recevoir un code')).toBeDefined();
+    expect(button('Me déconnecter')).toBeUndefined();
+    // A subscriber is not sent to a Google key guide.
+    expect($('#welcome')).toBeNull();
+  });
+
+  it('says nothing of the kind to someone who was never signed in', async () => {
+    background({});
+    await mount();
+    expect(text(cloud())).not.toContain('expiré');
+    expect(($('#cloud-email') as HTMLInputElement).value).toBe('');
+  });
+
+  it('asks for the code of the same address, and the notice goes once signed in again', async () => {
+    await expired();
+    const bg = background({
+      cloudRequestCode: () => ({ ok: true }),
+      cloudVerify: async () => {
+        await saveSession({ token: 'tok-2', email: 'moi@exemple.fr' });
+        return { ok: true };
+      },
+    });
+    await mount();
+    await submit($('#cloud form'));
+    await until(() => $('#cloud-code') !== null);
+    expect(bg.of('cloudRequestCode')).toEqual([
+      { type: 'cloudRequestCode', email: 'moi@exemple.fr' },
+    ]);
+    await type($('#cloud-code') as HTMLInputElement, '123456');
+    await submit($('#cloud form'));
+    await until(() => button('Me déconnecter') !== undefined);
+    expect(text(cloud())).not.toContain('expiré');
+  });
+
+  it('shows up by itself when the session ends while the page is open', async () => {
+    await saveSession({ token: 'tok-1', email: 'moi@exemple.fr' });
+    await saveStatusFor('tok-1', {
+      email: 'moi@exemple.fr',
+      usage: TRIAL_USAGE,
+      subscription: null,
+      checkedAt: Date.now(),
+    });
+    background({});
+    await mount();
+    expect(button('Me déconnecter')).toBeDefined();
+    await act(async () => {
+      await expireSession('tok-1');
+    });
+    await until(() => $('#cloud-email') !== null);
+    expect(text(cloud())).toContain('Ta session a expiré. Reconnecte-toi pour continuer.');
+    expect(($('#cloud-email') as HTMLInputElement).value).toBe('moi@exemple.fr');
+  });
+});
+
 describe('signed in', () => {
   it('shows the address, the trial and the three offers, and asks for a fresh reading', async () => {
     await signIn(TRIAL_USAGE);
@@ -387,6 +478,103 @@ describe('signed in', () => {
     await until(() => $('#cloud-email') !== null);
     expect(bg.of('cloudSignOut')).toHaveLength(1);
     expect(button('Me déconnecter')).toBeUndefined();
+  });
+
+  describe('deleting the account', () => {
+    const CONFIRM =
+      "Supprimer définitivement ton compte Fripon et ton historique d'analyses ? Tes factures restent chez Stripe.";
+
+    it('is a discreet button that asks once more before doing anything', async () => {
+      await signIn(TRIAL_USAGE);
+      const bg = background({});
+      await mount();
+      expect(text(cloud())).not.toContain(CONFIRM);
+      await click(button('Supprimer mon compte'));
+      expect(text(cloud())).toContain(CONFIRM);
+      expect(button('Oui, supprimer')).toBeDefined();
+      expect(bg.of('cloudDeleteAccount')).toHaveLength(0);
+      // The safe answer has the keyboard.
+      expect(document.activeElement).toBe(button('Annuler'));
+    });
+
+    it('changes nothing on "Annuler", and gives the keyboard back to the button', async () => {
+      await signIn(TRIAL_USAGE);
+      const bg = background({});
+      await mount();
+      await click(button('Supprimer mon compte'));
+      await click(button('Annuler'));
+      expect(text(cloud())).not.toContain(CONFIRM);
+      expect(button('Oui, supprimer')).toBeUndefined();
+      expect(document.activeElement).toBe(button('Supprimer mon compte'));
+      expect(bg.of('cloudDeleteAccount')).toHaveLength(0);
+    });
+
+    it('deletes after the confirmation, and goes back to the sign-in form saying so', async () => {
+      await signIn(TRIAL_USAGE);
+      const bg = background({
+        cloudDeleteAccount: async () => {
+          // What the background does on a 204: the session is gone here too.
+          await clearSession();
+          return { ok: true };
+        },
+      });
+      await mount();
+      await click(button('Supprimer mon compte'));
+      await click(button('Oui, supprimer'));
+      await until(() => $('#cloud-email') !== null);
+      expect(bg.of('cloudDeleteAccount')).toHaveLength(1);
+      expect(text(cloud())).toContain(
+        "Ton compte Fripon et l'historique de tes analyses ont été supprimés.",
+      );
+      // Deleted, not expired.
+      expect(text(cloud())).not.toContain('Ta session a expiré');
+      expect(($('#cloud-email') as HTMLInputElement).value).toBe('');
+    });
+
+    it('says to end the subscription first when the server refuses (409), and stays signed in', async () => {
+      await signIn(PLAN_USAGE, { status: 'active', periodEnd: null });
+      background({
+        cloudDeleteAccount: () => ({ ok: false, reason: 'active_subscription' }),
+      });
+      await mount();
+      await click(button('Supprimer mon compte'));
+      await click(button('Oui, supprimer'));
+      await until(
+        () => text($('#cloud .status')) !== '' && !text($('#cloud .status')).endsWith('…'),
+      );
+      expect(text($('#cloud .status'))).toBe(
+        "Résilie d'abord ton abonnement (Gérer mon abonnement). Tu pourras supprimer ton compte une fois la période payée terminée.",
+      );
+      expect(button('Me déconnecter')).toBeDefined();
+      // The confirmation is closed: nothing is asked twice by mistake.
+      expect(button('Oui, supprimer')).toBeUndefined();
+      expect(button('Supprimer mon compte')).toBeDefined();
+    });
+
+    it.each([
+      ['rate_limited', "Trop d'essais. Réessaie dans quelques minutes."],
+      [
+        'unavailable',
+        'Impossible de supprimer ton compte pour le moment. Réessaie dans un instant.',
+      ],
+      ['network', 'Impossible de joindre Fripon. Vérifie ta connexion, puis réessaie.'],
+    ] as const)('says in plain French why it failed (%s)', async (reason, expected) => {
+      await signIn(TRIAL_USAGE);
+      background({ cloudDeleteAccount: () => ({ ok: false, reason }) });
+      await mount();
+      await click(button('Supprimer mon compte'));
+      await click(button('Oui, supprimer'));
+      await until(() => text($('#cloud .status')) === expected);
+    });
+
+    it('says so when the background does not answer', async () => {
+      await signIn(TRIAL_USAGE);
+      vi.spyOn(browser.runtime, 'sendMessage').mockRejectedValue(new Error('gone') as never);
+      await mount();
+      await click(button('Supprimer mon compte'));
+      await click(button('Oui, supprimer'));
+      await until(() => text($('#cloud .status')).includes("n'a pas pu lancer la demande"));
+    });
   });
 
   it('follows the account while a Stripe tab is open, then stops once there is a plan', async () => {

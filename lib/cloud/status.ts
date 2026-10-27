@@ -2,7 +2,7 @@ import type { Gate, Gates } from '../gate';
 import { loadSettings, type AnalysisMode } from '../settings';
 import type { CloudClient } from './client';
 import { STATUS_MAX_AGE_MS } from './config';
-import { loadSession, loadStatus, saveStatusFor } from './session';
+import { loadExpired, loadSession, loadStatus, saveStatusFor } from './session';
 import type { CloudStatus, CloudUsage } from './types';
 
 export interface StatusKeeper {
@@ -13,11 +13,6 @@ export interface StatusKeeper {
    * last snapshot. `maxAgeMs` 0 always asks.
    */
   current(maxAgeMs?: number): Promise<CloudStatus | null>;
-  /**
-   * The stored status when it was read less than `maxAgeMs` ago, null otherwise (or signed out).
-   * Never asks the server: for the steps, which only want to know what the last reading said.
-   */
-  peek(maxAgeMs: number): Promise<CloudStatus | null>;
   /** Takes the usage a search answer carried: the freshest figure there is. */
   record(usage: CloudUsage): Promise<void>;
 }
@@ -69,12 +64,6 @@ export function createStatusKeeper(deps: StatusKeeperDeps): StatusKeeper {
       return snapshot;
     },
 
-    async peek(maxAgeMs) {
-      if ((await loadSession()) === null) return null;
-      const stored = await loadStatus();
-      return stored && now() - stored.checkedAt < maxAgeMs ? stored : null;
-    },
-
     async record(usage) {
       const session = await loadSession();
       if (!session) return;
@@ -108,7 +97,8 @@ export function canAnalyse(usage: CloudUsage): boolean {
  * The gate of both paid steps for a signed-in account: no analysis left is `quota`, then "Au
  * clic" is `manual`, else `ready`. `no_key` is only for no account at all. A usage never read (the
  * server was out of reach) is not a refusal: the step itself will tell the quota or the network
- * failure, so the card never sends a subscriber to add a Google key.
+ * failure, so the card never sends a subscriber to add a Google key. Only a display hint: the
+ * steps ask the server whatever it says, as a photo analysed this month is served even at the cap.
  */
 export function cloudGate(status: CloudStatus | null, mode: AnalysisMode): Gate {
   if (!status) return 'no_key';
@@ -143,6 +133,12 @@ export function createCloudGates(keeper: StatusKeeper): CloudGates {
   return {
     async loadGates() {
       const [status, settings] = await Promise.all([keeper.current(), loadSettings()]);
+      if (!status) {
+        // Reading the account just got a 401: the session is over, the card says so (and never
+        // sends a subscriber to add a Google key).
+        const gate: Gate = (await loadExpired().catch(() => null)) ? 'expired' : 'no_key';
+        return { image: gate, ai: gate };
+      }
       const gate = cloudGate(status, settings.mode);
       return { image: gate, ai: gate };
     },

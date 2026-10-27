@@ -110,6 +110,13 @@ describe('the bar above the results', () => {
     expect(bar()).toBeNull();
   });
 
+  it('is not there while the subscription session is expired', async () => {
+    gate = 'expired';
+    start();
+    await settle();
+    expect(bar()).toBeNull();
+  });
+
   it('is there when the cap is reached: cached photos still cost nothing', async () => {
     gate = 'quota';
     start();

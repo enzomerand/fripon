@@ -18,3 +18,9 @@ export const CLOUD_TIMEOUT_MS = 10_000;
 export const STATUS_MAX_AGE_MS = 60_000;
 /** After the server refused an analysis, the status is read again at most this often. */
 export const STATUS_AFTER_REFUSAL_MS = 10_000;
+/**
+ * After the server refused a photo for want of analyses, that same photo is answered `quota`
+ * without a request for this long (a click skips it). Per photo, never per account: the server
+ * serves a photo already analysed this month for free, even at the cap.
+ */
+export const PHOTO_QUOTA_MEMO_MS = 60_000;
