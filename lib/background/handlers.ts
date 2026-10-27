@@ -8,6 +8,7 @@ import type {
   ResponseFor,
   RuntimeMessage,
   SearchImageResponse,
+  VisionUsage,
 } from '../messages';
 import type { Provider } from '../settings';
 
@@ -17,6 +18,7 @@ export interface BackgroundDeps {
   searchImage(photoUrl: string, cacheOnly: boolean, retry: boolean): Promise<SearchImageResponse>;
   aiReview(input: AiReviewInput, cacheOnly: boolean, retry: boolean): Promise<AiReviewResponse>;
   loadGates(): Promise<Gates>;
+  loadVisionRemaining(): Promise<number | null>;
   checkKey(provider: Provider, key: string): Promise<KeyCheckResult>;
   openOptions(section?: PendingSection): Promise<void>;
 }
@@ -76,6 +78,12 @@ async function respond(message: RuntimeMessage, deps: BackgroundDeps) {
     case 'getGates':
       // When storage cannot be read, behave as if there were no key: nothing is spent.
       return deps.loadGates().catch((): Gates => ({ image: 'no_key', ai: 'no_key' }));
+    case 'getVisionUsage':
+      // A counter that cannot be read says "no count": the page then shows no figure.
+      return deps
+        .loadVisionRemaining()
+        .then((remaining): VisionUsage => ({ remaining }))
+        .catch((): VisionUsage => ({ remaining: null }));
     case 'openOptions':
       await deps.openOptions(message.section).catch(() => undefined);
       return undefined;

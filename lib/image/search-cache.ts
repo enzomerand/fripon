@@ -29,6 +29,12 @@ interface CacheEntry {
 /**
  * The cache key of a photo. Vinted adds a signature to the query string (`?s=...`) that changes
  * for the same picture: only the origin and the path identify it.
+ *
+ * KNOWN LIMIT, left as is for now: the path also carries the size segment (`/310x430/` for a grid
+ * thumbnail, `/f800/` for the photo of the item page). The same picture searched from a results
+ * grid and from its item page therefore has two keys and is paid twice. Unifying them (keeping the
+ * photo's id and dropping the size) is only safe if Vision answers the same for the same picture at
+ * both sizes, and if the id in the path is the same for both: not checked yet.
  */
 export function visionCacheKey(photoUrl: string): string {
   const url = new URL(photoUrl);

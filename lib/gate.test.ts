@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { reserve } from './credits';
-import { imageGate, loadGates } from './gate';
+import { imageGate, loadGates, loadVisionRemaining } from './gate';
 import { DEFAULT_SETTINGS, saveSettings, type Settings } from './settings';
 
 const withKey: Settings = {
@@ -116,5 +116,30 @@ describe('loadGates', () => {
       image: 'ready',
       ai: 'ready',
     });
+  });
+});
+
+describe('loadVisionRemaining', () => {
+  const now = new Date('2026-10-20T21:30:00Z');
+
+  beforeEach(() => {
+    fakeBrowser.reset();
+  });
+
+  it('is the default cap on a fresh install', async () => {
+    expect(await loadVisionRemaining(now)).toBe(1_000);
+  });
+
+  it('counts down with the credits spent, and never goes below zero', async () => {
+    await saveSettings({ caps: { vision: 3 } });
+    await reserve('vision', 2, null, now);
+    expect(await loadVisionRemaining(now)).toBe(1);
+    await reserve('vision', 1, null, now);
+    expect(await loadVisionRemaining(now)).toBe(0);
+  });
+
+  it('is null when the cap was removed', async () => {
+    await saveSettings({ caps: { vision: null } });
+    expect(await loadVisionRemaining(now)).toBeNull();
   });
 });

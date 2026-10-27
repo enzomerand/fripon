@@ -46,3 +46,9 @@ export async function loadGates(now: Date = new Date()): Promise<Gates> {
   ]);
   return { image, ai };
 }
+
+/** Vision credits left in the current period, null without a cap. For display only. */
+export async function loadVisionRemaining(now: Date = new Date()): Promise<number | null> {
+  const settings = await loadSettings();
+  return (await getUsage('vision', settings.caps.vision, now)).remaining;
+}

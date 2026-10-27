@@ -3,7 +3,7 @@ import { createImageAnalyzer, fetchGuardedImage, type PixelResult } from '../lib
 import { createImageSearcher } from '../lib/image/search';
 import { dHash, catalogScore, hashToHex } from '../lib/image/pixels';
 import { handleMessage, isAllowedSender, type BackgroundDeps } from '../lib/background/handlers';
-import { loadGates } from '../lib/gate';
+import { loadGates, loadVisionRemaining } from '../lib/gate';
 import { reviewListing } from '../lib/google/gemini';
 import { checkKey } from '../lib/google/key-check';
 import { webDetect } from '../lib/google/vision';
@@ -51,6 +51,7 @@ const deps: BackgroundDeps = {
   searchImage,
   aiReview,
   loadGates,
+  loadVisionRemaining,
   checkKey: async (provider, key) => {
     const result = await checkKey(provider, key);
     // A key that tests fine: whatever was wrong is fixed, so stop remembering the refusal.

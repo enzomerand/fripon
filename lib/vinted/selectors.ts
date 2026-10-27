@@ -12,6 +12,16 @@ export const ITEM_PATH_PATTERN = /^\/items\/(\d+)(?:-[^/?#]*)?(?:[/?#]|$)/;
 /** Seller link href: `/member/<id>` or `/member/<id>-<login>`. Group 1 is the seller id. */
 export const MEMBER_PATH_PATTERN = /\/member\/(\d+)/;
 
+/**
+ * Root of a result card of the catalogue, the search and the seller's wardrobe:
+ * `product-item-id-<id>` (its parts are `product-item-id-<id>--description`, `--image--img`...).
+ * Group 1 is the item id. The parts share the prefix, so only an exact match is a card.
+ */
+export const PRODUCT_CARD_TESTID_PATTERN = /^product-item-id-(\d+)$/;
+
+/** Root of a result card of the home feed; the item id is only in its link. */
+export const FEED_CARD_TESTID = 'feed-item';
+
 /** Photo testids: `item-photo-<N>` is the wrapper, `item-photo-<N>--img` the picture. */
 export const PHOTO_IMG_TESTID_PATTERN = /^item-photo-(\d+)--img$/;
 
@@ -46,6 +56,25 @@ export const SELECTORS = {
 
   /** Every gallery testid; filter with `PHOTO_IMG_TESTID_PATTERN`. */
   galleryPhotos: '[data-testid^="item-photo-"]',
+} as const;
+
+/**
+ * The result grids. A card is a root (`PRODUCT_CARD_TESTID_PATTERN` or `FEED_CARD_TESTID`) and its
+ * parts are found by testid suffix inside it, so the catalogue and the home feed share them.
+ */
+export const GRID_SELECTORS = {
+  /** Superset of the card roots: also matches their parts, filter with the two root testids. */
+  cardCandidates: '[data-testid^="product-item-id-"], [data-testid="feed-item"]',
+  /** Brand and size lines. A card without it is not a whole card (a promotion, a card still being drawn). */
+  description: '[data-testid$="--description"]',
+  title: '[data-testid$="--description-title"]',
+  price: '[data-testid$="--price-text"]',
+  /** Total with fees and the service fee, under the price: the last block of the card's text. */
+  breakdown: '[data-testid$="--breakdown"]',
+  photo: '[data-testid$="--image--img"]',
+  /** The link that covers the whole card. */
+  overlayLink: '[data-testid$="--overlay-link"]',
+  itemLink: 'a[href*="/items/"]',
 } as const;
 
 /** `data-testid`-based attribute row names, as found in the RSC `attributes[].code` field. */

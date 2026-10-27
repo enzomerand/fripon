@@ -82,6 +82,20 @@ export interface GetGatesRequest {
   type: 'getGates';
 }
 
+/**
+ * Ask how many Vision credits are left in the current period. Only a count: the key and the
+ * counters stay in the background. For display (the confirmation before a batch); the background
+ * still `reserve`s a credit before each paid call.
+ */
+export interface GetVisionUsageRequest {
+  type: 'getVisionUsage';
+}
+
+export interface VisionUsage {
+  /** Credits left before the cap, null when there is no cap (or it could not be read). */
+  remaining: number | null;
+}
+
 /** Parts of the options page a message can point at (the page scrolls to the matching id). */
 export const OPTIONS_SECTIONS = ['guide', 'keys', 'credits'] as const;
 export type OptionsSection = (typeof OPTIONS_SECTIONS)[number];
@@ -109,6 +123,7 @@ export type RuntimeMessage =
   | SearchImageRequest
   | AiReviewRequest
   | GetGatesRequest
+  | GetVisionUsageRequest
   | OpenOptionsRequest
   | TestKeyRequest;
 
@@ -118,6 +133,7 @@ export interface RuntimeResponses {
   searchImage: SearchImageResponse;
   aiReview: AiReviewResponse;
   getGates: Gates;
+  getVisionUsage: VisionUsage;
   openOptions: void;
   testKey: KeyCheckResult;
 }
@@ -154,6 +170,7 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
         (message.retry === undefined || typeof message.retry === 'boolean')
       );
     case 'getGates':
+    case 'getVisionUsage':
       return true;
     case 'openOptions':
       return (

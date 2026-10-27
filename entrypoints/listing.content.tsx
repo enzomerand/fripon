@@ -12,11 +12,16 @@ import {
   type AiDeps,
   type AnalysisDeps,
   type AnalysisResult,
-  type SearchDeps,
 } from '../lib/analysis';
+import {
+  analyzeImageViaBackground,
+  askGates,
+  openOptions,
+  searchDeps,
+} from '../lib/background/client';
 import { imageCheckSearching, imageSearchCanBeRetried } from '../lib/checks/image';
 import type { Gate, Gates } from '../lib/gate';
-import { sendMessage, type OptionsSection } from '../lib/messages';
+import { sendMessage } from '../lib/messages';
 import type { Listing } from '../lib/model';
 import { waitFor } from '../lib/wait';
 import { fetchSeller } from '../lib/vinted/api';
@@ -34,20 +39,7 @@ const HOST_TAG = 'fripon-listing-card';
 /** The host element is reset by WXT (`all: initial`): give it back a block box. */
 const HOST_CSS = ':host { display: block !important; margin: 12px 0 !important; }';
 
-const analysisDeps: AnalysisDeps = {
-  fetchSeller,
-  analyzeImage: (url) => sendMessage({ type: 'analyzeImage', url }),
-};
-
-const searchDeps: SearchDeps = {
-  searchImage: (photoUrl, cacheOnly, retry) =>
-    sendMessage({
-      type: 'searchImage',
-      photoUrl,
-      ...(cacheOnly && { cacheOnly: true }),
-      ...(retry && { retry: true }),
-    }),
-};
+const analysisDeps: AnalysisDeps = { fetchSeller, analyzeImage: analyzeImageViaBackground };
 
 const aiDeps: AiDeps = {
   aiReview: (input, cacheOnly, retry) =>
@@ -58,29 +50,6 @@ const aiDeps: AiDeps = {
       ...(retry && { retry: true }),
     }),
 };
-
-const GATE_WORDS: readonly Gate[] = ['ready', 'no_key', 'quota', 'manual'];
-const NO_GATES: Gates = { image: 'no_key', ai: 'no_key' };
-
-const wordOf = (gate: unknown): Gate =>
-  GATE_WORDS.includes(gate as Gate) ? (gate as Gate) : 'no_key';
-
-/**
- * What the background says about the paid steps. The keys never leave it: this is all we learn.
- * Any failure counts as "no key", the safe state in which nothing paid is attempted.
- */
-async function askGates(): Promise<Gates> {
-  try {
-    const gates = await sendMessage({ type: 'getGates' });
-    return { image: wordOf(gates?.image), ai: wordOf(gates?.ai) };
-  } catch {
-    return NO_GATES;
-  }
-}
-
-function openOptions(section: OptionsSection) {
-  void sendMessage({ type: 'openOptions', section }).catch(() => undefined);
-}
 
 type Ui = Awaited<ReturnType<typeof createShadowRootUi<HTMLElement>>>;
 
