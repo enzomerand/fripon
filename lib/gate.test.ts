@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { reserve } from './credits';
 import { aiGate, imageGate, loadGates } from './gate';
@@ -97,6 +98,33 @@ describe('loadGates', () => {
       image: 'ready',
       ai: 'no_key',
     });
+  });
+
+  it('never lets a counter that cannot be read turn the other gate off', async () => {
+    await saveSettings({ keys: { vision: 'AIzaVision', gemini: 'AIzaGemini' } });
+    const get = browser.storage.local.get.bind(browser.storage.local);
+    const failing = (counter: string) =>
+      vi
+        .spyOn(browser.storage.local, 'get')
+        .mockImplementation(((keys: string) =>
+          String(keys).includes(counter)
+            ? Promise.reject(new Error('storage down'))
+            : get(keys)) as never);
+
+    failing('credits:v1:gemini');
+    expect(await loadGates(now)).toEqual({ image: 'ready', ai: 'no_key' });
+    vi.restoreAllMocks();
+
+    failing('credits:v1:vision');
+    expect(await loadGates(now)).toEqual({ image: 'no_key', ai: 'ready' });
+    vi.restoreAllMocks();
+    expect(await loadGates(now)).toEqual({ image: 'ready', ai: 'ready' });
+  });
+
+  it('rejects when the settings themselves cannot be read: the handler then answers no_key for both', async () => {
+    vi.spyOn(browser.storage.local, 'get').mockRejectedValue(new Error('storage down'));
+    await expect(loadGates(now)).rejects.toThrow('storage down');
+    vi.restoreAllMocks();
   });
 
   it('lifts the quota when the cap is removed', async () => {

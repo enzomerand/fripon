@@ -40,9 +40,15 @@ export function aiGate(settings: Settings, geminiState: UsageState): AiGate {
 /** The gates for right now, from the stored settings and the counters. */
 export async function loadGates(now: Date = new Date()): Promise<Gates> {
   const settings = await loadSettings();
-  const [vision, gemini] = await Promise.all([
-    getUsage('vision', settings.caps.vision, now),
-    getUsage('gemini', settings.caps.gemini, now),
+  // One read, one catch per gate: a counter that cannot be read means "no key" (nothing is
+  // spent) for its own step only, never for the other one.
+  const [image, ai] = await Promise.all([
+    getUsage('vision', settings.caps.vision, now)
+      .then((usage) => imageGate(settings, usage.state))
+      .catch((): ImageGate => 'no_key'),
+    getUsage('gemini', settings.caps.gemini, now)
+      .then((usage) => aiGate(settings, usage.state))
+      .catch((): AiGate => 'no_key'),
   ]);
-  return { image: imageGate(settings, vision.state), ai: aiGate(settings, gemini.state) };
+  return { image, ai };
 }
