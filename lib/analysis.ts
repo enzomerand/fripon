@@ -1,12 +1,13 @@
 import { checkDescription } from './checks/description';
 import { imageCheckForSearch, imageCheckOff, imageCheckSearching } from './checks/image';
-import { checkPhotos } from './checks/photos';
+import { checkPhotos, confirmCatalogPhoto } from './checks/photos';
 import { priceCheckOff } from './checks/price';
 import { checkSeller } from './checks/seller';
 import type { ImageGate } from './gate';
 import { hexToHash } from './image/pixels';
-import type { AnalyzeImageResponse, SearchImageResponse } from './messages';
+import type { AiReviewResponse, AnalyzeImageResponse, SearchImageResponse } from './messages';
 import type {
+  AiReview,
   CheckId,
   CheckResult,
   ImageMatch,
@@ -58,10 +59,13 @@ export interface AnalysisResult {
   /** In display order: image, price, seller, photos, description. */
   checks: CheckResult[];
   /**
-   * The same rows before `capLocalHeuristics`: whether a local row may be red depends on the image
-   * matches, so a later image search (after a click) must start from these, not from `checks`.
+   * The same rows before `capLocalHeuristics` and before the AI review: whether a local row may be
+   * red depends on the image matches, and the AI confirmation is applied on top, so a later image
+   * search or review must start from these, not from `checks`.
    */
   rawChecks: CheckResult[];
+  /** What the AI said, null until a review came back. Only `catalogPhoto` can change the rows. */
+  aiReview: AiReview | null;
 }
 
 interface PhotoAnalysis {
@@ -110,15 +114,28 @@ export async function searchPhoto(
 }
 
 /**
- * Caps the local rows by what the image row found, then decides the verdict. This is the one path
- * both `analyzeListing` and `withImageSearch` end in, so the price comparison of lot 3b belongs
- * here: the price row and `priceRatio` depend on the original price of the exact match, and
- * building them anywhere else would leave the "Au clic" path with the old row and a null ratio.
+ * Applies the AI review to the rows, caps the local rows by what the image row found, then decides
+ * the verdict. This is the one path `analyzeListing`, `withImageSearch` and `withAiReview` all end
+ * in, so the steps compose in any order: each one swaps its own input and the rest is redone from
+ * the stored raw rows. The price comparison belongs here too: the price row and `priceRatio`
+ * depend on the image matches, and building them anywhere else would leave the "Au clic" path
+ * with the old row and a null ratio.
+ *
+ * The AI only ever confirms a signal: a `catalogPhoto: true` makes the catalogue signal of the
+ * photos row strong, and the verdict rules do the rest. It never decides the verdict itself.
  */
-function assemble(rawChecks: CheckResult[]): AnalysisResult {
+function assemble(rawChecks: CheckResult[], aiReview: AiReview | null): AnalysisResult {
   const imageMatches = rawChecks.find((check) => check.id === 'image')?.matches ?? [];
-  const checks = capLocalHeuristics(rawChecks, imageMatches);
-  return { verdict: computeVerdict({ checks, imageMatches, priceRatio: null }), checks, rawChecks };
+  const reviewed = aiReview?.catalogPhoto
+    ? rawChecks.map((check) => (check.id === 'photos' ? confirmCatalogPhoto(check) : check))
+    : rawChecks;
+  const checks = capLocalHeuristics(reviewed, imageMatches);
+  return {
+    verdict: computeVerdict({ checks, imageMatches, priceRatio: null }),
+    checks,
+    rawChecks,
+    aiReview,
+  };
 }
 
 /**
@@ -130,7 +147,19 @@ export function withImageSearch(
   response: SearchImageResponse,
 ): AnalysisResult {
   const image = imageCheckForSearch(response);
-  return assemble(result.rawChecks.map((check) => (check.id === 'image' ? image : check)));
+  return assemble(
+    result.rawChecks.map((check) => (check.id === 'image' ? image : check)),
+    result.aiReview,
+  );
+}
+
+/**
+ * The analysis again, with what the AI reviewed. Only an answer that holds a review changes
+ * anything: no key, no credits or a failure leave the result as it is (the card says why in its
+ * AI block). Nothing is recomputed but the rows and the verdict.
+ */
+export function withAiReview(result: AnalysisResult, response: AiReviewResponse): AnalysisResult {
+  return response.status === 'ok' ? assemble(result.rawChecks, response.review) : result;
 }
 
 /** Runs `fn` over `items`, at most `limit` at a time, keeping the order of the results. */
@@ -249,11 +278,14 @@ export async function analyzeListing(
     return analysis ? [{ itemId: item.id, hash: analysis.hash }] : [];
   });
 
-  return assemble([
-    imageGate === 'ready' ? imageCheckSearching() : imageCheckOff(imageGate),
-    priceCheckOff(),
-    seller ? guarded('seller', () => checkSeller(seller, others)) : sellerCheckOff(sellerError),
-    guarded('photos', () => checkPhotos({ main, others })),
-    guarded('description', () => checkDescription(listing)),
-  ]);
+  return assemble(
+    [
+      imageGate === 'ready' ? imageCheckSearching() : imageCheckOff(imageGate),
+      priceCheckOff(),
+      seller ? guarded('seller', () => checkSeller(seller, others)) : sellerCheckOff(sellerError),
+      guarded('photos', () => checkPhotos({ main, others })),
+      guarded('description', () => checkDescription(listing)),
+    ],
+    null,
+  );
 }
