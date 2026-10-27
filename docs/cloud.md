@@ -27,7 +27,7 @@ Le domaine n'est pas définitif : il se change à trois endroits (`PUBLIC_URL` d
 
 Sur le VPS (en root, ou avec `sudo` là où `/opt` l'exige) :
 
-1. `git clone <url du dépôt> /opt/fripon-cloud`, puis `cd /opt/fripon-cloud`.
+1. `git clone https://github.com/enzomerand/fripon.git /opt/fripon-cloud`, puis `cd /opt/fripon-cloud`.
 2. `cp server/.env.example server/.env && chmod 600 server/.env`, puis remplis-le (`openssl rand -hex 32` pour `AUTH_SECRET`). Le serveur refuse de démarrer tant qu'une variable obligatoire manque, et les liste toutes dans ses logs.
 3. `docker compose -f server/compose.yml up -d --build`. Ça crée le réseau `friponnet` et le volume `fripon-cloud-data`. Vérifie : `docker compose -f server/compose.yml ps` (état `healthy`) et `... logs fripon-cloud`.
 4. Caddy : ajoute le bloc de `server/caddy/fripon.caddy` à `/opt/reverse-proxy/Caddyfile`, et les lignes du réseau externe `friponnet` (expliquées en tête de ce fichier) au compose de `/opt/reverse-proxy`, puis `docker compose up -d` dans ce dossier.
