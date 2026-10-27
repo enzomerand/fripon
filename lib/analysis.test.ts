@@ -334,6 +334,47 @@ describe('searchPhoto', () => {
   });
 });
 
+describe('the price row', () => {
+  const priceOf = (result: { checks: CheckResult[] }) =>
+    result.checks.find((c) => c.id === 'price');
+  const analysed = () => analyzeListing(listing, deps(), { imageGate: 'manual' });
+
+  it('starts as "not compared" with nothing to compare to', async () => {
+    expect(priceOf(await analysed())).toEqual({
+      id: 'price',
+      status: 'off',
+      tag: 'Non comparé',
+      detail: "Pas de prix d'origine à comparer.",
+      signals: [],
+    });
+  });
+
+  it('sends the buyer to the image links once the search found the photo, whichever step ran last', async () => {
+    const before = await analysed();
+    const detail =
+      'Shein et Temu cachent leurs prix aux robots : compare toi-même avec les liens ci-dessus.';
+    const searched = withImageSearch(before, found(exactMatch));
+    expect(priceOf(searched)).toMatchObject({ status: 'off', tag: 'Non comparé', detail });
+    expect(searched.rawChecks.find((c) => c.id === 'price')).toEqual(priceOf(searched));
+    // A review on top of it, or a lookalike only, changes nothing of that.
+    expect(priceOf(withAiReview(searched, { status: 'no_key' }))).toMatchObject({ detail });
+    expect(priceOf(withImageSearch(before, found(similarMatch)))).toMatchObject({ detail });
+  });
+
+  it('goes back to "nothing to compare" when a new search finds nothing or fails', async () => {
+    const searched = withImageSearch(await analysed(), found(exactMatch));
+    const nothing = withImageSearch(searched, found());
+    expect(priceOf(nothing)?.detail).toBe("Pas de prix d'origine à comparer.");
+    const failed = withImageSearch(searched, { status: 'error', reason: 'network' });
+    expect(priceOf(failed)?.detail).toBe("Pas de prix d'origine à comparer.");
+  });
+
+  it('never gives a signal, so it cannot move the verdict', async () => {
+    const searched = withImageSearch(await analysed(), found(exactMatch));
+    expect(priceOf(searched)?.signals).toEqual([]);
+  });
+});
+
 describe('askAiReview', () => {
   const okReview: AiReviewResponse = {
     status: 'ok',
@@ -408,7 +449,7 @@ describe('withImageSearch', () => {
   const analysed = (imageGate: 'ready' | 'manual', d = withCopies()) =>
     analyzeListing(listing, d, { imageGate });
 
-  it('replaces the image row and redoes the verdict, nothing else', async () => {
+  it('replaces the image row (and the price row that follows it) and redoes the verdict, nothing else', async () => {
     const before = await analysed('manual');
     expect(before.verdict.level).toBe('review');
     expect(before.checks[0]).toMatchObject({ action: 'run_image_search' });
@@ -423,7 +464,9 @@ describe('withImageSearch', () => {
       'photos',
       'description',
     ]);
-    expect(after.checks[1]).toEqual(before.checks[1]);
+    // The price row follows the image matches (see the price row tests).
+    expect(after.checks[1]).toMatchObject({ id: 'price', tag: 'Non comparé' });
+    expect(after.checks[1]?.detail).not.toBe(before.checks[1]?.detail);
     expect(after.checks[4]).toEqual(before.checks[4]);
   });
 

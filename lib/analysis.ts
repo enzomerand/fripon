@@ -2,7 +2,7 @@ import { buildReviewInput, type AiReviewInput } from './ai/input';
 import { checkDescription } from './checks/description';
 import { imageCheckForSearch, imageCheckOff, imageCheckSearching } from './checks/image';
 import { checkPhotos, confirmCatalogPhoto } from './checks/photos';
-import { priceCheckOff } from './checks/price';
+import { priceCheck } from './checks/price';
 import { checkSeller } from './checks/seller';
 import type { ImageGate } from './gate';
 import { hexToHash } from './image/pixels';
@@ -155,8 +155,10 @@ export async function askAiReview(
  * The AI only ever confirms a signal: a `catalogPhoto: true` makes the catalogue signal of the
  * photos row strong, and the verdict rules do the rest. It never decides the verdict itself.
  */
-function assemble(rawChecks: CheckResult[], aiReview: AiReview | null): AnalysisResult {
-  const imageMatches = rawChecks.find((check) => check.id === 'image')?.matches ?? [];
+function assemble(rows: CheckResult[], aiReview: AiReview | null): AnalysisResult {
+  const imageMatches = rows.find((check) => check.id === 'image')?.matches ?? [];
+  // The price row only depends on the image matches (see `priceCheck`).
+  const rawChecks = rows.map((check) => (check.id === 'price' ? priceCheck(imageMatches) : check));
   const reviewed = aiReview?.catalogPhoto
     ? rawChecks.map((check) => (check.id === 'photos' ? confirmCatalogPhoto(check) : check))
     : rawChecks;
@@ -312,7 +314,7 @@ export async function analyzeListing(
   return assemble(
     [
       imageGate === 'ready' ? imageCheckSearching() : imageCheckOff(imageGate),
-      priceCheckOff(),
+      priceCheck([]),
       seller ? guarded('seller', () => checkSeller(seller, others)) : sellerCheckOff(sellerError),
       guarded('photos', () => checkPhotos({ main, others })),
       guarded('description', () => checkDescription(listing)),
