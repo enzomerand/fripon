@@ -1,16 +1,19 @@
 import type { AiReviewInput } from '../ai/input';
+import type { CloudAccount } from '../cloud/account';
+import type { CloudStatus, LinkResult, RequestCodeResult, VerifyResult } from '../cloud/types';
 import { isVintedPageUrl } from '../vinted/domains';
 import type { BadgeVerdict } from './badge';
 import type { Gates } from '../gate';
 import type { KeyCheckResult } from '../google/key-check';
 import type { PendingSection } from '../options-nav';
-import type {
-  AiReviewResponse,
-  AnalyzeImageResponse,
-  ResponseFor,
-  RuntimeMessage,
-  SearchImageResponse,
-  VisionUsage,
+import {
+  EXTENSION_PAGE_ONLY,
+  type AiReviewResponse,
+  type AnalyzeImageResponse,
+  type ResponseFor,
+  type RuntimeMessage,
+  type SearchImageResponse,
+  type VisionUsage,
 } from '../messages';
 import type { Provider } from '../settings';
 
@@ -24,6 +27,8 @@ export interface BackgroundDeps {
   checkKey(provider: Provider, key: string): Promise<KeyCheckResult>;
   openOptions(section?: PendingSection): Promise<void>;
   setBadge(tabId: number, verdict: BadgeVerdict | null): Promise<void>;
+  /** The Fripon Cloud account (sign-in, status, billing), for the options page. */
+  cloud: CloudAccount;
 }
 
 export interface MessageSender {
@@ -47,10 +52,10 @@ export interface OwnIdentity {
 }
 
 /**
- * Only our own content scripts and pages may use the background. Testing a key is further
- * limited to the extension's own pages: a content script runs in the context of a web page. The
- * badge is the other way round: it is for a content script in the top frame of a real tab (not
- * `TAB_ID_NONE`, -1) on a Vinted page.
+ * Only our own content scripts and pages may use the background. Testing a key, and everything to
+ * do with the Fripon Cloud account, is further limited to the extension's own pages: a content
+ * script runs in the context of a web page. The badge is the other way round: it is for a content
+ * script in the top frame of a real tab (not `TAB_ID_NONE`, -1) on a Vinted page.
  */
 export function isAllowedSender(
   message: RuntimeMessage,
@@ -58,7 +63,7 @@ export function isAllowedSender(
   own: OwnIdentity,
 ): boolean {
   if (sender.id !== own.id) return false;
-  if (message.type === 'testKey') {
+  if (EXTENSION_PAGE_ONLY.includes(message.type)) {
     return typeof sender.url === 'string' && sender.url.startsWith(own.origin);
   }
   if (message.type === 'setVerdictBadge') {
@@ -119,5 +124,25 @@ async function respond(message: RuntimeMessage, deps: BackgroundDeps, context: M
       return undefined;
     case 'testKey':
       return deps.checkKey(message.provider, message.key);
+    // The account never rejects either; a lost answer reads as "could not reach the server".
+    case 'cloudStatus':
+      return deps.cloud.status().catch((): CloudStatus | null => null);
+    case 'cloudRequestCode':
+      return deps.cloud
+        .requestCode(message.email)
+        .catch((): RequestCodeResult => ({ ok: false, reason: 'network' }));
+    case 'cloudVerify':
+      return deps.cloud
+        .verify(message.email, message.code)
+        .catch((): VerifyResult => ({ ok: false, reason: 'network' }));
+    case 'cloudSignOut':
+      await deps.cloud.signOut().catch(() => undefined);
+      return undefined;
+    case 'cloudCheckout':
+      return deps.cloud
+        .checkout(message.price)
+        .catch((): LinkResult => ({ ok: false, reason: 'network' }));
+    case 'cloudPortal':
+      return deps.cloud.portal().catch((): LinkResult => ({ ok: false, reason: 'network' }));
   }
 }

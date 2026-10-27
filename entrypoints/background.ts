@@ -1,4 +1,10 @@
 import { createAiReviewer } from '../lib/ai/review';
+import { createCloudAccount } from '../lib/cloud/account';
+import { createCloudClient, storedSession } from '../lib/cloud/client';
+import { loadSession } from '../lib/cloud/session';
+import { createRouter, sectionFor } from '../lib/cloud/router';
+import { createCloudGates, createStatusKeeper } from '../lib/cloud/status';
+import { createCloudSteps } from '../lib/cloud/steps';
 import { createImageAnalyzer, fetchGuardedImage, type PixelResult } from '../lib/image/analyzer';
 import { createImageSearcher } from '../lib/image/search';
 import { dHash, catalogScore, hashToHex } from '../lib/image/pixels';
@@ -42,6 +48,31 @@ const searchImage = createImageSearcher({ fetchPhoto, webDetect });
 
 const aiReview = createAiReviewer({ fetchPhoto, reviewListing });
 
+// Fripon Cloud: signed in, the paid steps go to the Fripon server instead of the user's own keys.
+const cloudClient = createCloudClient({
+  fetch: (input, init) => fetch(input, init),
+  session: storedSession,
+});
+const cloudStatus = createStatusKeeper({ client: cloudClient });
+const cloudSteps = createCloudSteps({
+  client: cloudClient,
+  status: cloudStatus,
+  token: async () => (await loadSession())?.token ?? null,
+});
+const cloudAccount = createCloudAccount({
+  client: cloudClient,
+  status: cloudStatus,
+  openTab: (url) => browser.tabs.create({ url }),
+});
+
+const signedIn = async () => (await loadSession()) !== null;
+
+const paidSteps = createRouter({
+  signedIn,
+  cloud: { ...cloudSteps, ...createCloudGates(cloudStatus) },
+  personal: { searchImage, aiReview, loadGates, loadVisionRemaining },
+});
+
 function forgetKeyFailure(provider: Provider) {
   if (provider === 'vision') searchImage.forgetKeyFailure();
   else aiReview.forgetKeyFailure();
@@ -49,20 +80,21 @@ function forgetKeyFailure(provider: Provider) {
 
 const deps: BackgroundDeps = {
   analyzeImage,
-  searchImage,
-  aiReview,
-  loadGates,
-  loadVisionRemaining,
+  ...paidSteps,
   checkKey: async (provider, key) => {
     const result = await checkKey(provider, key);
     // A key that tests fine: whatever was wrong is fixed, so stop remembering the refusal.
     if (result.ok) forgetKeyFailure(provider);
     return result;
   },
-  openOptions: openOptionsAt,
+  // The guide, the keys and the credits are the user's own keys' business: a signed-in account
+  // is led to its subscription instead.
+  openOptions: async (section) =>
+    openOptionsAt(sectionFor(await signedIn().catch(() => false), section)),
   // Chrome calls the toolbar button `action`, Firefox MV2 `browserAction`.
   setBadge: (tabId, verdict) =>
     setToolbarBadge(browser.action ?? browser.browserAction, tabId, verdict),
+  cloud: cloudAccount,
 };
 
 export default defineBackground(() => {

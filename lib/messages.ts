@@ -1,6 +1,14 @@
 import { browser } from 'wxt/browser';
 import { isAiReviewInput, type AiReviewInput } from './ai/input';
 import { BADGES, type BadgeVerdict } from './background/badge';
+import {
+  PRICE_KEYS,
+  type CloudStatus,
+  type LinkResult,
+  type PriceKey,
+  type RequestCodeResult,
+  type VerifyResult,
+} from './cloud/types';
 import type { Gates } from './gate';
 import type { GeminiFailure } from './google/gemini';
 import type { KeyCheckResult } from './google/key-check';
@@ -98,7 +106,7 @@ export interface VisionUsage {
 }
 
 /** Parts of the options page a message can point at (the page scrolls to the matching id). */
-export const OPTIONS_SECTIONS = ['guide', 'keys', 'credits'] as const;
+export const OPTIONS_SECTIONS = ['guide', 'keys', 'credits', 'cloud'] as const;
 export type OptionsSection = (typeof OPTIONS_SECTIONS)[number];
 
 /** Open the options page (or bring the open one to the front), at `section` when given. */
@@ -131,6 +139,57 @@ export interface TestKeyRequest {
   key: string;
 }
 
+/**
+ * The Fripon Cloud subscription. Every one of these is only accepted from the extension's own
+ * pages (the options page), never from a content script: the account is not for a web page's
+ * context. The session token stays in the background; the options page only ever gets a status.
+ */
+
+/** Ask the server for the account's plan and usage again, and answer with the status (null: signed out). */
+export interface CloudStatusRequest {
+  type: 'cloudStatus';
+}
+
+/** Ask for a 6-digit sign-in code by e-mail. */
+export interface CloudRequestCodeRequest {
+  type: 'cloudRequestCode';
+  email: string;
+}
+
+/** Sign in with the code that came by e-mail. */
+export interface CloudVerifyRequest {
+  type: 'cloudVerify';
+  email: string;
+  code: string;
+}
+
+/** Sign out (the session is gone here whatever the server says). */
+export interface CloudSignOutRequest {
+  type: 'cloudSignOut';
+}
+
+/** Open Stripe Checkout for `price` (or the customer portal if already subscribed) in a new tab. */
+export interface CloudCheckoutRequest {
+  type: 'cloudCheckout';
+  price: PriceKey;
+}
+
+/** Open the Stripe customer portal in a new tab. */
+export interface CloudPortalRequest {
+  type: 'cloudPortal';
+}
+
+/** The messages that only an extension page may send. */
+export const EXTENSION_PAGE_ONLY: readonly RuntimeMessage['type'][] = [
+  'testKey',
+  'cloudStatus',
+  'cloudRequestCode',
+  'cloudVerify',
+  'cloudSignOut',
+  'cloudCheckout',
+  'cloudPortal',
+];
+
 /** Every message the background understands. Add new requests here. */
 export type RuntimeMessage =
   | AnalyzeImageRequest
@@ -140,7 +199,13 @@ export type RuntimeMessage =
   | GetVisionUsageRequest
   | OpenOptionsRequest
   | SetVerdictBadgeRequest
-  | TestKeyRequest;
+  | TestKeyRequest
+  | CloudStatusRequest
+  | CloudRequestCodeRequest
+  | CloudVerifyRequest
+  | CloudSignOutRequest
+  | CloudCheckoutRequest
+  | CloudPortalRequest;
 
 /** Response type of each message, keyed by `type`. */
 export interface RuntimeResponses {
@@ -152,6 +217,12 @@ export interface RuntimeResponses {
   openOptions: void;
   setVerdictBadge: void;
   testKey: KeyCheckResult;
+  cloudStatus: CloudStatus | null;
+  cloudRequestCode: RequestCodeResult;
+  cloudVerify: VerifyResult;
+  cloudSignOut: void;
+  cloudCheckout: LinkResult;
+  cloudPortal: LinkResult;
 }
 
 export type ResponseFor<M extends RuntimeMessage> = RuntimeResponses[M['type']];
@@ -170,6 +241,11 @@ function isBadgeVerdict(value: unknown): value is BadgeVerdict {
   );
 }
 
+/** An address as typed: bounded (the server refuses more than 254 characters anyway), not blank. */
+function isEmailText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '' && value.length <= 254;
+}
+
 /** Narrowing guard for the background's `onMessage` listener. */
 export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   if (typeof value !== 'object' || value === null) return false;
@@ -184,6 +260,9 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
     verdict?: unknown;
     provider?: unknown;
     key?: unknown;
+    email?: unknown;
+    code?: unknown;
+    price?: unknown;
   };
   switch (message.type) {
     case 'analyzeImage':
@@ -215,6 +294,18 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
         (message.provider === 'vision' || message.provider === 'gemini') &&
         typeof message.key === 'string'
       );
+    case 'cloudStatus':
+    case 'cloudSignOut':
+    case 'cloudPortal':
+      return true;
+    case 'cloudRequestCode':
+      return isEmailText(message.email);
+    case 'cloudVerify':
+      return (
+        isEmailText(message.email) && typeof message.code === 'string' && message.code.length <= 16
+      );
+    case 'cloudCheckout':
+      return PRICE_KEYS.includes(message.price as PriceKey);
     default:
       return false;
   }

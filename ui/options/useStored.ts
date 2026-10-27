@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { browser } from 'wxt/browser';
+import { STATUS_KEY, loadStatus } from '../../lib/cloud/session';
+import type { CloudStatus } from '../../lib/cloud/types';
 import { CREDITS_KEY_PREFIX, getUsage, type Usage } from '../../lib/credits';
 import { SETTINGS_KEY, loadSettings, type Provider, type Settings } from '../../lib/settings';
 import { UI_STATE_KEY, loadUiState, type UiState } from '../../lib/ui-state';
@@ -9,14 +11,17 @@ export interface Stored {
   settings: Settings;
   usage: Record<Provider, Usage>;
   ui: UiState;
+  /** The Fripon Cloud account without its token, null when signed out. */
+  cloud: CloudStatus | null;
   /** When it was read: the reference for "à 9 h", "le 1er novembre"... */
   now: Date;
 }
 
 /**
- * The stored settings and credit counters, kept up to date: it re-reads whenever either changes
- * (this page, another options tab, or the background spending a credit). The page only reads the
- * counters; the background is the one that writes them.
+ * The stored settings, credit counters and subscription status, kept up to date: it re-reads
+ * whenever one changes (this page, another options tab, or the background spending a credit or
+ * reading the account). The page only reads the counters and the status; the background is the
+ * one that writes them.
  */
 export function useStored() {
   const [stored, setStored] = useState<Stored | null>(null);
@@ -28,13 +33,17 @@ export function useStored() {
     const mine = ++latest.current;
     try {
       const now = new Date();
-      const [settings, ui] = await Promise.all([loadSettings(), loadUiState()]);
+      const [settings, ui, cloud] = await Promise.all([
+        loadSettings(),
+        loadUiState(),
+        loadStatus(),
+      ]);
       const [vision, gemini] = await Promise.all([
         getUsage('vision', settings.caps.vision, now),
         getUsage('gemini', settings.caps.gemini, now),
       ]);
       if (mine !== latest.current) return;
-      setStored({ settings, usage: { vision, gemini }, ui, now });
+      setStored({ settings, usage: { vision, gemini }, ui, cloud, now });
       setFailed(false);
     } catch {
       if (mine === latest.current) setFailed(true);
@@ -46,7 +55,11 @@ export function useStored() {
     const onChanged = (changes: Record<string, unknown>, area: string) => {
       if (area !== 'local') return;
       const relevant = Object.keys(changes).some(
-        (k) => k === SETTINGS_KEY || k === UI_STATE_KEY || k.startsWith(CREDITS_KEY_PREFIX),
+        (k) =>
+          k === SETTINGS_KEY ||
+          k === UI_STATE_KEY ||
+          k === STATUS_KEY ||
+          k.startsWith(CREDITS_KEY_PREFIX),
       );
       if (relevant) void reload();
     };

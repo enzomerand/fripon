@@ -6,7 +6,7 @@
 
 <p align="center">
   Repère le dropshipping et les annonces douteuses sur Vinted, directement sur la page.<br>
-  Gratuit · Open source · Sans serveur · Chrome, Safari (macOS), Firefox
+  Gratuit avec tes clés Google, ou par abonnement · Open source · Chrome, Safari (macOS), Firefox
 </p>
 
 ---
@@ -29,18 +29,29 @@ Fripon ajoute une carte sur chaque annonce que tu ouvres : un verdict en couleur
 
 ## Coûts
 
-Pas d’abonnement ni de compte. La recherche de photo et l’IA utilisent **tes propres clés Google** :
+Les vérifications gratuites ne demandent rien. Pour la recherche de photo et l’IA, deux façons de
+faire, au choix dans la page de réglages :
 
-- **Google Vision** : 1 000 recherches gratuites par mois, puis environ 3,50 $ les 1 000. Fripon
-  s’arrête à 1 000 par mois (modifiable) et garde les recherches récentes en cache 7 jours.
-- **Gemini** : gratuit, dans un projet Google Cloud sans facturation.
+- **Tes propres clés Google**, sans compte ni abonnement :
+  - **Google Vision** : 1 000 recherches gratuites par mois, puis environ 3,50 $ les 1 000. Fripon
+    s’arrête à 1 000 par mois (modifiable) et garde les recherches récentes en cache 7 jours.
+  - **Gemini** : gratuit, dans un projet Google Cloud sans facturation.
 
-La page de réglages guide pas à pas la création des clés.
+  La page de réglages guide pas à pas la création des clés.
+
+- **L’abonnement Fripon**, sans clé à créer : tu te connectes avec ton e-mail (un code, pas de mot de
+  passe) et Fripon s’occupe de la recherche de photo et de l’IA. 15 analyses sont offertes pour
+  essayer, puis **Essentiel** (2,99 €/mois ou 29,99 €/an, 300 analyses par mois, 40 par jour) ou
+  **Revendeur** (6,99 €/mois, 1 000 analyses par mois, 100 par jour). Une analyse, c’est une
+  annonce : la revoir dans le mois ne compte pas.
 
 ## Vie privée
 
-Fripon n’a aucun serveur et ne mesure rien. Tes clés restent dans ton navigateur. Seules la photo de
-l’annonce et, pour l’IA, son texte, son prix et les indices relevés partent chez Google.
+Fripon ne mesure rien. Sans abonnement, il n’a aucun serveur : tes clés restent dans ton navigateur,
+et seules la photo de l’annonce et, pour l’IA, son texte, son prix et les indices relevés partent
+chez Google. Avec l’abonnement, l’adresse de la photo, le titre, la description, le prix et les
+indices relevés partent vers le serveur de Fripon, qui appelle Google avec sa propre clé payante
+(Google ne les utilise pas pour améliorer ses produits) ; ton e-mail sert à te connecter.
 
 ## Installer
 
