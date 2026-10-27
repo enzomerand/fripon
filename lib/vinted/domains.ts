@@ -36,3 +36,18 @@ export const VINTED_ITEM_MATCHES = VINTED_HOSTS.map((host) => `https://www.${hos
  * feed) except the item pages, which have their own card (`VINTED_ITEM_MATCHES`).
  */
 export const VINTED_PAGE_MATCHES = VINTED_HOSTS.map((host) => `https://www.${host}/*`);
+
+/**
+ * Whether `url` is a page of Vinted: https, and exactly `<host>` or `www.<host>` for one of
+ * `VINTED_HOSTS` (not a subdomain, not a look-alike such as `vinted.fr.evil.test`). Never throws.
+ */
+export function isVintedPageUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'https:') return false;
+  return VINTED_HOSTS.some((host) => parsed.hostname === host || parsed.hostname === `www.${host}`);
+}
