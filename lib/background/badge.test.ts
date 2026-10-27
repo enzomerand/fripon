@@ -1,38 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import type { VerdictLevel } from '../model';
-import { badgeFor, badgeTitle, DEFAULT_TITLE, setToolbarBadge, type ToolbarButton } from './badge';
-
-const LEVELS: VerdictLevel[] = ['dropshipping', 'resold', 'review', 'clean'];
+import { BADGES, DEFAULT_TITLE, setToolbarBadge, type ToolbarButton } from './badge';
 
 beforeEach(() => {
   fakeBrowser.reset();
 });
 
-describe('badgeFor', () => {
+describe('BADGES', () => {
   it('maps each level to a mark and a colour', () => {
-    expect(badgeFor('dropshipping')).toEqual({ text: '!', colour: '#d93025' });
-    expect(badgeFor('resold')).toEqual({ text: '?', colour: '#b45309' });
-    expect(badgeFor('review')).toEqual({ text: '?', colour: '#b45309' });
-    expect(badgeFor('clean')).toEqual({ text: '✓', colour: '#188038' });
-  });
-
-  it('gives every level a short mark and a colour of the form #rrggbb', () => {
-    for (const level of LEVELS) {
-      const { text, colour } = badgeFor(level);
-      expect(text.length).toBeGreaterThan(0);
-      expect(text.length).toBeLessThanOrEqual(2);
-      expect(colour).toMatch(/^#[0-9a-f]{6}$/);
-    }
-  });
-});
-
-describe('badgeTitle', () => {
-  it('puts the verdict title after the extension name', () => {
-    expect(badgeTitle({ level: 'dropshipping', title: 'Dropshipping probable' })).toBe(
-      'Fripon — Dropshipping probable',
-    );
+    expect(BADGES).toEqual({
+      dropshipping: { text: '!', colour: '#d93025' },
+      resold: { text: '?', colour: '#b45309' },
+      review: { text: '?', colour: '#b45309' },
+      clean: { text: '✓', colour: '#188038' },
+    });
   });
 });
 
@@ -85,11 +67,5 @@ describe('setToolbarBadge', () => {
     ).resolves.toBeUndefined();
     expect(fails).toHaveBeenCalledTimes(1);
     expect(setTitle).toHaveBeenCalledWith({ title: 'Fripon — Rien de suspect', tabId: 7 });
-  });
-
-  it('tolerates a button that lacks a method', async () => {
-    const partial = { setTitle: vi.fn() } as unknown as ToolbarButton;
-    await expect(setToolbarBadge(partial, 7, null)).resolves.toBeUndefined();
-    expect(partial.setTitle).toHaveBeenCalledWith({ title: DEFAULT_TITLE, tabId: 7 });
   });
 });

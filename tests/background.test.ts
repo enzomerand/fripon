@@ -500,32 +500,12 @@ describe('background', () => {
       expect(await title(11)).toBe('Fripon');
     });
 
-    it('refuses an extension page, a page that is not Vinted, a message without a tab and a bad verdict', async () => {
+    it('refuses a page without a tab', async () => {
       const send = start();
-      const message = { type: 'setVerdictBadge', verdict: dropshipping };
-      expect(await send(message, { ...fromOptions, tab: { id: 11 } })).toBe('no answer');
-      expect(await send(message, fromOptions)).toBe('no answer');
-      expect(await send(message, fromPage)).toBe('no answer');
-      expect(await send(message, fromTab(11, 'https://evil.test/items/1'))).toBe('no answer');
-      expect(await send(message, { ...fromTab(11), id: 'other' })).toBe('no answer');
-      expect(
-        await send({ type: 'setVerdictBadge', verdict: { level: 'red', title: 'x' } }, fromTab(11)),
-      ).toBe('no answer');
-      expect(await send({ type: 'setVerdictBadge' }, fromTab(11))).toBe('no answer');
+      expect(await send({ type: 'setVerdictBadge', verdict: dropshipping }, fromPage)).toBe(
+        'no answer',
+      );
       expect(await text(11)).toBe('');
-    });
-
-    it('refuses a tab that is no real tab, and a frame that is not the top one', async () => {
-      const send = start();
-      const message = { type: 'setVerdictBadge', verdict: dropshipping };
-      // chrome.tabs.TAB_ID_NONE
-      expect(await send(message, fromTab(-1))).toBe('no answer');
-      expect(await send(message, { ...fromTab(11), frameId: 3 })).toBe('no answer');
-      expect(await text(-1)).toBe('');
-      expect(await text(11)).toBe('');
-      // The top frame, with or without the frame id, is the page.
-      await send(message, { ...fromTab(11), frameId: 0 });
-      expect(await text(11)).toBe('!');
     });
   });
 

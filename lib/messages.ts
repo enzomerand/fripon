@@ -1,11 +1,11 @@
 import { browser } from 'wxt/browser';
 import { isAiReviewInput, type AiReviewInput } from './ai/input';
-import type { BadgeVerdict } from './background/badge';
+import { BADGES, type BadgeVerdict } from './background/badge';
 import type { Gates } from './gate';
 import type { GeminiFailure } from './google/gemini';
 import type { KeyCheckResult } from './google/key-check';
 import type { VisionFailure } from './google/vision';
-import type { AiReview, ImageMatch, VerdictLevel } from './model';
+import type { AiReview, ImageMatch } from './model';
 import type { Provider } from './settings';
 
 /** Ask the background to fetch a photo and compute its pixel heuristics. */
@@ -108,7 +108,7 @@ export interface OpenOptionsRequest {
 }
 
 /** Longest verdict title the background puts in the tooltip of the toolbar button. */
-export const BADGE_TITLE_MAX = 120;
+const BADGE_TITLE_MAX = 120;
 
 /**
  * Show the verdict of the open listing on the toolbar button of the sender's tab, or clear it with
@@ -156,20 +156,13 @@ export interface RuntimeResponses {
 
 export type ResponseFor<M extends RuntimeMessage> = RuntimeResponses[M['type']];
 
-const VERDICT_LEVELS = Object.keys({
-  dropshipping: true,
-  resold: true,
-  review: true,
-  clean: true,
-} satisfies Record<VerdictLevel, true>);
-
 /** A verdict as the badge takes it: a known level and a short title, on one line, not blank. */
 function isBadgeVerdict(value: unknown): value is BadgeVerdict {
   if (typeof value !== 'object' || value === null) return false;
   const { level, title } = value as { level?: unknown; title?: unknown };
   return (
     typeof level === 'string' &&
-    VERDICT_LEVELS.includes(level) &&
+    Object.hasOwn(BADGES, level) &&
     typeof title === 'string' &&
     title.trim().length > 0 &&
     title.length <= BADGE_TITLE_MAX &&

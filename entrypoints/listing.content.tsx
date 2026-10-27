@@ -24,7 +24,7 @@ import {
 import { imageCheckSearching, imageSearchCanBeRetried } from '../lib/checks/image';
 import type { Gate, Gates } from '../lib/gate';
 import { sendMessage } from '../lib/messages';
-import type { Listing, Verdict } from '../lib/model';
+import type { Listing } from '../lib/model';
 import { waitFor } from '../lib/wait';
 import { fetchSeller } from '../lib/vinted/api';
 import { findAnchor } from '../lib/vinted/anchor';
@@ -92,11 +92,6 @@ type Trigger = 'auto' | 'click';
 /** Whether a step with this gate can really spend a credit. */
 const canSpend = (gate: Gate) => gate === 'ready' || gate === 'manual';
 
-const badgeOf = (verdict: Verdict): BadgeVerdict => ({
-  level: verdict.level,
-  title: verdict.title,
-});
-
 /** Owns the card of this page: mounts it, updates it, and replaces it on a new run. */
 function createCardController(ctx: ContentScriptContext) {
   let runId = 0;
@@ -136,7 +131,7 @@ function createCardController(ctx: ContentScriptContext) {
     );
     // Loading and error never follow a verdict: `start()` disposes the card (which clears the badge)
     // before any new state, so only a verdict is worth sending.
-    if (state.status === 'done') updateBadge(badgeOf(state.verdict));
+    if (state.status === 'done') updateBadge(state.verdict);
   }
 
   /** Shows the current analysis; `searchingImage` puts the "search running" row in the image row's place. */
@@ -437,7 +432,7 @@ function createCardController(ctx: ContentScriptContext) {
       if (nextId === currentItemId) {
         // A same-document navigation (query string, hash) that a browser may treat as a reset of the
         // tab's badge: say it again, which is cheap and sends nothing when no verdict is shown.
-        updateBadge(analysed && badgeOf(analysed.result.verdict), true);
+        updateBadge(analysed?.result.verdict ?? null, true);
         return;
       }
       if (nextId === null) {

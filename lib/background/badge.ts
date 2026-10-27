@@ -19,7 +19,8 @@ interface Badge {
   colour: string;
 }
 
-const BADGES: Record<VerdictLevel, Badge> = {
+/** The mark and colour of each level; the levels the background accepts are its keys. */
+export const BADGES: Record<VerdictLevel, Badge> = {
   dropshipping: { text: '!', colour: '#d93025' },
   resold: { text: '?', colour: '#b45309' },
   review: { text: '?', colour: '#b45309' },
@@ -28,10 +29,6 @@ const BADGES: Record<VerdictLevel, Badge> = {
 
 /** The manifest's `default_title` (`wxt.config.ts`): what the button says when there is no verdict. */
 export const DEFAULT_TITLE = 'Fripon';
-
-export const badgeFor = (level: VerdictLevel): Badge => BADGES[level];
-
-export const badgeTitle = (verdict: BadgeVerdict): string => `${DEFAULT_TITLE} — ${verdict.title}`;
 
 /** Never rejects: a tab closed in the meantime, or an API this browser lacks, is no failure. */
 async function attempt(call: () => unknown) {
@@ -52,11 +49,16 @@ export async function setToolbarBadge(
   verdict: BadgeVerdict | null,
 ): Promise<void> {
   if (!button) return;
-  const badge = verdict ? badgeFor(verdict.level) : null;
+  const badge = verdict ? BADGES[verdict.level] : null;
   await Promise.all([
     attempt(() => button.setBadgeText({ text: badge?.text ?? '', tabId })),
     // A cleared badge shows nothing, whatever its colour.
     attempt(() => badge && button.setBadgeBackgroundColor({ color: badge.colour, tabId })),
-    attempt(() => button.setTitle({ title: verdict ? badgeTitle(verdict) : DEFAULT_TITLE, tabId })),
+    attempt(() =>
+      button.setTitle({
+        title: verdict ? `${DEFAULT_TITLE} — ${verdict.title}` : DEFAULT_TITLE,
+        tabId,
+      }),
+    ),
   ]);
 }

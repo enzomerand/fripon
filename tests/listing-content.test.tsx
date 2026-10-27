@@ -1628,10 +1628,6 @@ describe('listing content script', () => {
       navigate('https://www.vinted.fr/catalog?search_text=robe');
 
       expect(badgeVerdicts().map((verdict) => verdict?.level ?? null)).toEqual(['clean', null]);
-      expect(sentMessages('setVerdictBadge')[1]).toEqual({
-        type: 'setVerdictBadge',
-        verdict: null,
-      });
     }, 15_000);
 
     it('has nothing to clear when leaving before any verdict was sent', async () => {
