@@ -15,7 +15,4 @@ web-ext.config.ts
 # Safari: the Xcode project in safari/ is committed; what Xcode and the build generate is not.
 # The web extension files in "Fripon Extension/Resources" are copied there by `npm run safari:sync`.
 safari/**/xcuserdata/
-safari/**/DerivedData/
-safari/**/build/
-*.xcuserstate
 safari/Fripon/Fripon Extension/Resources/

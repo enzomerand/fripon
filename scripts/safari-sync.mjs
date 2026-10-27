@@ -28,19 +28,15 @@ const pbxproj = readFileSync(project, 'utf8');
 
 // The converter targets the macOS of the machine that ran it (27.0 today), which would stop the
 // app from launching on any older macOS: every deployment target must stay at the supported one.
-const MIN_MACOS = [13, 0];
 const tooHigh = new Set();
-for (const match of pbxproj.matchAll(/MACOSX_DEPLOYMENT_TARGET = ([\d.]+);/g)) {
-  const [major = 0, minor = 0] = match[1].split('.').map(Number);
-  if (major > MIN_MACOS[0] || (major === MIN_MACOS[0] && minor > MIN_MACOS[1])) {
-    tooHigh.add(match[1]);
-  }
+for (const match of pbxproj.matchAll(/MACOSX_DEPLOYMENT_TARGET = "?([\d.]+)"?;/g)) {
+  if (parseFloat(match[1]) > 13) tooHigh.add(match[1]);
 }
 if (tooHigh.size > 0) {
   fail(
-    `le projet Xcode cible macOS ${[...tooHigh].join(', ')} : remets MACOSX_DEPLOYMENT_TARGET à ` +
-      `${MIN_MACOS.join('.')} partout dans ${relative(root, project)} (projet et cibles), sinon ` +
-      "l'application ne se lance pas sur un macOS plus ancien.",
+    `the Xcode project targets macOS ${[...tooHigh].join(', ')}: set MACOSX_DEPLOYMENT_TARGET back to ` +
+      `13.0 everywhere in ${relative(root, project)} (project and Fripon Extension target), or the ` +
+      'app will not launch on an older macOS.',
   );
 }
 

@@ -84,7 +84,7 @@ Le convertisseur réécrit aussi l’application conteneur (textes en français,
 
 Le convertisseur vise aussi le macOS de la machine qui l’a lancé (27.0 par exemple), ce qui
 empêcherait l’application de démarrer sur un macOS plus ancien : dans le nouveau `project.pbxproj`,
-remettre toutes les lignes `MACOSX_DEPLOYMENT_TARGET` à `13.0` (projet et deux cibles).
+remettre toutes les lignes `MACOSX_DEPLOYMENT_TARGET` à `13.0` (le projet et la cible Fripon Extension).
 `npm run safari:sync` refuse de continuer tant qu’une de ces lignes dépasse 13.0.
 
 ## Licence

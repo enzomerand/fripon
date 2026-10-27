@@ -2,7 +2,6 @@
 // Developer account or team needed. Run `npm run safari:app` rather than this file: it builds and
 // syncs the extension first.
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,15 +30,14 @@ const result = spawnSync(
   { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
 );
 
-const lines = `${result.stdout ?? ''}${result.stderr ?? ''}`.trimEnd().split('\n');
 if (result.error) {
   console.error(`safari:app: cannot run xcodebuild (${result.error.message}). Is Xcode installed?`);
   process.exit(1);
 }
-if (result.status !== 0 || !existsSync(app)) {
+if (result.status !== 0) {
+  const lines = `${result.stdout ?? ''}${result.stderr ?? ''}`.trimEnd().split('\n');
   console.error(lines.slice(-60).join('\n'));
   console.error('safari:app: xcodebuild failed.');
   process.exit(result.status || 1);
 }
-console.log(lines.find((line) => line.includes('BUILD SUCCEEDED')) ?? 'Done.');
 console.log(`\nsafari:app: ${relative(root, app)}\n  ${app}`);
