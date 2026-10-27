@@ -1,0 +1,134 @@
+/* Styles of the Fripon blocks of a results grid, shared by every shadow root of the page (one
+   constructed stylesheet). Sizes are in px on purpose: the host page sets its own root font size.
+   The colour tokens are the ones of ListingCard.css, so a verdict looks the same in both places. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+.fripon-grid,
+.fripon-bar {
+  --accent: #5b21b6;
+  --soft: #f4effc;
+  color: #202124;
+  font:
+    12px/1.3 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Helvetica,
+    Arial,
+    sans-serif;
+  text-align: left;
+}
+
+button {
+  margin: 0;
+  font: inherit;
+}
+
+.fripon-grid__button {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: #fff;
+  padding: 4px 6px;
+  color: var(--accent);
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+}
+
+.fripon-grid__button:hover {
+  background: var(--soft);
+}
+
+.fripon-grid__button:focus-visible,
+.fripon-grid__result:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.fripon-grid__button--busy {
+  border-color: #999;
+  color: #444;
+  cursor: progress;
+}
+
+.fripon-grid__button--busy:hover {
+  background: #fff;
+}
+
+.fripon-grid__button--quiet {
+  border-color: #999;
+  color: #3c4043;
+}
+
+.fripon-grid__note {
+  margin: 0 0 3px;
+  color: #4a4a4a;
+}
+
+/* The compact verdict: a coloured block under the price, with the full analysis one click away. */
+.fripon-grid__result {
+  --accent: #5f6368;
+  --bg: #f4f4f5;
+  --title: #202124;
+  --ink: #202124;
+
+  display: block;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--bg);
+  padding: 4px 6px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.fripon-grid__result:hover .fripon-grid__title {
+  text-decoration: underline;
+}
+
+.fripon-grid__result--red {
+  --accent: #d93025;
+  --bg: #fdecea;
+  --title: #a50e0e;
+  --ink: #3a1a17;
+}
+
+.fripon-grid__result--orange {
+  --accent: #b45309;
+  --bg: #fef3e2;
+  --title: #8a4500;
+  --ink: #3d2a10;
+}
+
+.fripon-grid__result--green {
+  --accent: #188038;
+  --bg: #e6f4ea;
+  --title: #0d652d;
+  --ink: #17301f;
+}
+
+.fripon-grid__title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--title);
+  font-weight: 700;
+}
+
+.fripon-grid__dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.fripon-grid__line {
+  display: block;
+  font-weight: 500;
+}

@@ -88,15 +88,27 @@ function itemLinkOf(element: Element, base: string) {
   return null;
 }
 
+/** Whether `element` is the root of a result card (and not one of its parts, which share the prefix). */
+function isCardRoot(element: Element): boolean {
+  const testid = element.getAttribute('data-testid') ?? '';
+  return PRODUCT_CARD_TESTID_PATTERN.test(testid) || testid === FEED_CARD_TESTID;
+}
+
+/** The root elements of the result cards under `root`, in page order: whole cards or not. */
+export function findCardRoots(root: ParentNode): Element[] {
+  return [...root.querySelectorAll(GRID_SELECTORS.cardCandidates)].filter(isCardRoot);
+}
+
 /**
  * Reads one card from its root element. Null when `element` is not a whole card: a part of a card
  * (the image, the link...), a card without its description block (a promotion, a card still being
  * drawn), or a card whose item cannot be told.
  */
 export function readGridCard(element: Element): GridCard | null {
-  const testid = element.getAttribute('data-testid') ?? '';
-  const idFromTestid = PRODUCT_CARD_TESTID_PATTERN.exec(testid)?.[1];
-  if (!idFromTestid && testid !== FEED_CARD_TESTID) return null;
+  if (!isCardRoot(element)) return null;
+  const idFromTestid = PRODUCT_CARD_TESTID_PATTERN.exec(
+    element.getAttribute('data-testid') ?? '',
+  )?.[1];
 
   const anchor = element.querySelector(GRID_SELECTORS.description);
   if (!anchor) return null;
@@ -126,8 +138,8 @@ export function readGridCard(element: Element): GridCard | null {
 /** Every whole result card under `root`, in page order. */
 export function readGridCards(root: ParentNode): GridCard[] {
   const cards: GridCard[] = [];
-  for (const candidate of root.querySelectorAll(GRID_SELECTORS.cardCandidates)) {
-    const card = readGridCard(candidate);
+  for (const element of findCardRoots(root)) {
+    const card = readGridCard(element);
     if (card) cards.push(card);
   }
   return cards;

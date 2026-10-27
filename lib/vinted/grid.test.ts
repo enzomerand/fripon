@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickPhotoUrl, readGridCard, readGridCards } from './grid';
+import { findCardRoots, pickPhotoUrl, readGridCard, readGridCards } from './grid';
 
 // Synthetic cards shaped like Vinted's grids. Every id, name and photo is made up.
 const THUMB = 'https://images1.vinted.net/t/01_aa/310x430/aa.webp?s=1';
@@ -183,6 +183,19 @@ describe('readGridCards', () => {
     const image = doc.querySelector('img') as HTMLImageElement;
     Object.defineProperty(image, 'currentSrc', { value: THUMB });
     expect(readGridCards(doc)[0]?.photoUrl).toBe(THUMB);
+  });
+});
+
+describe('findCardRoots', () => {
+  it('returns the roots only, whole cards or not', () => {
+    const doc = page(
+      catalogCard() + catalogCard({ id: '9000102', description: false }) + feedCard(),
+    );
+    expect(findCardRoots(doc).map((root) => root.getAttribute('data-testid'))).toEqual([
+      'product-item-id-9000101',
+      'product-item-id-9000102',
+      'feed-item',
+    ]);
   });
 });
 

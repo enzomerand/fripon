@@ -12,11 +12,11 @@ import {
   type AiDeps,
   type AnalysisDeps,
   type AnalysisResult,
-  type SearchDeps,
 } from '../lib/analysis';
+import { analyzeImageViaBackground, openOptions, searchDeps } from '../lib/background/client';
 import { imageCheckSearching, imageSearchCanBeRetried } from '../lib/checks/image';
 import type { Gate, Gates } from '../lib/gate';
-import { sendMessage, type OptionsSection } from '../lib/messages';
+import { sendMessage } from '../lib/messages';
 import type { Listing } from '../lib/model';
 import { waitFor } from '../lib/wait';
 import { fetchSeller } from '../lib/vinted/api';
@@ -34,20 +34,7 @@ const HOST_TAG = 'fripon-listing-card';
 /** The host element is reset by WXT (`all: initial`): give it back a block box. */
 const HOST_CSS = ':host { display: block !important; margin: 12px 0 !important; }';
 
-const analysisDeps: AnalysisDeps = {
-  fetchSeller,
-  analyzeImage: (url) => sendMessage({ type: 'analyzeImage', url }),
-};
-
-const searchDeps: SearchDeps = {
-  searchImage: (photoUrl, cacheOnly, retry) =>
-    sendMessage({
-      type: 'searchImage',
-      photoUrl,
-      ...(cacheOnly && { cacheOnly: true }),
-      ...(retry && { retry: true }),
-    }),
-};
+const analysisDeps: AnalysisDeps = { fetchSeller, analyzeImage: analyzeImageViaBackground };
 
 const aiDeps: AiDeps = {
   aiReview: (input, cacheOnly, retry) =>
@@ -76,10 +63,6 @@ async function askGates(): Promise<Gates> {
   } catch {
     return NO_GATES;
   }
-}
-
-function openOptions(section: OptionsSection) {
-  void sendMessage({ type: 'openOptions', section }).catch(() => undefined);
 }
 
 type Ui = Awaited<ReturnType<typeof createShadowRootUi<HTMLElement>>>;
