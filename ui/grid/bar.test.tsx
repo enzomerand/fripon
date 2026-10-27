@@ -26,11 +26,14 @@ const IDS = [9000101, 9000102, 9000103, 9000104];
 let search: ReturnType<typeof vi.fn<QuickAnalysisDeps['searchImage']>>;
 let gate: ImageGate;
 let remaining: number | null;
+/** What the background answers about the credits left; a test may hold the answer back. */
+let askRemaining: () => Promise<number | null>;
 let sleeps: number[];
 let sleep: (ms: number) => Promise<void>;
 /** Ids that count as in view. */
 let inView: Set<number>;
 let controller: GridController | null;
+let hideDelayMs: number;
 
 function start(html = IDS.map((id) => card(id)).join('')) {
   document.getElementById('grid')!.innerHTML = html;
@@ -44,7 +47,9 @@ function start(html = IDS.map((id) => card(id)).join('')) {
     },
     openOptions: vi.fn(),
     askImageGate: () => Promise.resolve(gate),
-    askRemaining: () => Promise.resolve(remaining),
+    askRemaining: () => askRemaining(),
+    // Short, so that a bar with nothing to offer leaves within a test; tests of the delay set their own.
+    hideDelayMs,
     sleep,
     isShown: (element) =>
       inView.has(Number(element.getAttribute('data-testid')?.replace('product-item-id-', ''))),
@@ -78,6 +83,8 @@ beforeEach(() => {
   search = vi.fn<QuickAnalysisDeps['searchImage']>(() => Promise.resolve(FOUND));
   gate = 'ready';
   remaining = 40;
+  askRemaining = () => Promise.resolve(remaining);
+  hideDelayMs = 30;
   sleeps = [];
   sleep = (ms) => {
     sleeps.push(ms);
@@ -561,5 +568,176 @@ describe('keyboard focus in the bar', () => {
     barButton('Analyser').click();
     await until(() => barText().includes('Lancer'));
     expect(focusedControl()).toBeNull();
+  });
+});
+
+describe('the bar through its confirmation', () => {
+  /** Counts how many times the bar was taken out of the page. */
+  function watchRemovals() {
+    let removals = 0;
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.removedNodes) if (node.nodeName === 'FRIPON-GRID-BAR') removals++;
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return {
+      count: () => {
+        for (const record of observer.takeRecords()) {
+          for (const node of record.removedNodes)
+            if (node.nodeName === 'FRIPON-GRID-BAR') removals++;
+        }
+        return removals;
+      },
+      stop: () => observer.disconnect(),
+    };
+  }
+
+  /** Holds the answer about the credits until the test lets it through. */
+  function holdCredits() {
+    let release: (value: number | null) => void = () => undefined;
+    askRemaining = () => new Promise((resolve) => (release = resolve));
+    return (value: number | null) => release(value);
+  }
+
+  it('is already busy while the credits are being asked, and stays through any refresh', async () => {
+    const release = holdCredits();
+    start();
+    await until(() => bar() !== null);
+    const removals = watchRemovals();
+    const host = bar();
+
+    barButton('Analyser').click();
+    await until(() => barText().includes('Vérification'));
+    expect(barButton('Annuler')).toBeDefined();
+
+    // The page moves while the answer is awaited: nothing is in view, several refreshes run.
+    inView = new Set();
+    for (let i = 0; i < 4; i++) {
+      window.dispatchEvent(new Event('scroll'));
+      await settle();
+    }
+    expect(removals.count()).toBe(0);
+    expect(bar()).toBe(host);
+    expect(barText()).toContain('Vérification');
+
+    release(40);
+    await until(() => barText().includes('Lancer'));
+    expect(barText()).toContain("Jusqu'à 4 crédits Vision (il t'en reste 40 ce mois-ci).");
+    removals.stop();
+  });
+
+  it('asks about the cards the bar offered, even if none is in view by the time of the click', async () => {
+    start();
+    await until(() => barText() === '🦊 Analyser les 4 articles visibles');
+    // The page scrolls just before the click, and the bar has not been drawn again yet.
+    inView = new Set();
+
+    barButton('Analyser').click();
+
+    await until(() => barText().includes('Lancer'));
+    expect(barText()).toContain("Jusqu'à 4 crédits Vision");
+  });
+
+  it('does not take a card that was analysed by hand between the draw and the click', async () => {
+    const running = start();
+    await until(() => barText() === '🦊 Analyser les 4 articles visibles');
+    await running.analyze('9000101');
+    inView = new Set();
+
+    barButton('Analyser').click();
+
+    await until(() => barText().includes('Lancer'));
+    expect(barText()).toContain("Jusqu'à 3 crédits Vision");
+  });
+
+  it('shows the current phase on a bar the page dropped and the controller put back', async () => {
+    const release = holdCredits();
+    start();
+    await until(() => bar() !== null);
+    barButton('Analyser').click();
+    await until(() => barText().includes('Vérification'));
+
+    bar()?.remove();
+    await until(() => bar() !== null);
+    expect(barText()).toContain('Vérification');
+
+    release(7);
+    await until(() => barText().includes("il t'en reste 7"));
+  });
+
+  it('can be cancelled while the credits are asked, and the late answer opens nothing', async () => {
+    const release = holdCredits();
+    start();
+    await until(() => bar() !== null);
+    barButton('Analyser').click();
+    await until(() => barText().includes('Vérification'));
+
+    barButton('Annuler').click();
+    await until(() => barText().includes('Analyser les 4'));
+    release(40);
+    await settle();
+    expect(barText()).toContain('Analyser les 4');
+    expect(barText()).not.toContain('Lancer');
+  });
+
+  describe('when no card is in view', () => {
+    it('keeps the bar through a short gap, as the same bar', async () => {
+      hideDelayMs = 300;
+      start();
+      await until(() => bar() !== null);
+      const removals = watchRemovals();
+      const host = bar();
+
+      inView = new Set();
+      window.dispatchEvent(new Event('scroll'));
+      await settle();
+      expect(bar()).toBe(host);
+      inView = new Set(IDS);
+      window.dispatchEvent(new Event('scroll'));
+      await settle();
+
+      expect(removals.count()).toBe(0);
+      expect(bar()).toBe(host);
+      removals.stop();
+    });
+
+    it('takes the bar away once there has been nothing to offer for the whole delay', async () => {
+      hideDelayMs = 80;
+      start();
+      await until(() => bar() !== null);
+      inView = new Set();
+      window.dispatchEvent(new Event('scroll'));
+      await settle();
+      expect(bar()).not.toBeNull();
+      // No other event: the controller looks again by itself when the delay is over.
+      await until(() => bar() === null);
+    });
+
+    it('starts the delay again after a gap that was filled', async () => {
+      hideDelayMs = 150;
+      start();
+      await until(() => bar() !== null);
+      inView = new Set();
+      window.dispatchEvent(new Event('scroll'));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      inView = new Set(IDS);
+      window.dispatchEvent(new Event('scroll'));
+      await settle();
+      inView = new Set();
+      window.dispatchEvent(new Event('scroll'));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // 100 ms in the second gap, 150 needed: still there although 200 ms went by in all.
+      expect(bar()).not.toBeNull();
+    });
+
+    it('does not wait when there is no key: the bar has no business there', async () => {
+      start();
+      await until(() => bar() !== null);
+      gate = 'no_key';
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      await until(() => bar() === null);
+    });
   });
 });

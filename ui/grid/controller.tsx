@@ -41,6 +41,8 @@ export interface GridControllerOptions {
   sleep?(ms: number): Promise<void>;
   /** Whether a card shows in the window. The real layout by default. */
   isShown?(element: Element): boolean;
+  /** How long the bar waits with nothing to offer before it leaves the page. */
+  hideDelayMs?: number;
 }
 
 export interface GridController {
@@ -60,6 +62,14 @@ const IS_BLOCKED = (view: CardView) => view.status === 'needsKey' || view.status
  * waits for a click (its thumbnail may load later), a batch would only go through it again.
  */
 const IS_PENDING = (view: CardView) => view.status === 'idle' || view.status === 'error';
+
+/**
+ * A bar with nothing to offer (no card of the page in view) is not taken out of the page at the
+ * first look: a scroll, a layout that moves while a click is handled or a page that redraws would
+ * make it blink away and come back as a new bar. It leaves when it has had nothing to offer for
+ * this long.
+ */
+export const BAR_HIDE_DELAY_MS = 1_500;
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -83,6 +93,12 @@ export function createGridController(options: GridControllerOptions): GridContro
   let gate: ImageGate = 'no_key';
   let bar: Host | null = null;
   let barScheduled = false;
+  /** When the bar first had nothing to offer, null while it has something. */
+  let emptySince: number | null = null;
+  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The cards the bar offered the last time it was drawn: what a click on it takes. */
+  let offered: string[] = [];
+  const hideDelay = options.hideDelayMs ?? BAR_HIDE_DELAY_MS;
 
   const injector = createGridInjector({
     doc,
@@ -145,6 +161,18 @@ export function createGridController(options: GridControllerOptions): GridContro
     return [...ids];
   }
 
+  /**
+   * The cards a click on the bar takes: those it offered ("Analyser les N articles visibles" says
+   * N), as long as they are still on the page and not analysed. The bar was drawn up to a frame
+   * ago; measuring again at the click would count what the page has scrolled to since, and a
+   * bar that offered 20 cards would ask about none. A new measure only when none is left.
+   */
+  function idsToAsk(): string[] {
+    const onPage = new Set(injector.cards().map((card) => card.id));
+    const still = offered.filter((id) => onPage.has(id) && IS_PENDING(store.get(id)));
+    return still.length > 0 ? still : pendingInView();
+  }
+
   function drawBar(host: Host, visibleCount: number) {
     const state = batch.state();
     redrawKeepingFocus(
@@ -154,7 +182,7 @@ export function createGridController(options: GridControllerOptions): GridContro
           <GridBar
             visibleCount={visibleCount}
             batch={state}
-            onAsk={() => void batch.ask(pendingInView())}
+            onAsk={() => void batch.ask(idsToAsk())}
             onLaunch={() => void batch.launch()}
             onCancel={() => batch.cancel()}
             onStop={() => batch.stop()}
@@ -178,13 +206,21 @@ export function createGridController(options: GridControllerOptions): GridContro
 
   function refreshBar() {
     if (disposed) return;
-    const count = pendingInView().length;
-    // A batch that is waiting or running keeps its bar, whatever the page scrolled to meanwhile.
-    const wanted = batch.state().phase !== 'idle' || (gate !== 'no_key' && count > 0);
-    if (!wanted) return hideBar();
+    const ids = pendingInView();
+    // A batch that is asking, waiting or running keeps its bar, whatever the page scrolled to meanwhile.
+    const busy = batch.state().phase !== 'idle';
+    const offer = gate !== 'no_key' && ids.length > 0;
+    if (!busy && !offer) {
+      // Without a key the bar has no business here. With a key and nothing in view it waits a little.
+      if (gate === 'no_key') return hideBar();
+      return hideBarWhenEmptyLongEnough();
+    }
+    emptySince = null;
+    clearTimeout(hideTimer);
+    if (!busy) offered = ids;
     const wasRemoved = bar !== null && !bar.element.isConnected;
     bar ??= createHost(doc, BAR_HOST_TAG, styles, '0 0 12px');
-    drawBar(bar, count);
+    drawBar(bar, ids.length);
     const anchor = findResultsAnchor(
       injector
         .cards()
@@ -195,6 +231,20 @@ export function createGridController(options: GridControllerOptions): GridContro
     // The same host, with the same shadow tree and batch state, goes back where it was.
     if (wasRemoved && bar.element.isConnected)
       console.debug('[Fripon] The page dropped the bar, put back.');
+  }
+
+  function hideBarWhenEmptyLongEnough() {
+    if (!bar?.element.isConnected) return;
+    const now = Date.now();
+    emptySince ??= now;
+    const left = hideDelay - (now - emptySince);
+    if (left <= 0) {
+      emptySince = null;
+      return hideBar();
+    }
+    // Look again when the delay is over, even if nothing else happens on the page.
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(requestBar, left);
   }
 
   function requestBar() {
@@ -246,6 +296,7 @@ export function createGridController(options: GridControllerOptions): GridContro
     cards: () => injector.cards(),
     dispose() {
       disposed = true;
+      clearTimeout(hideTimer);
       batch.stop();
       view?.removeEventListener('scroll', onViewChange, { capture: true });
       view?.removeEventListener('resize', onViewChange);

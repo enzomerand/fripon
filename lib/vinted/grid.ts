@@ -184,17 +184,20 @@ const isPageContainer = (element: Element) =>
   PAGE_CONTAINERS.has(element.tagName) || element.getAttribute('role') === 'main';
 
 /**
- * The element the bar above the results goes before: the first container that holds every card,
- * the grid itself. When that is the whole page (the home feed has its cards in several blocks), the
- * block of the page that holds the first card instead. Null without any card.
+ * The element the bar above the results goes before: the grid of the FIRST card, the lowest
+ * container that holds it and the next card, so the bar is at the top of the results whatever the
+ * page puts further down (a second block of cards, a carousel). When that is the whole page (the
+ * home feed has its cards in several blocks), the block of the page that holds the first card
+ * instead. `cards` are in page order. Null without any card.
  */
 export function findResultsAnchor(cards: readonly Element[]): Element | null {
-  const first = cards[0];
+  const [first, second] = cards;
   if (!first) return null;
-  // A lone card has only its own cell around it: the grid is one level up.
   let container = first.parentElement;
-  if (cards.length === 1 && container?.parentElement) container = container.parentElement;
-  while (container && !cards.every((card) => container?.contains(card))) {
+  if (second) {
+    while (container && !container.contains(second)) container = container.parentElement;
+  } else if (container?.parentElement) {
+    // A lone card has only its own cell around it: the grid is one level up.
     container = container.parentElement;
   }
   if (!container) return null;

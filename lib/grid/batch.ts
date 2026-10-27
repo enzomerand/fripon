@@ -37,6 +37,8 @@ export interface BatchEnd {
 export type BatchState =
   /** `last`: how the previous batch of this page ended, null before any (and once a new one is asked). */
   | { phase: 'idle'; last: BatchEnd | null }
+  /** The click is taken and the credits left are being asked: the bar is already busy, not idle. */
+  | { phase: 'asking' }
   /** Waiting for the user to confirm: up to `total` credits, `remaining` of them left (null: unknown). */
   | { phase: 'confirm'; total: number; remaining: number | null }
   /** `position` cards of `total` gone through. */
@@ -45,9 +47,13 @@ export type BatchState =
 export interface Batch {
   state(): BatchState;
   subscribe(listener: () => void): () => void;
-  /** idle -> confirm: asks how many credits are left, then waits for `launch` or `cancel`. */
+  /**
+   * idle -> asking -> confirm: takes the cards at once (the phase is no longer idle when this
+   * returns control, before anything is awaited), asks how many credits are left, then waits for
+   * `launch` or `cancel`.
+   */
   ask(ids: readonly string[]): Promise<void>;
-  /** confirm -> idle, nothing was started. */
+  /** asking or confirm -> idle, nothing was started. */
   cancel(): void;
   /** confirm -> running -> idle. Resolves once the batch has ended. A call in any other phase does nothing. */
   launch(): Promise<void>;
@@ -64,7 +70,8 @@ export interface Batch {
 export function createBatch(deps: BatchDeps): Batch {
   let state: BatchState = { phase: 'idle', last: null };
   let pending: string[] = [];
-  let asking = false;
+  /** Which `ask` is waiting for the credits: an answer for a cancelled one is dropped. */
+  let askId = 0;
   let wake: () => void = () => undefined;
   const listeners = new Set<() => void>();
 
@@ -81,6 +88,8 @@ export function createBatch(deps: BatchDeps): Batch {
     await Promise.race([deps.sleep(ms), stopped]);
   }
 
+  /** The phase as it is now (after an await), not as the code above narrowed it. */
+  const phaseNow = () => state.phase;
   const isStopping = () => state.phase === 'running' && state.stopping;
 
   async function analyse(id: string): Promise<AnalyzeResult> {
@@ -120,18 +129,20 @@ export function createBatch(deps: BatchDeps): Batch {
       return () => listeners.delete(listener);
     },
     async ask(ids) {
-      if (state.phase !== 'idle' || asking || ids.length === 0) return;
-      asking = true;
-      try {
-        const remaining = await deps.remaining().catch((): null => null);
-        pending = [...ids];
-        change({ phase: 'confirm', total: pending.length, remaining });
-      } finally {
-        asking = false;
-      }
+      if (state.phase !== 'idle' || ids.length === 0) return;
+      const mine = ++askId;
+      pending = [...ids];
+      change({ phase: 'asking' });
+      const remaining = await deps.remaining().catch((): null => null);
+      // Cancelled while the credits were being asked (or asked again since): nothing to confirm.
+      if (phaseNow() !== 'asking' || askId !== mine) return;
+      change({ phase: 'confirm', total: pending.length, remaining });
     },
     cancel() {
-      if (state.phase === 'confirm') change({ phase: 'idle', last: null });
+      if (state.phase === 'confirm' || state.phase === 'asking') {
+        pending = [];
+        change({ phase: 'idle', last: null });
+      }
     },
     async launch() {
       if (state.phase !== 'confirm') return;

@@ -367,6 +367,27 @@ describe('findResultsAnchor', () => {
     expect(findResultsAnchor(rootsOf(doc))?.id).toBe('grid');
   });
 
+  it('is the grid of the FIRST card, whatever blocks of cards follow', () => {
+    const doc = page(`
+      <main><section id="results">
+        <div id="first" class="feed-grid">
+          ${catalogCard({ id: '9000101' })}${catalogCard({ id: '9000102' })}
+        </div>
+        <div id="other"><div class="carousel">${catalogCard({ id: '9000103' })}</div></div>
+      </section></main>`);
+    expect(findResultsAnchor(rootsOf(doc))?.id).toBe('first');
+  });
+
+  it('is the grid of the first card when the page puts one card above and apart', () => {
+    const doc = page(`
+      <main>
+        <section id="top">${catalogCard({ id: '9000101' })}</section>
+        <section id="rest">${catalogCard({ id: '9000102' })}${catalogCard({ id: '9000103' })}</section>
+      </main>`);
+    // The first two cards share only the page: the block that holds the first one.
+    expect(findResultsAnchor(rootsOf(doc))?.id).toBe('top');
+  });
+
   it('is the grid of a lone card, not its cell', () => {
     const doc = page(`<main><div id="grid">${catalogCard()}</div></main>`);
     expect(findResultsAnchor(rootsOf(doc))?.id).toBe('grid');

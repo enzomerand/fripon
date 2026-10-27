@@ -37,6 +37,63 @@ function setup(results: Array<AnalyzeResult | Error> = [], remaining: number | n
 }
 
 describe('asking', () => {
+  it('is busy as soon as it is asked, before the credits are known', async () => {
+    let release: (value: number | null) => void = () => undefined;
+    const { deps } = setup();
+    const batch = createBatch({
+      ...deps,
+      remaining: () => new Promise((resolve) => (release = resolve)),
+    });
+    const listener = vi.fn();
+    batch.subscribe(listener);
+
+    const asked = batch.ask(IDS);
+
+    // Synchronously: nothing was awaited yet, and the phase is no longer idle.
+    expect(batch.state()).toEqual({ phase: 'asking' });
+    expect(listener).toHaveBeenCalledOnce();
+    release(12);
+    await asked;
+    expect(batch.state()).toEqual({ phase: 'confirm', total: 4, remaining: 12 });
+  });
+
+  it('can be cancelled while the credits are asked, and the late answer is dropped', async () => {
+    let release: (value: number | null) => void = () => undefined;
+    const { deps, calls } = setup();
+    const batch = createBatch({
+      ...deps,
+      remaining: () => new Promise((resolve) => (release = resolve)),
+    });
+    const asked = batch.ask(IDS);
+    batch.cancel();
+    expect(batch.state()).toEqual({ phase: 'idle', last: null });
+
+    release(12);
+    await asked;
+    expect(batch.state()).toEqual({ phase: 'idle', last: null });
+    await batch.launch();
+    expect(calls).toEqual([]);
+  });
+
+  it('drops the answer of a cancelled ask when a new one was made since', async () => {
+    const releases: Array<(value: number | null) => void> = [];
+    const { deps } = setup();
+    const batch = createBatch({
+      ...deps,
+      remaining: () => new Promise((resolve) => releases.push(resolve)),
+    });
+    const first = batch.ask(IDS);
+    batch.cancel();
+    const second = batch.ask(['9000105', '9000106']);
+
+    releases[0]?.(1);
+    await first;
+    expect(batch.state()).toEqual({ phase: 'asking' });
+    releases[1]?.(2);
+    await second;
+    expect(batch.state()).toEqual({ phase: 'confirm', total: 2, remaining: 2 });
+  });
+
   it('waits for a confirmation, with the credits it may cost and those that are left', async () => {
     const { deps, calls } = setup([], 37);
     const batch = createBatch(deps);
@@ -46,7 +103,8 @@ describe('asking', () => {
     await batch.ask(IDS);
 
     expect(batch.state()).toEqual({ phase: 'confirm', total: 4, remaining: 37 });
-    expect(listener).toHaveBeenCalledOnce();
+    // Once for the phase of asking, once for the confirmation.
+    expect(listener).toHaveBeenCalledTimes(2);
     expect(calls).toEqual([]);
   });
 

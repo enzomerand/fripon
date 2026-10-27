@@ -25,6 +25,7 @@ export function confirmText(total: number, remaining: number | null): string {
 export const progressText = (position: number, total: number) =>
   `Analyse en cours : ${position} / ${total}`;
 export const STOPPING_TEXT = 'Arrêt en cours…';
+export const ASKING_TEXT = 'Vérification de tes crédits Vision…';
 
 /** What to tell the user about a batch that did not go through to the end, null when nothing. */
 export function endNotice(end: BatchEnd | null): string | null {
@@ -48,7 +49,7 @@ export function endNotice(end: BatchEnd | null): string | null {
  * batch, the bar itself once a batch has ended (it says why), the button after a cancel.
  */
 export function focusTargetOf(batch: BatchState): 'cancel' | 'stop' | 'region' | 'ask' {
-  if (batch.phase === 'confirm') return 'cancel';
+  if (batch.phase === 'confirm' || batch.phase === 'asking') return 'cancel';
   if (batch.phase === 'running') return 'stop';
   return batch.last ? 'region' : 'ask';
 }
@@ -63,6 +64,23 @@ export function GridBar({ visibleCount, batch, onAsk, onLaunch, onCancel, onStop
       tabIndex={-1}
       data-focus="region"
     >
+      {batch.phase === 'asking' && (
+        <>
+          <p class="fripon-bar__text" role="status">
+            {ASKING_TEXT}
+          </p>
+          <div class="fripon-bar__actions">
+            <button
+              type="button"
+              class="fripon-bar__button"
+              data-focus="cancel"
+              onClick={press(onCancel)}
+            >
+              Annuler
+            </button>
+          </div>
+        </>
+      )}
       {batch.phase === 'confirm' && (
         <>
           <p class="fripon-bar__text" role="alert">
