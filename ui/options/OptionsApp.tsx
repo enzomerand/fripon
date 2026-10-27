@@ -3,6 +3,7 @@ import { browser } from 'wxt/browser';
 import { PENDING_SECTION_KEY, takePendingSection } from '../../lib/options-nav';
 import { PROVIDERS } from '../../lib/settings';
 import { saveUiState } from '../../lib/ui-state';
+import { Logo } from '../Logo';
 import { CreditsSection } from './CreditsSection';
 import { GuideSection } from './GuideSection';
 import { KeysSection } from './KeysSection';
@@ -115,7 +116,8 @@ export function OptionsApp() {
     <div class="page">
       <header class="header">
         <h1>
-          <span aria-hidden="true">🦊</span> Fripon
+          <Logo />
+          Fripon
         </h1>
         <p class="header__subtitle">Réglages</p>
       </header>

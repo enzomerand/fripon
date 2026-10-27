@@ -1,6 +1,7 @@
 import { PHOTO_UNAVAILABLE } from '../../lib/grid/quick-analysis';
 import type { CardView } from '../../lib/grid/store';
 import type { OptionsSection } from '../../lib/messages';
+import { Logo } from '../Logo';
 import { LEVEL_COLOUR } from '../verdict-colour';
 import { keepOffThePage, press } from './press';
 
@@ -43,7 +44,8 @@ function Body({ view, title, onAnalyze, onOpenOptions }: GridButtonProps) {
           aria-label={analyzeName(title)}
           onClick={press(onAnalyze)}
         >
-          <span aria-hidden="true">🦊</span> {ANALYZE_LABEL}
+          <Logo />
+          {ANALYZE_LABEL}
         </button>
       );
     case 'running':

@@ -29,8 +29,7 @@ button {
 }
 
 .fripon-grid__button {
-  /* A flex row: the fox and the label are two items and the gap is what separates them, whatever
-     the font does with the space between an emoji and a word. */
+  /* A flex row: the fox logo and the label are two items and the gap is what separates them. */
   display: flex;
   align-items: center;
   justify-content: center;

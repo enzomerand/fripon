@@ -227,6 +227,12 @@
   font-size: 12px;
 }
 
+.fripon__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .fripon__pulse {
     animation: fripon-pulse 1.4s ease-in-out infinite;
