@@ -1,8 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BatchState } from '../../lib/grid/batch';
 import { GridBar, confirmText, endNotice } from './GridBar';
+
+// The stylesheet as written: happy-dom lays nothing out, so the rule itself is what is checked.
+const css = readFileSync('ui/grid/grid.css', 'utf8');
 
 const root = document.createElement('div');
 document.body.append(root);
@@ -30,6 +34,16 @@ describe('GridBar', () => {
     expect(text()).toBe('🦊 Analyser les 24 articles visibles');
     buttons()[0]?.click();
     expect(on.onAsk).toHaveBeenCalledOnce();
+  });
+
+  it('separates the fox from the label: its own item, a space, and a gap in the flex row', async () => {
+    await show(idle, 24);
+    const fox = buttons()[0]?.querySelector('span');
+    expect(fox?.textContent).toBe('🦊');
+    expect(buttons()[0]?.textContent).toBe('🦊 Analyser les 24 articles visibles');
+    const rule = /\.fripon-bar__button \{[^}]*\}/.exec(css)?.[0] ?? '';
+    expect(rule).toMatch(/display:\s*inline-flex/);
+    expect(rule).toMatch(/gap:\s*\d+px/);
   });
 
   it('speaks of one card in the singular', async () => {

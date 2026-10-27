@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -6,6 +7,9 @@ import type { OptionsSection } from '../../lib/messages';
 import { GridButton } from './GridButton';
 
 const ITEM_URL = 'https://www.vinted.fr/items/9000101-robe-test';
+// The stylesheet as written: happy-dom lays nothing out, so the rule itself is what is checked.
+const css = readFileSync('ui/grid/grid.css', 'utf8');
+
 const root = document.createElement('div');
 document.body.append(root);
 
@@ -46,6 +50,16 @@ describe('GridButton', () => {
     expect(text()).toBe('🦊 Analyser');
     expect(button().getAttribute('aria-label')).toBe('Analyser « Robe Test » avec Fripon');
     expect(button().type).toBe('button');
+  });
+
+  it('separates the fox from the label: its own item, a space, and a gap in the flex row', async () => {
+    await show({ status: 'idle' });
+    const fox = button().querySelector('span');
+    expect(fox?.textContent).toBe('🦊');
+    expect(button().textContent).toBe('🦊 Analyser');
+    const rule = /\.fripon-grid__button \{[^}]*\}/.exec(css)?.[0] ?? '';
+    expect(rule).toMatch(/display:\s*flex/);
+    expect(rule).toMatch(/gap:\s*\d+px/);
   });
 
   it('runs the analysis on a click, and keeps the click away from the card', async () => {
