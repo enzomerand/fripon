@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { itemIdFromUrl, parseAmount, readListing } from './listing-reader';
+import { isSoldListing, itemIdFromUrl, parseAmount, readListing } from './listing-reader';
 
 // Every id, name and URL below is made up.
 const URL_OK = 'https://www.vinted.fr/items/9000001-robe-test?referrer=catalog';
@@ -338,5 +338,62 @@ describe('readListing RSC fallback', () => {
     });
     doc.body.insertAdjacentHTML('beforeend', '<script>self.__next_f.push(oops)</script>');
     expect(readListing(doc, URL_OK)?.sellerId).toBe('7000009');
+  });
+});
+
+describe('isSoldListing', () => {
+  // The item object of the RSC payload, as Vinted streams it on every item page.
+  const itemProps = (fields: Record<string, unknown>) =>
+    `1c:["$","div",null,${JSON.stringify({ id: '9000001', seller_id: 7000001, title: 'Robe', ...fields })}]\n`;
+  const SOLD = { can_buy: false, instant_buy: false, is_reserved: false, is_hidden: false };
+
+  it('is sold when the JSON-LD product is gone and nobody can buy the item', () => {
+    expect(isSoldListing(page({ jsonLd: null, rsc: [itemProps(SOLD)] }), URL_OK)).toBe(true);
+  });
+
+  it('is not sold while the item can be bought', () => {
+    const doc = page({ jsonLd: null, rsc: [itemProps({ ...SOLD, can_buy: true })] });
+    expect(isSoldListing(doc, URL_OK)).toBe(false);
+  });
+
+  it('is not sold when the item is only reserved or hidden', () => {
+    expect(
+      isSoldListing(
+        page({ jsonLd: null, rsc: [itemProps({ ...SOLD, is_reserved: true })] }),
+        URL_OK,
+      ),
+    ).toBe(false);
+    expect(
+      isSoldListing(page({ jsonLd: null, rsc: [itemProps({ ...SOLD, is_hidden: true })] }), URL_OK),
+    ).toBe(false);
+  });
+
+  it('ignores an unbuyable object of another item', () => {
+    const doc = page({ jsonLd: null, rsc: [itemProps({ ...SOLD, id: '9000002' })] });
+    expect(isSoldListing(doc, URL_OK)).toBe(false);
+  });
+
+  it('follows the JSON-LD availability when the product is there', () => {
+    const offers = (availability: string) => ({
+      ...PRODUCT,
+      offers: { ...PRODUCT.offers, availability },
+    });
+    expect(isSoldListing(page({ jsonLd: offers('https://schema.org/SoldOut') }), URL_OK)).toBe(
+      true,
+    );
+    expect(isSoldListing(page({ jsonLd: offers('InStock'), rsc: [itemProps(SOLD)] }), URL_OK)).toBe(
+      false,
+    );
+    expect(isSoldListing(page(), URL_OK)).toBe(false);
+  });
+
+  it('is not sold when nothing can be read', () => {
+    expect(isSoldListing(page({ jsonLd: null }), URL_OK)).toBe(false);
+    expect(
+      isSoldListing(
+        page({ jsonLd: null, rsc: [itemProps(SOLD)] }),
+        'https://www.vinted.fr/catalog',
+      ),
+    ).toBe(false);
   });
 });

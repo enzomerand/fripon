@@ -29,7 +29,7 @@ import { waitFor } from '../lib/wait';
 import { fetchSeller } from '../lib/vinted/api';
 import { findAnchor } from '../lib/vinted/anchor';
 import { VINTED_ITEM_MATCHES } from '../lib/vinted/domains';
-import { itemIdFromUrl, readListing } from '../lib/vinted/listing-reader';
+import { isSoldListing, itemIdFromUrl, readListing } from '../lib/vinted/listing-reader';
 import { ListingCard, type CardState } from '../ui/ListingCard';
 import '../ui/ListingCard.css';
 
@@ -371,6 +371,11 @@ function createCardController(ctx: ContentScriptContext) {
         status: 'error',
         message: "Je n'arrive pas à lire cette annonce, Vinted a peut-être changé sa page.",
       });
+      return;
+    }
+    // Nobody can buy it any more: no request to Vinted or Google for it.
+    if (isSoldListing(document, location.href)) {
+      show({ status: 'sold' });
       return;
     }
 

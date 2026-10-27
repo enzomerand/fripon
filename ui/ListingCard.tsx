@@ -17,6 +17,7 @@ import { LEVEL_COLOUR } from './verdict-colour';
 export type CardState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
+  | { status: 'sold' }
   | {
       status: 'done';
       listing: Listing;
@@ -301,6 +302,13 @@ export function ListingCard({ state, onRetry, onOpenOptions, onRun }: ListingCar
           <Logo />
           Fripon analyse l'annonce…
         </span>
+      </section>
+    );
+  }
+  if (state.status === 'sold') {
+    return (
+      <section class="fripon fripon--neutral" role="status">
+        <p class="fripon__line">Article vendu : Fripon ne l'analyse pas.</p>
       </section>
     );
   }
