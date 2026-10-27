@@ -350,3 +350,43 @@ describe('a card node that Vinted recycles for another item', () => {
     expect(running.cards()).toEqual([]);
   });
 });
+
+describe('keyboard focus', () => {
+  /** The control of this block that has the focus, null when the focus is elsewhere. */
+  const focused = (host: HTMLElement | null) =>
+    host && document.activeElement === host ? (host.shadowRoot?.activeElement ?? null) : null;
+
+  it('follows the button to the verdict that replaces it', async () => {
+    const running = start(card(9000101));
+    const button = shadowButton(hostOf(9000101));
+    button.focus();
+    expect(focused(hostOf(9000101))).toBe(button);
+
+    await running.analyze('9000101');
+
+    const link = hostOf(9000101)?.shadowRoot?.querySelector('a');
+    expect(link).not.toBeNull();
+    expect(focused(hostOf(9000101))).toBe(link);
+  });
+
+  it('follows the button to the retry button of a failed search', async () => {
+    search.mockResolvedValueOnce({ status: 'error', reason: 'network' });
+    const running = start(card(9000101));
+    shadowButton(hostOf(9000101)).focus();
+
+    await running.analyze('9000101');
+
+    expect(shadowButton(hostOf(9000101)).textContent).toBe('Réessayer');
+    expect(focused(hostOf(9000101))).toBe(shadowButton(hostOf(9000101)));
+  });
+
+  it('does not take the focus from where the user is, when the focus was not on the button', async () => {
+    const running = start(card(9000101) + card(9000102));
+    shadowButton(hostOf(9000102)).focus();
+
+    await running.analyze('9000101');
+
+    expect(focused(hostOf(9000101))).toBeNull();
+    expect(focused(hostOf(9000102))).toBe(shadowButton(hostOf(9000102)));
+  });
+});

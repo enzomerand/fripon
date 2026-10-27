@@ -91,3 +91,30 @@ export function createHost(
   shadow.append(container);
   return { element, container };
 }
+
+/**
+ * Whether the keyboard focus is inside the shadow tree of `host` right now. Asked of the document,
+ * which names the host while a control of its shadow tree has the focus (and the body once that
+ * control is gone), not of the shadow root: with a hundred hosts on the page, it must not depend on
+ * how each root answers when the focus is in another one.
+ */
+export function hasFocus(host: Host): boolean {
+  return host.element.ownerDocument.activeElement === host.element;
+}
+
+/**
+ * Draws a host again without losing the keyboard focus. Redrawing swaps a control for another one
+ * (the button that gives way to the verdict, "Analyser" to "Lancer"): the element that had the focus
+ * leaves the page and the focus falls back on the page. When the focus was in the host and is lost
+ * that way, `target` says which control of the new drawing takes it.
+ */
+export function redrawKeepingFocus(
+  host: Host,
+  draw: () => void,
+  target: (root: ShadowRoot) => HTMLElement | null,
+) {
+  const had = hasFocus(host);
+  draw();
+  const root = host.element.shadowRoot;
+  if (had && root && !hasFocus(host)) target(root)?.focus();
+}

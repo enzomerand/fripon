@@ -42,10 +42,27 @@ export function endNotice(end: BatchEnd | null): string | null {
   }
 }
 
+/**
+ * The control that takes the keyboard focus when the one that had it is replaced by a change of
+ * phase (see `redrawKeepingFocus`): the safe answer of a confirmation, the way to stop a running
+ * batch, the bar itself once a batch has ended (it says why), the button after a cancel.
+ */
+export function focusTargetOf(batch: BatchState): 'cancel' | 'stop' | 'region' | 'ask' {
+  if (batch.phase === 'confirm') return 'cancel';
+  if (batch.phase === 'running') return 'stop';
+  return batch.last ? 'region' : 'ask';
+}
+
 /** The bar above the results: the button for the visible cards, its confirmation, its progress. */
 export function GridBar({ visibleCount, batch, onAsk, onLaunch, onCancel, onStop }: GridBarProps) {
   return (
-    <div class="fripon-bar" role="region" aria-label="Fripon : analyse des articles visibles">
+    <div
+      class="fripon-bar"
+      role="region"
+      aria-label="Fripon : analyse des articles visibles"
+      tabIndex={-1}
+      data-focus="region"
+    >
       {batch.phase === 'confirm' && (
         <>
           <p class="fripon-bar__text" role="alert">
@@ -55,11 +72,17 @@ export function GridBar({ visibleCount, batch, onAsk, onLaunch, onCancel, onStop
             <button
               type="button"
               class="fripon-bar__button fripon-bar__button--primary"
+              data-focus="launch"
               onClick={press(onLaunch)}
             >
               Lancer
             </button>
-            <button type="button" class="fripon-bar__button" onClick={press(onCancel)}>
+            <button
+              type="button"
+              class="fripon-bar__button"
+              data-focus="cancel"
+              onClick={press(onCancel)}
+            >
               Annuler
             </button>
           </div>
@@ -75,6 +98,7 @@ export function GridBar({ visibleCount, batch, onAsk, onLaunch, onCancel, onStop
               type="button"
               class="fripon-bar__button"
               aria-disabled={batch.stopping ? 'true' : undefined}
+              data-focus="stop"
               onClick={press(onStop)}
             >
               Arrêter
@@ -92,6 +116,7 @@ export function GridBar({ visibleCount, batch, onAsk, onLaunch, onCancel, onStop
           <button
             type="button"
             class="fripon-bar__button fripon-bar__button--primary"
+            data-focus="ask"
             onClick={press(onAsk)}
           >
             <span aria-hidden="true">🦊</span> {analyzeAllLabel(visibleCount)}

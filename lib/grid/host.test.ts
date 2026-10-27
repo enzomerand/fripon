@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BUTTON_HOST_TAG, createHost, createSharedStyles } from './host';
+import {
+  BUTTON_HOST_TAG,
+  createHost,
+  createSharedStyles,
+  hasFocus,
+  redrawKeepingFocus,
+} from './host';
 
 const CSS = '.a { color: red; }';
 
@@ -86,5 +92,65 @@ describe('createHost', () => {
     expect(Number(style.getPropertyValue('z-index'))).toBeGreaterThan(1);
     expect(style.getPropertyValue('display')).toBe('block');
     expect(style.getPropertyValue('pointer-events')).toBe('auto');
+  });
+});
+
+describe('redrawKeepingFocus', () => {
+  /** A host in the page with a button in its shadow tree. */
+  function hostWithButton() {
+    const host = createHost(document, BUTTON_HOST_TAG, { apply: vi.fn() });
+    document.body.append(host.element);
+    host.container.innerHTML = '<button id="old">Analyser</button>';
+    return host;
+  }
+  const swap = (host: ReturnType<typeof hostWithButton>) => () => {
+    host.container.innerHTML = '<a id="new" href="#">Verdict</a>';
+  };
+
+  it('gives the focus to the new control when the one that had it is gone', () => {
+    const host = hostWithButton();
+    host.container.querySelector('button')?.focus();
+    expect(hasFocus(host)).toBe(true);
+
+    redrawKeepingFocus(host, swap(host), (root) => root.querySelector('a'));
+
+    expect(document.activeElement).toBe(host.element);
+    expect(host.element.shadowRoot?.activeElement?.id).toBe('new');
+    host.element.remove();
+  });
+
+  it('leaves the focus alone when the host did not have it', () => {
+    const host = hostWithButton();
+    const elsewhere = document.createElement('input');
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    const target = vi.fn(() => host.container.querySelector('a'));
+
+    redrawKeepingFocus(host, swap(host), target);
+
+    expect(target).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(elsewhere);
+    host.element.remove();
+    elsewhere.remove();
+  });
+
+  it('does not move a focus that survived the redraw', () => {
+    const host = hostWithButton();
+    const button = host.container.querySelector('button') as HTMLButtonElement;
+    button.focus();
+    const target = vi.fn(() => null);
+
+    redrawKeepingFocus(host, () => (button.textContent = 'Analyse…'), target);
+
+    expect(target).not.toHaveBeenCalled();
+    expect(host.element.shadowRoot?.activeElement).toBe(button);
+    host.element.remove();
+  });
+
+  it('does nothing when there is nothing to focus', () => {
+    const host = hostWithButton();
+    host.container.querySelector('button')?.focus();
+    expect(() => redrawKeepingFocus(host, swap(host), () => null)).not.toThrow();
+    host.element.remove();
   });
 });

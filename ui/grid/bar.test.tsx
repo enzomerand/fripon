@@ -469,3 +469,78 @@ describe('on the shape of the live search page', () => {
     expect(old.every((element) => !element.isConnected)).toBe(true);
   });
 });
+
+describe('keyboard focus in the bar', () => {
+  const focusedControl = () => bar()?.shadowRoot?.activeElement?.getAttribute('data-focus') ?? null;
+
+  /** Focuses a control and clicks it, as a keyboard user pressing Enter on it does. */
+  function press(label: string) {
+    const button = barButton(label);
+    button.focus();
+    button.click();
+  }
+
+  it('goes to the safe answer of the confirmation, then to "Arrêter" once launched', async () => {
+    let release: () => void = () => undefined;
+    sleep = () => new Promise<void>((resolve) => (release = resolve));
+    start();
+    await until(() => bar() !== null);
+
+    press('Analyser');
+    await until(() => barText().includes('Lancer'));
+    expect(focusedControl()).toBe('cancel');
+
+    press('Lancer');
+    await until(() => barText().includes('Analyse en cours'));
+    expect(focusedControl()).toBe('stop');
+
+    barButton('Arrêter').click();
+    await until(() => barText().includes('Analyse arrêtée'));
+    release();
+  });
+
+  it('goes back to the button after a cancel', async () => {
+    start();
+    await until(() => bar() !== null);
+    press('Analyser');
+    await until(() => barText().includes('Lancer'));
+    press('Annuler');
+    await until(() => barText().includes('Analyser les 4'));
+    expect(focusedControl()).toBe('ask');
+  });
+
+  it('goes to the bar itself when a batch ends and the bar has something to say', async () => {
+    search.mockResolvedValueOnce(FOUND).mockResolvedValueOnce({ status: 'quota' });
+    start();
+    await until(() => bar() !== null);
+    press('Analyser');
+    await until(() => barText().includes('Lancer'));
+    press('Lancer');
+    await until(() => barText().includes('Plafond atteint'));
+    expect(focusedControl()).toBe('region');
+  });
+
+  it('goes to the first block of the page when the bar leaves with the end of the batch', async () => {
+    start();
+    await until(() => bar() !== null);
+    press('Analyser');
+    await until(() => barText().includes('Lancer'));
+    press('Lancer');
+    await until(() => bar() === null);
+
+    const block = document.querySelector(BUTTON_HOST_TAG) as HTMLElement;
+    const link = block.shadowRoot?.querySelector('a');
+    expect(link).not.toBeNull();
+    expect(document.activeElement).toBe(block);
+    expect(block.shadowRoot?.activeElement).toBe(link);
+  });
+
+  it('does not take the focus when it was not in the bar', async () => {
+    start();
+    await until(() => bar() !== null);
+    // Mouse user: the click does not focus, and nothing else of the page is focused either.
+    barButton('Analyser').click();
+    await until(() => barText().includes('Lancer'));
+    expect(focusedControl()).toBeNull();
+  });
+});

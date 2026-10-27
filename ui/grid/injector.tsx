@@ -1,5 +1,11 @@
 import { render } from 'preact';
-import { BUTTON_HOST_TAG, createHost, type Host, type SharedStyles } from '../../lib/grid/host';
+import {
+  BUTTON_HOST_TAG,
+  createHost,
+  redrawKeepingFocus,
+  type Host,
+  type SharedStyles,
+} from '../../lib/grid/host';
 import type { GridStore } from '../../lib/grid/store';
 import type { OptionsSection } from '../../lib/messages';
 import {
@@ -71,14 +77,20 @@ export function createGridInjector(options: InjectorOptions): GridInjector {
   });
 
   function draw(entry: Entry) {
-    render(
-      <GridButton
-        view={store.get(entry.id)}
-        title={entry.title}
-        onAnalyze={() => options.onAnalyze(entry.id)}
-        onOpenOptions={options.onOpenOptions}
-      />,
-      entry.host.container,
+    redrawKeepingFocus(
+      entry.host,
+      () =>
+        render(
+          <GridButton
+            view={store.get(entry.id)}
+            title={entry.title}
+            onAnalyze={() => options.onAnalyze(entry.id)}
+            onOpenOptions={options.onOpenOptions}
+          />,
+          entry.host.container,
+        ),
+      // The verdict is a link, every other state a button: either way, the one control there is.
+      (root) => root.querySelector<HTMLElement>('a, button'),
     );
   }
 

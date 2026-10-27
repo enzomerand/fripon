@@ -3,7 +3,7 @@ import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BatchState } from '../../lib/grid/batch';
-import { GridBar, confirmText, endNotice } from './GridBar';
+import { GridBar, confirmText, endNotice, focusTargetOf } from './GridBar';
 
 // The stylesheet as written: happy-dom lays nothing out, so the rule itself is what is checked.
 const css = readFileSync('ui/grid/grid.css', 'utf8');
@@ -124,5 +124,19 @@ describe('endNotice', () => {
   it('counts the cards analysed before the user stopped it', () => {
     expect(endNotice({ reason: 'stopped', analysed: 1 })).toBe('Analyse arrêtée après 1 article.');
     expect(endNotice({ reason: 'stopped', analysed: 6 })).toBe('Analyse arrêtée après 6 articles.');
+  });
+});
+
+describe('focusTargetOf', () => {
+  it('is the safe answer of a confirmation and the stop of a running batch', () => {
+    expect(focusTargetOf({ phase: 'confirm', total: 3, remaining: 5 })).toBe('cancel');
+    expect(focusTargetOf({ phase: 'running', total: 3, position: 1, stopping: false })).toBe(
+      'stop',
+    );
+  });
+
+  it('is the bar once a batch has ended, the button before any', () => {
+    expect(focusTargetOf({ phase: 'idle', last: { reason: 'quota', analysed: 2 } })).toBe('region');
+    expect(focusTargetOf({ phase: 'idle', last: null })).toBe('ask');
   });
 });

@@ -1,6 +1,14 @@
 import { render } from 'preact';
 import { createBatch, type AnalyzeResult } from '../../lib/grid/batch';
-import { BAR_HOST_TAG, createHost, createSharedStyles, type Host } from '../../lib/grid/host';
+import {
+  BAR_HOST_TAG,
+  BUTTON_HOST_TAG,
+  createHost,
+  createSharedStyles,
+  hasFocus,
+  redrawKeepingFocus,
+  type Host,
+} from '../../lib/grid/host';
 import {
   quickAnalysis,
   SEARCH_IMPOSSIBLE,
@@ -12,7 +20,7 @@ import { isShown } from '../../lib/grid/viewport';
 import type { ImageGate } from '../../lib/gate';
 import type { OptionsSection } from '../../lib/messages';
 import { findResultsAnchor, readGridCard } from '../../lib/vinted/grid';
-import { GridBar } from './GridBar';
+import { GridBar, focusTargetOf } from './GridBar';
 import { createGridInjector, type LiveCard } from './injector';
 
 export type { AnalyzeResult };
@@ -138,21 +146,34 @@ export function createGridController(options: GridControllerOptions): GridContro
   }
 
   function drawBar(host: Host, visibleCount: number) {
-    render(
-      <GridBar
-        visibleCount={visibleCount}
-        batch={batch.state()}
-        onAsk={() => void batch.ask(pendingInView())}
-        onLaunch={() => void batch.launch()}
-        onCancel={() => batch.cancel()}
-        onStop={() => batch.stop()}
-      />,
-      host.container,
+    const state = batch.state();
+    redrawKeepingFocus(
+      host,
+      () =>
+        render(
+          <GridBar
+            visibleCount={visibleCount}
+            batch={state}
+            onAsk={() => void batch.ask(pendingInView())}
+            onLaunch={() => void batch.launch()}
+            onCancel={() => batch.cancel()}
+            onStop={() => batch.stop()}
+          />,
+          host.container,
+        ),
+      (root) => root.querySelector<HTMLElement>(`[data-focus="${focusTargetOf(state)}"]`),
     );
   }
 
+  /** Takes the bar out of the page. The focus it held (a batch just ended) goes to the first block. */
   function hideBar() {
-    if (bar?.element.isConnected) bar.element.remove();
+    if (!bar?.element.isConnected) return;
+    const had = hasFocus(bar);
+    bar.element.remove();
+    if (!had) return;
+    const first = injector.cards().sort(inPageOrder)[0];
+    const block = first?.element.querySelector(BUTTON_HOST_TAG);
+    block?.shadowRoot?.querySelector<HTMLElement>('a, button')?.focus();
   }
 
   function refreshBar() {
