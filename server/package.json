@@ -13,7 +13,8 @@
     "test": "vitest run",
     "build:resync": "esbuild scripts/stripe-resync.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=dist/stripe-resync.js",
     "stripe:resync": "npm run build:resync && node --env-file-if-exists=.env dist/stripe-resync.js",
-    "stripe:setup": "esbuild scripts/stripe-setup.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=dist/stripe-setup.js && node --env-file-if-exists=.env dist/stripe-setup.js"
+    "build:setup": "esbuild scripts/stripe-setup.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=dist/stripe-setup.js",
+    "stripe:setup": "npm run build:setup && node --env-file-if-exists=.env dist/stripe-setup.js"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",

@@ -25,8 +25,9 @@ COPY server/src ./src
 COPY server/scripts ./scripts
 # The bundles keep their npm packages external (--packages=external): after the build, only the
 # production ones stay in node_modules. dist/stripe-resync.js is the one-off maintenance command
-# (`docker compose exec fripon-cloud node dist/stripe-resync.js`, see docs/cloud.md).
-RUN npm run build && npm run build:resync && npm prune --omit=dev
+# (`docker compose exec fripon-cloud node dist/stripe-resync.js`, see docs/cloud.md) and
+# dist/stripe-setup.js the Stripe setup that `scripts/configure.sh` runs on the server.
+RUN npm run build && npm run build:resync && npm run build:setup && npm prune --omit=dev
 
 # ---- runtime: production node_modules + the bundle, nothing else ----
 FROM node:22.23.4-bookworm-slim AS runtime
@@ -40,6 +41,7 @@ COPY server/package.json ./package.json
 COPY --from=build /app/server/node_modules ./node_modules
 COPY --from=build /app/server/dist/main.js ./dist/main.js
 COPY --from=build /app/server/dist/stripe-resync.js ./dist/stripe-resync.js
+COPY --from=build /app/server/dist/stripe-setup.js ./dist/stripe-setup.js
 
 # The SQLite database (and its -wal / -shm files) lives in /data. The directory is created and
 # handed to the `node` user (uid 1000) before VOLUME, so a new named volume inherits that owner.
