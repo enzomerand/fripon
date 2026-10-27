@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
+import type { Verdict } from '../model';
 import {
   analyzeImageViaBackground,
   askGates,
   askVisionRemaining,
   openOptions,
   searchDeps,
+  setVerdictBadge,
 } from './client';
 
 afterEach(() => {
@@ -82,5 +84,44 @@ describe('requests of the grid and the card', () => {
     expect(() => openOptions('credits')).not.toThrow();
     await Promise.resolve();
     expect(spy).toHaveBeenCalledWith({ type: 'openOptions', section: 'credits' });
+  });
+
+  describe('setVerdictBadge', () => {
+    it('sends the level and the title only', () => {
+      const spy = vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue(undefined as never);
+      // A whole verdict goes in, as the card has it: the lines do not travel.
+      const verdict: Verdict = {
+        level: 'review',
+        title: 'À vérifier',
+        lines: ['Une ligne.'],
+        withoutImageSearch: false,
+      };
+      setVerdictBadge(verdict);
+      expect(spy).toHaveBeenCalledOnce();
+      expect(spy).toHaveBeenCalledWith({
+        type: 'setVerdictBadge',
+        verdict: { level: 'review', title: 'À vérifier' },
+      });
+    });
+
+    it('sends null to clear the badge', () => {
+      const spy = vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue(undefined as never);
+      setVerdictBadge(null);
+      expect(spy).toHaveBeenCalledWith({ type: 'setVerdictBadge', verdict: null });
+    });
+
+    // A rejection nobody handles would fail the whole run.
+    it('never rejects nor throws, even when the extension context is gone', async () => {
+      const spy = vi
+        .spyOn(browser.runtime, 'sendMessage')
+        .mockRejectedValue(new Error('Extension context invalidated.'));
+      expect(() => setVerdictBadge({ level: 'clean', title: 'Rien de suspect' })).not.toThrow();
+      spy.mockImplementation(() => {
+        throw new Error('Extension context invalidated.');
+      });
+      expect(() => setVerdictBadge(null)).not.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
   });
 });
