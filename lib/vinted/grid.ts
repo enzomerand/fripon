@@ -15,10 +15,6 @@ export interface GridCard {
   photoUrl: string | null;
   /** The brand line of the card ("Shein"), '' when it has none. */
   title: string;
-  /** Size and condition ("M · Très bon état"). */
-  subtitle: string;
-  /** The price as shown, without fees ("12,00 €"). */
-  priceText: string;
   /** The card's root element. */
   element: Element;
   /** The block of the card's text that ends with the price: the button goes right after it. */
@@ -169,8 +165,6 @@ export function readGridCard(element: Element): GridCard | null {
     url: link?.id === id ? link.url : new URL(`/items/${id}`, base).href,
     photoUrl: pickPhotoUrl([image?.currentSrc, image?.src]),
     title: squash(element.querySelector(GRID_SELECTORS.title)?.textContent),
-    subtitle: squash(element.querySelector(GRID_SELECTORS.subtitle)?.textContent),
-    priceText: squash(element.querySelector(GRID_SELECTORS.price)?.textContent),
     element,
     anchor,
   };

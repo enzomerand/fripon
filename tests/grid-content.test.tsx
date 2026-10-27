@@ -4,6 +4,7 @@ import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { ContentScriptContext } from 'wxt/utils/content-script-context';
 import script from '../entrypoints/grid.content';
 import { VINTED_ITEM_MATCHES, VINTED_PAGE_MATCHES } from '../lib/vinted/domains';
+import { ANALYZED_PHOTO, until } from './grid-helpers';
 
 // Integration test of the grid content script on a synthetic results page. Every id and name is
 // made up.
@@ -46,14 +47,6 @@ const sent = (type: string): Sent[] =>
     .mock.calls.map(([message]) => message as unknown as Sent)
     .filter((message) => message.type === type);
 
-async function until(predicate: () => boolean, timeoutMs = 2_000) {
-  const start = Date.now();
-  while (!predicate()) {
-    if (Date.now() - start > timeoutMs) throw new Error('Timed out');
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-}
-
 beforeEach(() => {
   fakeBrowser.reset();
   (window as unknown as HappyWindow).happyDOM.setURL(CATALOG_URL);
@@ -64,7 +57,7 @@ beforeEach(() => {
     if (message.type === 'searchImage') return Promise.resolve(searchAnswer);
     if (message.type === 'getGates') return Promise.resolve({ image: 'ready', ai: 'no_key' });
     if (message.type === 'openOptions') return Promise.resolve(undefined);
-    return Promise.resolve({ ok: true, hash: '0f0f0f0f0f0f0f0f', catalogScore: 0.1 });
+    return Promise.resolve(ANALYZED_PHOTO);
   }) as never);
   ctx = new ContentScriptContext('grid', { matches: [] });
 });

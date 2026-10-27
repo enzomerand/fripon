@@ -1,9 +1,8 @@
-import { capLocalHeuristics, searchPhoto, type SearchDeps } from '../analysis';
+import { analyzePhoto, capLocalHeuristics, searchPhoto, type SearchDeps } from '../analysis';
 import { imageCheckForSearch } from '../checks/image';
 import { checkPhotos } from '../checks/photos';
 import { priceCheck } from '../checks/price';
 import { isKeyFailure } from '../google/refusal';
-import { hexToHash } from '../image/pixels';
 import type { AnalyzeImageResponse } from '../messages';
 import type { CheckResult, VerdictLevel } from '../model';
 import { computeVerdict } from '../verdict';
@@ -67,19 +66,6 @@ export function compactVerdict(image: CheckResult, photos: CheckResult): Compact
   };
 }
 
-/** The photos row for the thumbnail; never rejects: a photo that cannot be read is an off row. */
-async function localPhotosRow(photoUrl: string, deps: QuickAnalysisDeps): Promise<CheckResult> {
-  try {
-    const response = await deps.analyzeImage(photoUrl);
-    const main = response?.ok
-      ? { hash: hexToHash(response.hash), catalogScore: response.catalogScore }
-      : null;
-    return checkPhotos({ main, others: [] });
-  } catch {
-    return checkPhotos({ main: null, others: [] });
-  }
-}
-
 /**
  * The reduced analysis of one card, started by a click: the reverse image search of its thumbnail
  * (which spends a Vision credit, unless this photo was searched in the last 7 days) and the local
@@ -97,7 +83,7 @@ export async function quickAnalysis(
   if (!photoUrl) return { status: 'noPhoto' };
   const [response, photos] = await Promise.all([
     searchPhoto(photoUrl, deps, false, retry),
-    localPhotosRow(photoUrl, deps),
+    analyzePhoto(photoUrl, deps).then((main) => checkPhotos({ main, others: [] })),
   ]);
   switch (response.status) {
     case 'ok':

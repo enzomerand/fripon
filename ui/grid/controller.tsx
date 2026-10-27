@@ -25,8 +25,6 @@ import { findResultsAnchor, readGridCard } from '../../lib/vinted/grid';
 import { GridBar, focusTargetOf } from './GridBar';
 import { createGridInjector, type LiveCard } from './injector';
 
-export type { AnalyzeResult };
-
 export interface GridControllerOptions {
   doc: Document;
   /** The CSS of the blocks, shared by all their shadow roots. */

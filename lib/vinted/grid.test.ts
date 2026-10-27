@@ -86,7 +86,7 @@ function feedCard(id = '9000201'): string {
 }
 
 describe('reading the cards of a page', () => {
-  it('reads a catalogue card: id, item url, photo, title, subtitle, price', () => {
+  it('reads a catalogue card: id, item url, photo, title', () => {
     const doc = page(catalogCard());
     const [card, ...rest] = readGridCards(doc);
     expect(rest).toEqual([]);
@@ -94,8 +94,6 @@ describe('reading the cards of a page', () => {
       id: '9000101',
       photoUrl: THUMB,
       title: 'Marque Test',
-      subtitle: 'M · Très bon état',
-      priceText: '12,00 €',
     });
     expect(new URL(card?.url ?? '').pathname).toBe('/items/9000101-robe-test');
     expect(new URL(card?.url ?? '').search).toBe('?referrer=catalog');
@@ -117,8 +115,6 @@ describe('reading the cards of a page', () => {
       url: 'https://www.vinted.fr/items/9000201-pull-test',
       photoUrl: THUMB,
       title: 'Autre Marque',
-      subtitle: 'L · Bon état',
-      priceText: '8,50 €',
     });
   });
 
@@ -191,8 +187,6 @@ describe('reading the cards of a page', () => {
       id: '9000103',
       photoUrl: null,
       title: '',
-      subtitle: '',
-      priceText: '',
     });
   });
 

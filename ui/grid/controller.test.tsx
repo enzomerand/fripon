@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuickAnalysisDeps } from '../../lib/grid/quick-analysis';
 import type { SearchImageResponse } from '../../lib/messages';
 import { BUTTON_HOST_TAG } from '../../lib/grid/host';
+import { analyzeImage, settle, until } from '../../tests/grid-helpers';
 import { createGridController, type GridController } from './controller';
 
 // A synthetic results page. Every id, name and photo is made up.
@@ -54,8 +55,7 @@ function start(html: string) {
     css: '.fripon-grid {}',
     deps: {
       searchImage: search,
-      analyzeImage: () =>
-        Promise.resolve({ ok: true, hash: '0f0f0f0f0f0f0f0f', catalogScore: 0.1 }),
+      analyzeImage,
     },
     openOptions,
     askImageGate: () => Promise.resolve('ready'),
@@ -72,16 +72,6 @@ const hostOf = (id: number) => rootOf(id).querySelector(BUTTON_HOST_TAG) as HTML
 const shadowText = (host: HTMLElement | null) => host?.shadowRoot?.textContent ?? '';
 const shadowButton = (host: HTMLElement | null) =>
   host?.shadowRoot?.querySelector('button') as HTMLButtonElement;
-
-async function until(predicate: () => boolean, timeoutMs = 2_000) {
-  const start = Date.now();
-  while (!predicate()) {
-    if (Date.now() - start > timeoutMs) throw new Error('Timed out');
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-}
-
-const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
 
 beforeEach(() => {
   document.body.innerHTML = '<main><div id="grid"></div></main>';

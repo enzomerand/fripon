@@ -228,7 +228,10 @@ async function mapWithConcurrency<T, R>(
 }
 
 /** null when the photo could not be fetched or decoded: the check then skips it. */
-async function analyzePhoto(url: string, deps: AnalysisDeps): Promise<PhotoAnalysis | null> {
+export async function analyzePhoto(
+  url: string,
+  deps: Pick<AnalysisDeps, 'analyzeImage'>,
+): Promise<PhotoAnalysis | null> {
   try {
     const response = await deps.analyzeImage(url);
     if (!response.ok) return null;

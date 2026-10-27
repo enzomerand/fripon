@@ -3,6 +3,7 @@ import type { ImageGate } from '../../lib/gate';
 import { BAR_HOST_TAG, BUTTON_HOST_TAG } from '../../lib/grid/host';
 import type { QuickAnalysisDeps } from '../../lib/grid/quick-analysis';
 import type { SearchImageResponse } from '../../lib/messages';
+import { analyzeImage, settle, until as waitUntil } from '../../tests/grid-helpers';
 import { createGridController, type GridController } from './controller';
 
 // The bar above the results, on a synthetic results page. Every id and photo is made up.
@@ -44,8 +45,7 @@ function start(html = IDS.map((id) => card(id)).join('')) {
     css: '',
     deps: {
       searchImage: search,
-      analyzeImage: () =>
-        Promise.resolve({ ok: true, hash: '0f0f0f0f0f0f0f0f', catalogScore: 0.1 }),
+      analyzeImage,
     },
     openOptions: vi.fn(),
     askImageGate: () => Promise.resolve(gate),
@@ -71,15 +71,7 @@ const cardText = (id: number) =>
   document.querySelector(`[data-testid="product-item-id-${id}"] ${BUTTON_HOST_TAG}`)?.shadowRoot
     ?.textContent ?? '';
 
-async function until(predicate: () => boolean, timeoutMs = 2_000) {
-  const begin = Date.now();
-  while (!predicate()) {
-    if (Date.now() - begin > timeoutMs) throw new Error(`Timed out: ${barText()}`);
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-}
-
-const settle = () => new Promise((resolve) => setTimeout(resolve, 40));
+const until = (predicate: () => boolean) => waitUntil(predicate, undefined, barText);
 
 beforeEach(() => {
   document.body.innerHTML = '<main><h1>Résultats</h1><div id="grid"></div><nav></nav></main>';

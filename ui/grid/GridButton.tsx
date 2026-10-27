@@ -98,18 +98,10 @@ function Body({ view, title, onAnalyze, onOpenOptions }: GridButtonProps) {
         </button>
       );
     case 'noPhoto':
-      return (
-        <>
-          <p class="fripon-grid__note">{PHOTO_UNAVAILABLE}</p>
-          <button type="button" class="fripon-grid__button" onClick={press(onAnalyze)}>
-            {RETRY_LABEL}
-          </button>
-        </>
-      );
     case 'error':
       return (
         <>
-          <p class="fripon-grid__note">{view.line}</p>
+          <p class="fripon-grid__note">{view.status === 'error' ? view.line : PHOTO_UNAVAILABLE}</p>
           <button type="button" class="fripon-grid__button" onClick={press(onAnalyze)}>
             {RETRY_LABEL}
           </button>

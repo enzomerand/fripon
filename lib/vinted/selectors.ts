@@ -68,7 +68,6 @@ export const GRID_SELECTORS = {
   /** Brand and size lines. A card without it is not a whole card (a promotion, a card still being drawn). */
   description: '[data-testid$="--description"]',
   title: '[data-testid$="--description-title"]',
-  subtitle: '[data-testid$="--description-subtitle"]',
   price: '[data-testid$="--price-text"]',
   /** Total with fees and the service fee, under the price: the last block of the card's text. */
   breakdown: '[data-testid$="--breakdown"]',
