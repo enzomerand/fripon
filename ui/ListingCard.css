@@ -196,6 +196,31 @@
   text-decoration: underline;
 }
 
+.fripon__ai {
+  margin-top: 8px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.fripon__ai-title {
+  margin-bottom: 2px;
+  font-weight: 700;
+}
+
+.fripon__ai-text {
+  margin: 0;
+}
+
+.fripon__ai-note {
+  margin: 4px 0 0;
+  color: #4a4a4a;
+  font-size: 12px;
+}
+
 .fripon__foot {
   margin: 8px 0 0;
   color: #4a4a4a;

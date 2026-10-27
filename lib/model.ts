@@ -100,6 +100,14 @@ export interface ImageMatch {
   price: Money | null;
 }
 
+/** What the AI (Gemini) says about a listing. It confirms a signal and writes a summary; it never decides the verdict. */
+export interface AiReview {
+  /** true only when the AI sees a catalogue or studio photo (plain background, posed model...). */
+  catalogPhoto: boolean;
+  /** One to three simple French sentences summarising the signals for the buyer. */
+  summary: string;
+}
+
 export type VerdictLevel = 'dropshipping' | 'resold' | 'review' | 'clean';
 
 export interface Verdict {

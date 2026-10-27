@@ -41,6 +41,10 @@ export function GuideSection({
         onToggle={(event) => onGeminiToggle(event.currentTarget.open)}
       >
         <summary>Gemini : gratuit, sans carte bancaire</summary>
+        <p class="muted">
+          Avec l'offre gratuite, Google peut utiliser la photo, le titre, la description, le prix et
+          les indices calculés par Fripon envoyés pour améliorer ses services.
+        </p>
         <Steps>
           <li>
             Ouvre <Ext href="https://aistudio.google.com/apikey">Google AI Studio</Ext>.

@@ -19,7 +19,7 @@ describe('DEFAULT_SETTINGS', () => {
     expect(DEFAULT_SETTINGS).toEqual({
       mode: 'auto',
       keys: { vision: '', gemini: '' },
-      caps: { vision: 1_000, gemini: 20 },
+      caps: { vision: 1_000, gemini: 100 },
     });
   });
 });
@@ -49,6 +49,37 @@ describe('parseSettings', () => {
       mode: 'auto',
       keys: { vision: '', gemini: 'AIzaGemini' },
       caps: { vision: 1_000, gemini: 5 },
+    });
+  });
+
+  describe('the Gemini cap of the old default', () => {
+    it('reads a stored 20, the default until the AI review shipped, as the new default', () => {
+      expect(parseSettings({ caps: { vision: 500, gemini: 20 } }).caps).toEqual({
+        vision: 500,
+        gemini: 100,
+      });
+    });
+
+    it('leaves every other Gemini cap as it is, no cap included', () => {
+      for (const gemini of [1, 19, 21, 100, 250, null]) {
+        expect(parseSettings({ caps: { gemini } }).caps.gemini).toBe(gemini);
+      }
+    });
+
+    it('does not touch a Vision cap of 20', () => {
+      expect(parseSettings({ caps: { vision: 20 } }).caps.vision).toBe(20);
+    });
+
+    it('is saved as the new default by the next save, whatever it changes', async () => {
+      await browser.storage.local.set({
+        [SETTINGS_KEY]: { mode: 'auto', keys: {}, caps: { vision: 1_000, gemini: 20 } },
+      });
+      expect((await loadSettings()).caps.gemini).toBe(100);
+      await saveSettings({ mode: 'click' });
+      const stored = (await browser.storage.local.get(SETTINGS_KEY))[SETTINGS_KEY] as {
+        caps: { gemini: number };
+      };
+      expect(stored.caps.gemini).toBe(100);
     });
   });
 
@@ -138,7 +169,7 @@ describe('loadSettings / saveSettings', () => {
       caps: { vision: 0, gemini: 1.5 },
     });
     expect(saved.mode).toBe('click');
-    expect(saved.caps).toEqual({ vision: 300, gemini: 20 });
+    expect(saved.caps).toEqual({ vision: 300, gemini: 100 });
   });
 
   it('never loses a save to a racing one', async () => {

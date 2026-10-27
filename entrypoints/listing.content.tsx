@@ -1,16 +1,21 @@
 import { render } from 'preact';
 import type { ContentScriptContext } from 'wxt/utils/content-script-context';
+import { aiBlockFor, type AiBlock } from '../lib/ai/block';
+import { imageBasis } from '../lib/ai/input';
 import {
   AnalysisCancelledError,
   analyzeListing,
+  askAiReview,
   searchPhoto,
+  withAiReview,
   withImageSearch,
+  type AiDeps,
   type AnalysisDeps,
   type AnalysisResult,
   type SearchDeps,
 } from '../lib/analysis';
-import { imageCheckSearching } from '../lib/checks/image';
-import type { ImageGate } from '../lib/gate';
+import { imageCheckSearching, imageSearchCanBeRetried } from '../lib/checks/image';
+import type { Gate, Gates } from '../lib/gate';
 import { sendMessage, type OptionsSection } from '../lib/messages';
 import type { Listing } from '../lib/model';
 import { waitFor } from '../lib/wait';
@@ -35,22 +40,41 @@ const analysisDeps: AnalysisDeps = {
 };
 
 const searchDeps: SearchDeps = {
-  searchImage: (photoUrl, cacheOnly) =>
-    sendMessage({ type: 'searchImage', photoUrl, ...(cacheOnly && { cacheOnly: true }) }),
+  searchImage: (photoUrl, cacheOnly, retry) =>
+    sendMessage({
+      type: 'searchImage',
+      photoUrl,
+      ...(cacheOnly && { cacheOnly: true }),
+      ...(retry && { retry: true }),
+    }),
 };
 
-const IMAGE_GATES: readonly ImageGate[] = ['ready', 'no_key', 'quota', 'manual'];
+const aiDeps: AiDeps = {
+  aiReview: (input, cacheOnly, retry) =>
+    sendMessage({
+      type: 'aiReview',
+      input,
+      ...(cacheOnly && { cacheOnly: true }),
+      ...(retry && { retry: true }),
+    }),
+};
+
+const GATE_WORDS: readonly Gate[] = ['ready', 'no_key', 'quota', 'manual'];
+const NO_GATES: Gates = { image: 'no_key', ai: 'no_key' };
+
+const wordOf = (gate: unknown): Gate =>
+  GATE_WORDS.includes(gate as Gate) ? (gate as Gate) : 'no_key';
 
 /**
- * What the background says about the image search. The keys never leave it: this is all we learn.
+ * What the background says about the paid steps. The keys never leave it: this is all we learn.
  * Any failure counts as "no key", the safe state in which nothing paid is attempted.
  */
-async function askImageGate(): Promise<ImageGate> {
+async function askGates(): Promise<Gates> {
   try {
-    const gate = await sendMessage({ type: 'getImageGate' });
-    return IMAGE_GATES.includes(gate) ? gate : 'no_key';
+    const gates = await sendMessage({ type: 'getGates' });
+    return { image: wordOf(gates?.image), ai: wordOf(gates?.ai) };
   } catch {
-    return 'no_key';
+    return NO_GATES;
   }
 }
 
@@ -60,21 +84,42 @@ function openOptions(section: OptionsSection) {
 
 type Ui = Awaited<ReturnType<typeof createShadowRootUi<HTMLElement>>>;
 
-/** What the card currently shows, kept to redo the verdict once the image search answers. */
+/** What the card currently shows, kept to redo the verdict once the paid steps answer. */
 interface Analysed {
   listing: Listing;
   result: AnalysisResult;
-  /** What the background said about the search when the page opened (a display hint). */
-  gate: ImageGate;
-  /** true while a search that can spend is running (not the look in the cache): a second one does not start. */
-  searching: boolean;
+  /** What the background said about the paid steps when the page opened (a display hint). */
+  gates: Gates;
+  /** The AI block of the expanded card, null when the card says nothing of the AI. */
+  ai: AiBlock | null;
+  /**
+   * true while a search, or a review, that can spend is running (not the look in the cache): a
+   * second one does not start. Apart on purpose: the retry of a search must never be ignored
+   * because a review is on its way.
+   */
+  busyImage: boolean;
+  busyAi: boolean;
+  /**
+   * true from a click until the review it may start has been asked: the review is sent with
+   * `retry`. It comes from the user, never from the page asking again by itself.
+   */
+  retryAsked: boolean;
+  /**
+   * What the image search had found (`imageBasis`) when the review was last asked or answered,
+   * null before any. A review is asked again only when this is no longer what the card shows.
+   */
+  aiBasis: string | null;
 }
 
 /**
- * auto: the search the card starts by itself once it is shown. click: the button of the image row.
- * One code path for both: automatic mode is a click nobody has to make.
+ * auto: the steps the card starts by itself once it is shown. click: the button of the card (the
+ * image row's, which starts the AI review along with it, or the AI block's). One code path for
+ * both: automatic mode is a click nobody has to make.
  */
-type SearchTrigger = 'auto' | 'click';
+type Trigger = 'auto' | 'click';
+
+/** Whether a step with this gate can really spend a credit. */
+const canSpend = (gate: Gate) => gate === 'ready' || gate === 'manual';
 
 /** Owns the card of this page: mounts it, updates it, and replaces it on a new run. */
 function createCardController(ctx: ContentScriptContext) {
@@ -95,68 +140,165 @@ function createCardController(ctx: ContentScriptContext) {
         state={state}
         onRetry={() => void start()}
         onOpenOptions={openOptions}
-        onRunImageSearch={() => searchImage('click')}
+        onRun={() => runPaidSteps('click')}
       />,
       container,
     );
   }
 
-  /** Starts the image search without waiting for it. Never rejects: a failure must not hurt the page. */
-  function searchImage(trigger: SearchTrigger) {
-    void runImageSearch(trigger).catch((error: unknown) => {
-      console.warn('[Fripon] The image search failed.', error);
+  /** Shows the current analysis; `searchingImage` puts the "search running" row in the image row's place. */
+  function showAnalysed(current: Analysed, searchingImage = false) {
+    const { listing, result } = current;
+    // The click that runs the search starts the review too: its button gives way to the block
+    // saying so, from the first render.
+    const ai: AiBlock | null =
+      searchingImage && current.ai?.status === 'waiting' && canSpend(current.gates.ai)
+        ? { status: 'running' }
+        : current.ai;
+    show({
+      status: 'done',
+      listing,
+      verdict: result.verdict,
+      checks: searchingImage
+        ? result.checks.map((check) => (check.id === 'image' ? imageCheckSearching() : check))
+        : result.checks,
+      ...(ai && { ai }),
+    });
+  }
+
+  /** Starts the paid steps without waiting for them. Never rejects: a failure must not hurt the page. */
+  function runPaidSteps(trigger: Trigger) {
+    void paidSteps(trigger).catch((error: unknown) => {
+      console.warn('[Fripon] The paid steps failed.', error);
     });
   }
 
   /**
-   * Searches the photo, then redoes the verdict from the checks the page already has: no new seller
-   * request, no new photo download, no free check run again.
+   * The image search, then the AI review with every signal including the search's result, then the
+   * verdict redone from the checks the page already has each time: no new seller request, no new
+   * photo download, no free check run again.
    *
-   * What the page asks follows the gate, but the background has the last word on keys and credits:
-   * - ready: the search, started as soon as the card shows (the image row already says it runs).
+   * What the page asks follows the gates, but the background has the last word on keys and credits:
+   * - ready: the real request, started as soon as the card shows (the rows already say it runs).
    * - no_key, quota: the same request. The background answers the same words without spending, or
-   *   with a result when this photo was searched before.
-   * - manual: by itself only a look in the cache (`cacheOnly`), which costs nothing; the click
-   *   sends the real search.
+   *   with a result when this listing was reviewed before.
+   * - manual: by itself only a look in the cache (`lookup`), which costs nothing; the click sends
+   *   the real request. A click starts the image search only when its row has the button (a manual
+   *   search, or the retry of a failed one).
+   *
+   * The review always follows the image row: it is asked again whenever the search's result is not
+   * the one the last review was based on (see `aiReviewSteps`).
    */
-  async function runImageSearch(trigger: SearchTrigger) {
+  async function paidSteps(trigger: Trigger) {
     const current = analysed;
     if (!current) return;
-    const { listing, result, gate } = current;
-    const cacheOnly = trigger === 'auto' && gate === 'manual';
-    // A look in the cache is quick and free: it never keeps a click from starting its search.
-    if (!cacheOnly) {
-      if (current.searching) return;
-      current.searching = true;
+    const { gates } = current;
+    if (trigger === 'click') current.retryAsked = true;
+    const imageHasButton =
+      current.result.checks.find((check) => check.id === 'image')?.action === 'run_image_search';
+    const lookup = trigger === 'auto' && gates.image === 'manual';
+    // A search already running is not started twice, and the review waits for its own turn.
+    if (
+      (trigger === 'auto' || imageHasButton) &&
+      !(await imageSearchStep(current, lookup, trigger))
+    ) {
+      return;
+    }
+    await aiReviewSteps(current, trigger);
+    // Unless a review that another call is running still has to use it.
+    if (!current.busyAi) current.retryAsked = false;
+  }
+
+  /** false when the search was not started because another one is running. */
+  async function imageSearchStep(current: Analysed, lookup: boolean, trigger: Trigger) {
+    // Only a search that can spend keeps another one from starting: a look in the cache is quick
+    // and free, and so is a request the gate says the background will refuse.
+    const spends = !lookup && canSpend(current.gates.image);
+    if (spends) {
+      if (current.busyImage) return false;
+      current.busyImage = true;
     }
     try {
       // The row already says "Recherche en cours…" when the search starts by itself; only a click
       // has to take the button's place.
-      if (trigger === 'click') {
-        show({
-          status: 'done',
-          listing,
-          verdict: result.verdict,
-          checks: result.checks.map((check) =>
-            check.id === 'image' ? imageCheckSearching() : check,
-          ),
-        });
-      }
-      const response = await searchPhoto(listing.photoUrls[0], searchDeps, cacheOnly);
+      if (trigger === 'click') showAnalysed(current, true);
+      // A click is the user asking for another attempt: no answer from the memory of a failure.
+      const response = await searchPhoto(
+        current.listing.photoUrls[0],
+        searchDeps,
+        lookup,
+        trigger === 'click',
+      );
       // A newer run (new item, bfcache restore) took the card over while the search ran.
-      if (analysed !== current) return;
+      if (analysed !== current) return true;
       // A look in the cache only ever shows a result: a miss, a failure or a lost message leaves the
       // "Au clic" row alone (it is not a failed search), and so does a click that got there first.
-      if (cacheOnly && (current.searching || response.status !== 'ok')) return;
-      current.result = withImageSearch(result, response);
-      show({
-        status: 'done',
-        listing,
-        verdict: current.result.verdict,
-        checks: current.result.checks,
-      });
+      if (lookup && (current.busyImage || response.status !== 'ok')) return true;
+      current.result = withImageSearch(current.result, response);
+      showAnalysed(current);
+      return true;
     } finally {
-      if (!cacheOnly) current.searching = false;
+      if (spends) current.busyImage = false;
+    }
+  }
+
+  /**
+   * Asks for the AI review until it is based on what the image row shows now. A review that was
+   * asked (or came from the cache) for another result of the search is stale: a click that ran the
+   * search after a cached review, a retry that succeeded. Asking again has a new cache key, so it
+   * may spend a credit, which is the point. A review is not asked again for the same result, even
+   * after a failure (reload the page to try again).
+   *
+   * One review runs at a time. A second call while one is running just returns: the running one
+   * looks at the image row when its answer comes, drops that answer if the row has changed since,
+   * and asks again. Its busy flag is not the search's, so the retry of a search is never ignored.
+   */
+  async function aiReviewSteps(current: Analysed, trigger: Trigger) {
+    const { gates } = current;
+    const lookup = trigger === 'auto' && gates.ai === 'manual';
+    // A click only starts what a credit can pay for; the rest is the background's to refuse.
+    if (trigger === 'click' && !canSpend(gates.ai)) return;
+    if (!lookup) {
+      if (current.busyAi) return;
+      current.busyAi = true;
+    }
+    try {
+      for (;;) {
+        if (analysed !== current || ctx.isInvalid) return;
+        // A failed search that offers its retry is not final: the review waits for the row to be
+        // (a result, no key, no credits left, or a failure that a new search would not change).
+        if (imageSearchCanBeRetried(current.result.checks.find((c) => c.id === 'image'))) return;
+        const basis = imageBasis(current.result.rawChecks);
+        if (current.aiBasis === basis) return;
+        if (!lookup) {
+          current.aiBasis = basis;
+          // With no key or no credits left the answer is immediate and shows nothing: no flash of
+          // "L'IA lit l'annonce…" then.
+          if (canSpend(gates.ai)) {
+            current.ai = { status: 'running' };
+            showAnalysed(current);
+          }
+        }
+        // Another attempt only when the user asked for one, never because the page asks again.
+        const retry = !lookup && current.retryAsked;
+        current.retryAsked = false;
+        const response = await askAiReview(current.listing, current.result, aiDeps, lookup, retry);
+        if (analysed !== current) return;
+        const stale = basis !== imageBasis(current.result.rawChecks);
+        if (lookup) {
+          // A look in the cache only ever shows a review, for the image row it was asked about.
+          if (current.busyAi || stale || response.status !== 'ok') return;
+          current.aiBasis = basis;
+        } else if (stale) {
+          continue;
+        }
+        current.result = withAiReview(current.result, response);
+        current.ai = aiBlockFor(response);
+        showAnalysed(current);
+        if (lookup) return;
+      }
+    } finally {
+      if (!lookup) current.busyAi = false;
     }
   }
 
@@ -229,7 +371,7 @@ function createCardController(ctx: ContentScriptContext) {
     show({ status: 'loading' });
 
     // Asked while the page is still being read; it never rejects.
-    const imageGate = askImageGate();
+    const pendingGates = askGates();
     const listing = await waitFor(() => readListing(document, location.href), {
       timeoutMs: LISTING_TIMEOUT_MS,
     });
@@ -243,19 +385,30 @@ function createCardController(ctx: ContentScriptContext) {
       return;
     }
 
-    const gate = await imageGate;
+    const gates = await pendingGates;
     const isCancelled = () => id !== runId || ctx.isInvalid;
     const result = await analyzeListing(listing, analysisDeps, {
-      imageGate: gate,
+      imageGate: gates.image,
       // A superseded run must not send further requests or download further photos.
       isCancelled,
     });
     if (id !== runId) return;
-    analysed = { listing, result, gate, searching: false };
-    show({ status: 'done', listing, verdict: result.verdict, checks: result.checks });
-    // The card does not wait for Google. The search starts only now, and only for a run that is
+    analysed = {
+      listing,
+      result,
+      gates,
+      // The button of the "Au clic" mode; otherwise the block appears when the review starts, which
+      // is after the image search is final.
+      ai: gates.ai === 'manual' ? { status: 'waiting' } : null,
+      busyImage: false,
+      busyAi: false,
+      retryAsked: false,
+      aiBasis: null,
+    };
+    showAnalysed(analysed);
+    // The card does not wait for Google. The paid steps start only now, and only for a run that is
     // still current: a superseded run (new item, bfcache restore, invalidated script) spends nothing.
-    if (!isCancelled()) searchImage('auto');
+    if (!isCancelled()) runPaidSteps('auto');
   }
 
   /** (Re)starts the whole run. Never rejects: the page must not be affected by a failure here. */

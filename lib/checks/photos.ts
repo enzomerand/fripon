@@ -12,6 +12,22 @@ export const REUSE_MAX_DISTANCE = 4;
 export const HASH_MIN_BITS = 12;
 export const HASH_MAX_BITS = 52;
 
+/** The sentences of the row, kept apart so the AI confirmation can tell which ones still hold. */
+const LOCAL_CATALOG_SENTENCE = 'Ressemble à une photo catalogue : fond uni et clair.';
+const NOTHING_NOTABLE_SENTENCE = 'Pas de signe de photo catalogue ni de photo réutilisée.';
+const NOT_ANALYSED_SENTENCE = "La photo n'a pas pu être analysée.";
+/** What the row says when the AI confirms a catalogue shot that an exact image match backs. */
+export const AI_CATALOG_TAG = 'Photo catalogue';
+export const AI_CATALOG_SENTENCE = "L'IA confirme une photo de catalogue ou de studio.";
+/** ... when it only sees one, with nothing else to back it: a weak hint, like the local one. */
+export const AI_SEEN_TAG = 'Photo type catalogue';
+export const AI_SEEN_SENTENCE = "L'IA voit une photo de catalogue ou de studio.";
+/** ... when the local analysis could not read the photo at all, with or without the match. */
+export const AI_CATALOG_UNREAD_SENTENCE =
+  "L'IA confirme une photo de catalogue ou de studio (analyse locale impossible).";
+export const AI_SEEN_UNREAD_SENTENCE =
+  "L'IA voit une photo de catalogue (analyse locale impossible).";
+
 export interface PhotosInput {
   /** Hash and catalogue score of the listing's main photo, null when it could not be analysed. */
   main: { hash: bigint; catalogScore: number } | null;
@@ -42,7 +58,7 @@ export function checkPhotos(input: PhotosInput): CheckResult {
       id: 'photos',
       status: 'off',
       tag: 'Non analysée',
-      detail: "La photo n'a pas pu être analysée.",
+      detail: NOT_ANALYSED_SENTENCE,
       signals: [],
     };
   }
@@ -56,14 +72,13 @@ export function checkPhotos(input: PhotosInput): CheckResult {
   if (reusedOn > 0) signals.push({ id: 'photo_reused', strength: 'weak' });
 
   const sentences: string[] = [];
-  if (catalog) sentences.push('Ressemble à une photo catalogue : fond uni et clair.');
+  if (catalog) sentences.push(LOCAL_CATALOG_SENTENCE);
   if (reusedOn > 0) {
     sentences.push(
       `La même photo sert sur ${reusedOn} autre${reusedOn === 1 ? '' : 's'} annonce${reusedOn === 1 ? '' : 's'} du vendeur.`,
     );
   }
-  if (sentences.length === 0)
-    sentences.push('Pas de signe de photo catalogue ni de photo réutilisée.');
+  if (sentences.length === 0) sentences.push(NOTHING_NOTABLE_SENTENCE);
 
   return {
     id: 'photos',
@@ -71,5 +86,45 @@ export function checkPhotos(input: PhotosInput): CheckResult {
     tag: catalog ? 'Photo type catalogue' : reusedOn > 0 ? 'Photo réutilisée' : 'Rien de notable',
     detail: sentences.join(' '),
     signals,
+  };
+}
+
+/**
+ * The photos row once the AI says the photo is a catalogue or studio shot. The AI judged the
+ * photo alone, whatever the local score said (a decorated background fools the local heuristic).
+ *
+ * How much that is worth depends on `backedByExactMatch`, whether the image search found this very
+ * photo on a product page:
+ * - with it, the `catalog_photo` signal is strong and the row red: "L'IA confirme…";
+ * - without it, the signal stays weak and the row orange, like the local one: "L'IA voit…". A
+ *   catalogue-looking photo alone proves nothing, so the AI by itself never moves a verdict
+ *   through a strong signal.
+ *
+ * What the local row still says about reuse is kept; its own catalogue sentence, its "nothing
+ * notable" and its "not analysed" give way to the AI's (which says so when the local analysis
+ * could not read the photo, still saying how sure it is). Only a "yes" goes through here: when
+ * the AI says the photo is not a catalogue shot, the local row stays as it is.
+ */
+export function confirmCatalogPhoto(photos: CheckResult, backedByExactMatch: boolean): CheckResult {
+  const kept = [LOCAL_CATALOG_SENTENCE, NOTHING_NOTABLE_SENTENCE, NOT_ANALYSED_SENTENCE]
+    .reduce((detail, sentence) => detail.replace(sentence, ''), photos.detail)
+    .trim();
+  const unread = photos.status === 'off';
+  const sentence = backedByExactMatch
+    ? unread
+      ? AI_CATALOG_UNREAD_SENTENCE
+      : AI_CATALOG_SENTENCE
+    : unread
+      ? AI_SEEN_UNREAD_SENTENCE
+      : AI_SEEN_SENTENCE;
+  return {
+    ...photos,
+    status: backedByExactMatch ? 'bad' : 'warn',
+    tag: backedByExactMatch ? AI_CATALOG_TAG : AI_SEEN_TAG,
+    detail: kept === '' ? sentence : `${sentence} ${kept}`,
+    signals: [
+      { id: 'catalog_photo', strength: backedByExactMatch ? 'strong' : 'weak' },
+      ...photos.signals.filter((signal) => signal.id !== 'catalog_photo'),
+    ],
   };
 }

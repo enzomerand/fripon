@@ -54,6 +54,19 @@ const parseCap = (value: unknown): number | null | undefined =>
       ? (value as number)
       : undefined;
 
+/**
+ * The Gemini cap that was the default before the AI review shipped. `saveSettings` writes every
+ * provider's cap, so anyone who saved anything (a key, the mode) has this 20 stored without ever
+ * having chosen it, and would keep it for good. It is read as the new default instead (a one-time
+ * migration, done at read time: the next save writes the new value). The price of that is that
+ * nobody can choose exactly 20 a day on purpose; 19 or 21 are there for them.
+ */
+const OLD_GEMINI_DEFAULT_CAP = 20;
+
+/** undefined (= the default) for the old default, the cap as it is for anything else. */
+const migrateGeminiCap = (cap: number | null | undefined) =>
+  cap === OLD_GEMINI_DEFAULT_CAP ? undefined : cap;
+
 function orDefault<T>(value: T | undefined, fallback: T): T {
   return value === undefined ? fallback : value;
 }
@@ -72,7 +85,7 @@ export function parseSettings(raw: unknown): Settings {
     },
     caps: {
       vision: orDefault(parseCap(caps.vision), d.caps.vision),
-      gemini: orDefault(parseCap(caps.gemini), d.caps.gemini),
+      gemini: orDefault(migrateGeminiCap(parseCap(caps.gemini)), d.caps.gemini),
     },
   };
 }

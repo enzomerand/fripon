@@ -1,12 +1,14 @@
+import { buildReviewInput, type AiReviewInput } from './ai/input';
 import { checkDescription } from './checks/description';
 import { imageCheckForSearch, imageCheckOff, imageCheckSearching } from './checks/image';
-import { checkPhotos } from './checks/photos';
-import { priceCheckOff } from './checks/price';
+import { checkPhotos, confirmCatalogPhoto } from './checks/photos';
+import { priceCheck } from './checks/price';
 import { checkSeller } from './checks/seller';
 import type { ImageGate } from './gate';
 import { hexToHash } from './image/pixels';
-import type { AnalyzeImageResponse, SearchImageResponse } from './messages';
+import type { AiReviewResponse, AnalyzeImageResponse, SearchImageResponse } from './messages';
 import type {
+  AiReview,
   CheckId,
   CheckResult,
   ImageMatch,
@@ -34,8 +36,20 @@ export interface AnalysisDeps {
  * `searchPhoto` and `withImageSearch`), automatically or on a click.
  */
 export interface SearchDeps {
-  /** With `cacheOnly` the background never spends: the cached result, or `not_cached`. */
-  searchImage(photoUrl: string, cacheOnly?: boolean): Promise<SearchImageResponse>;
+  /**
+   * With `cacheOnly` the background never spends: the cached result, or `not_cached`. With `retry`
+   * (a click) it tries again a failure it remembers for a moment.
+   */
+  searchImage(photoUrl: string, cacheOnly?: boolean, retry?: boolean): Promise<SearchImageResponse>;
+}
+
+/**
+ * The AI review, apart from `AnalysisDeps` and `SearchDeps` for the same reason: it is a paid call
+ * that runs on its own, after the image search, with every signal the card already has.
+ */
+export interface AiDeps {
+  /** Same as for `searchImage`: the cached review, or `not_cached`, and `retry` on a click. */
+  aiReview(input: AiReviewInput, cacheOnly?: boolean, retry?: boolean): Promise<AiReviewResponse>;
 }
 
 export interface AnalysisOptions {
@@ -58,10 +72,13 @@ export interface AnalysisResult {
   /** In display order: image, price, seller, photos, description. */
   checks: CheckResult[];
   /**
-   * The same rows before `capLocalHeuristics`: whether a local row may be red depends on the image
-   * matches, so a later image search (after a click) must start from these, not from `checks`.
+   * The same rows before `capLocalHeuristics` and before the AI review: whether a local row may be
+   * red depends on the image matches, and the AI confirmation is applied on top, so a later image
+   * search or review must start from these, not from `checks`.
    */
   rawChecks: CheckResult[];
+  /** What the AI said, null until a review came back. Only `catalogPhoto` can change the rows. */
+  aiReview: AiReview | null;
 }
 
 interface PhotoAnalysis {
@@ -98,10 +115,11 @@ export async function searchPhoto(
   photoUrl: string | undefined,
   deps: SearchDeps,
   cacheOnly = false,
+  retry = false,
 ): Promise<SearchImageResponse> {
   if (!photoUrl) return { status: 'error', reason: 'photo' };
   try {
-    const response = await deps.searchImage(photoUrl, cacheOnly);
+    const response = await deps.searchImage(photoUrl, cacheOnly, retry);
     // A background that did not answer at all resolves with `undefined`.
     return typeof response?.status === 'string' ? response : { status: 'error', reason: 'network' };
   } catch {
@@ -110,15 +128,61 @@ export async function searchPhoto(
 }
 
 /**
- * Caps the local rows by what the image row found, then decides the verdict. This is the one path
- * both `analyzeListing` and `withImageSearch` end in, so the price comparison of lot 3b belongs
- * here: the price row and `priceRatio` depend on the original price of the exact match, and
- * building them anywhere else would leave the "Au clic" path with the old row and a null ratio.
+ * Asks the AI to review the listing from the signals of `result` (a paid call, unless
+ * `cacheOnly`). Never rejects: a listing without a photo, a background that does not answer or a
+ * context that was invalidated all count as a failed review.
  */
-function assemble(rawChecks: CheckResult[]): AnalysisResult {
-  const imageMatches = rawChecks.find((check) => check.id === 'image')?.matches ?? [];
-  const checks = capLocalHeuristics(rawChecks, imageMatches);
-  return { verdict: computeVerdict({ checks, imageMatches, priceRatio: null }), checks, rawChecks };
+export async function askAiReview(
+  listing: Listing,
+  result: AnalysisResult,
+  deps: AiDeps,
+  cacheOnly = false,
+  retry = false,
+): Promise<AiReviewResponse> {
+  if (!listing.photoUrls[0]) return { status: 'error', reason: 'photo' };
+  try {
+    const response = await deps.aiReview(
+      buildReviewInput(listing, result.rawChecks),
+      cacheOnly,
+      retry,
+    );
+    // A background that did not answer at all resolves with `undefined`.
+    return typeof response?.status === 'string' ? response : { status: 'error', reason: 'network' };
+  } catch {
+    return { status: 'error', reason: 'network' };
+  }
+}
+
+/**
+ * Applies the AI review to the rows, caps the local rows by what the image row found, then decides
+ * the verdict. This is the one path `analyzeListing`, `withImageSearch` and `withAiReview` all end
+ * in, so the steps compose in any order: each one swaps its own input and the rest is redone from
+ * the stored raw rows. The price comparison belongs here too: the price row and `priceRatio`
+ * depend on the image matches, and building them anywhere else would leave the "Au clic" path
+ * with the old row and a null ratio.
+ *
+ * The AI only ever confirms a signal: a `catalogPhoto: true` makes the catalogue signal of the
+ * photos row strong when an exact image match backs it and weak otherwise, and the verdict rules
+ * do the rest. It never decides the verdict itself, and never moves it through a strong signal
+ * on its own.
+ */
+function assemble(rows: CheckResult[], aiReview: AiReview | null): AnalysisResult {
+  const imageMatches = rows.find((check) => check.id === 'image')?.matches ?? [];
+  // The price row only depends on the image matches (see `priceCheck`).
+  const rawChecks = rows.map((check) => (check.id === 'price' ? priceCheck(imageMatches) : check));
+  const exactMatch = imageMatches.some((match) => match.exact);
+  const reviewed = aiReview?.catalogPhoto
+    ? rawChecks.map((check) =>
+        check.id === 'photos' ? confirmCatalogPhoto(check, exactMatch) : check,
+      )
+    : rawChecks;
+  const checks = capLocalHeuristics(reviewed, imageMatches);
+  return {
+    verdict: computeVerdict({ checks, imageMatches, priceRatio: null }),
+    checks,
+    rawChecks,
+    aiReview,
+  };
 }
 
 /**
@@ -130,7 +194,19 @@ export function withImageSearch(
   response: SearchImageResponse,
 ): AnalysisResult {
   const image = imageCheckForSearch(response);
-  return assemble(result.rawChecks.map((check) => (check.id === 'image' ? image : check)));
+  return assemble(
+    result.rawChecks.map((check) => (check.id === 'image' ? image : check)),
+    result.aiReview,
+  );
+}
+
+/**
+ * The analysis again, with what the AI reviewed. Only an answer that holds a review changes
+ * anything: no key, no credits or a failure leave the result as it is (the card says why in its
+ * AI block). Nothing is recomputed but the rows and the verdict.
+ */
+export function withAiReview(result: AnalysisResult, response: AiReviewResponse): AnalysisResult {
+  return response.status === 'ok' ? assemble(result.rawChecks, response.review) : result;
 }
 
 /** Runs `fn` over `items`, at most `limit` at a time, keeping the order of the results. */
@@ -249,11 +325,14 @@ export async function analyzeListing(
     return analysis ? [{ itemId: item.id, hash: analysis.hash }] : [];
   });
 
-  return assemble([
-    imageGate === 'ready' ? imageCheckSearching() : imageCheckOff(imageGate),
-    priceCheckOff(),
-    seller ? guarded('seller', () => checkSeller(seller, others)) : sellerCheckOff(sellerError),
-    guarded('photos', () => checkPhotos({ main, others })),
-    guarded('description', () => checkDescription(listing)),
-  ]);
+  return assemble(
+    [
+      imageGate === 'ready' ? imageCheckSearching() : imageCheckOff(imageGate),
+      priceCheck([]),
+      seller ? guarded('seller', () => checkSeller(seller, others)) : sellerCheckOff(sellerError),
+      guarded('photos', () => checkPhotos({ main, others })),
+      guarded('description', () => checkDescription(listing)),
+    ],
+    null,
+  );
 }
