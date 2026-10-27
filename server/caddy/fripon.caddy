@@ -1,0 +1,56 @@
+# Fripon Cloud: Caddy side. Not read by anything in this repository: paste the site block below
+# into /opt/reverse-proxy/Caddyfile, then reload (docs/cloud.md, "Premier déploiement").
+#
+# 1. Let the shared Caddy reach the app: in /opt/reverse-proxy/compose.yml, add `friponnet` to the
+#    networks of the caddy service (keep the ones already there) and declare it as external. The
+#    app's compose creates it, so start the app first.
+#
+#      services:
+#        caddy:
+#          networks:
+#            - <the networks already listed>
+#            - friponnet
+#      networks:
+#        friponnet:
+#          external: true
+#
+#    then `docker compose up -d` in /opt/reverse-proxy to recreate Caddy with the new network.
+#
+# 2. The domain is only written here (the name of the site) and in PUBLIC_URL (server/.env): change
+#    it in those two places, and in the Stripe webhook URL.
+#
+# 3. The container name `fripon-cloud` and port 8787 come from server/compose.yml and PORT.
+
+fripon.endurance.tools {
+	# The biggest body the server accepts is the Stripe webhook (256 KiB), the rest is a few KiB.
+	request_body {
+		max_size 300KB
+	}
+
+	reverse_proxy fripon-cloud:8787
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/fripon.log {
+			roll_size 10MiB
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		# Nothing secret in the logs: no credentials, no query string (Checkout session ids...), no
+		# long token even when it ends up in a path.
+		format filter {
+			wrap json
+			request>headers>Authorization delete
+			request>headers>Cookie delete
+			request>headers>Stripe-Signature delete
+			resp_headers>Set-Cookie delete
+			request>uri regexp \?.*|[A-Za-z0-9_-]{24,} REDACTED
+		}
+	}
+}

@@ -13,6 +13,7 @@ Design: `docs/superpowers/specs/2026-10-20-fripon-extension-design.md`. Mockups:
 - `npm run format` fixes Prettier; `npm test` = `vitest run` (happy-dom + WXT fake browser).
 - One test file: `npx vitest run lib/credits.test.ts`; one test: add `-t "name"`.
 - Server (Fripon Cloud, `server/`, its own `package.json` and lockfile): `npm --prefix server install` once, then `npm --prefix server run dev` (esbuild watch + `node --watch`, reads `server/.env`) / `build` -> `server/dist/main.js` / `start`. Its tests: `npm --prefix server test`, or `npx vitest run --project server`.
+- Fripon Cloud deployment (VPS): `server/Dockerfile` (build context = repo root, see `.dockerignore`), `server/compose.yml`, `server/.env.example`, Caddy block in `server/caddy/fripon.caddy`; steps, backups and rollback in `docs/cloud.md`.
 
 ## Architecture
 

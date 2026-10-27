@@ -5,6 +5,8 @@ node_modules/
 dist/
 .DS_Store
 .env*
+# ...except the Fripon Cloud template, which holds placeholders only.
+!server/.env.example
 .claude/settings.local.json
 .impeccable/
 .claude/work/
