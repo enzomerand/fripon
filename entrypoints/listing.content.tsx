@@ -13,16 +13,18 @@ import {
   type AnalysisDeps,
   type AnalysisResult,
 } from '../lib/analysis';
+import type { BadgeVerdict } from '../lib/background/badge';
 import {
   analyzeImageViaBackground,
   askGates,
   openOptions,
   searchDeps,
+  setVerdictBadge,
 } from '../lib/background/client';
 import { imageCheckSearching, imageSearchCanBeRetried } from '../lib/checks/image';
 import type { Gate, Gates } from '../lib/gate';
 import { sendMessage } from '../lib/messages';
-import type { Listing } from '../lib/model';
+import type { Listing, Verdict } from '../lib/model';
 import { waitFor } from '../lib/wait';
 import { fetchSeller } from '../lib/vinted/api';
 import { findAnchor } from '../lib/vinted/anchor';
@@ -90,6 +92,11 @@ type Trigger = 'auto' | 'click';
 /** Whether a step with this gate can really spend a credit. */
 const canSpend = (gate: Gate) => gate === 'ready' || gate === 'manual';
 
+const badgeOf = (verdict: Verdict): BadgeVerdict => ({
+  level: verdict.level,
+  title: verdict.title,
+});
+
 /** Owns the card of this page: mounts it, updates it, and replaces it on a new run. */
 function createCardController(ctx: ContentScriptContext) {
   let runId = 0;
@@ -100,7 +107,21 @@ function createCardController(ctx: ContentScriptContext) {
   let keepAttached: MutationObserver | null = null;
   /** The finished analysis of the current run, null until there is one. */
   let analysed: Analysed | null = null;
+  /** What this card last put on the toolbar badge, null for nothing. */
+  let sentBadge: BadgeVerdict | null = null;
   ctx.onInvalidated(() => stopKeepingAttached());
+
+  /**
+   * Keeps the toolbar badge in step with the verdict the card shows, null when it shows none. It is
+   * only sent when it differs from the last one sent, so a re-render costs no message. `again` sends
+   * a verdict that has not changed all the same: the background may have cleared it.
+   */
+  function updateBadge(shown: BadgeVerdict | null, again = false) {
+    const unchanged = shown?.level === sentBadge?.level && shown?.title === sentBadge?.title;
+    if (unchanged && !(again && shown)) return;
+    sentBadge = shown;
+    setVerdictBadge(shown);
+  }
 
   function show(state: CardState) {
     if (!container) return;
@@ -113,6 +134,8 @@ function createCardController(ctx: ContentScriptContext) {
       />,
       container,
     );
+    // Loading and error have no verdict: they must not leave the previous one on the button.
+    updateBadge(state.status === 'done' ? badgeOf(state.verdict) : null);
   }
 
   /** Shows the current analysis; `searchingImage` puts the "search running" row in the image row's place. */
@@ -298,6 +321,7 @@ function createCardController(ctx: ContentScriptContext) {
     ui = null;
     container = null;
     analysed = null;
+    updateBadge(null);
     // A card left by a previous run of this script (extension reload, bfcache).
     for (const stale of document.querySelectorAll(HOST_TAG)) stale.remove();
   }
@@ -409,7 +433,11 @@ function createCardController(ctx: ContentScriptContext) {
   function handleLocationChange(newUrl: URL) {
     try {
       const nextId = itemIdFromUrl(newUrl.href);
-      if (nextId === currentItemId) return;
+      if (nextId === currentItemId) {
+        // The background clears the badge of a tab that loads: put the verdict back.
+        updateBadge(analysed && badgeOf(analysed.result.verdict), true);
+        return;
+      }
       if (nextId === null) {
         runId++; // abandon any run still going
         currentItemId = null;

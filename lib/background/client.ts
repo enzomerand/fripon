@@ -1,5 +1,6 @@
 import type { SearchDeps } from '../analysis';
 import type { Gate, Gates } from '../gate';
+import type { BadgeVerdict } from './badge';
 import { sendMessage, type AnalyzeImageResponse, type OptionsSection } from '../messages';
 
 /**
@@ -25,6 +26,16 @@ export function analyzeImageViaBackground(url: string): Promise<AnalyzeImageResp
 /** Opens the options page at `section`. Never rejects: a lost message must not hurt the page. */
 export function openOptions(section: OptionsSection) {
   void sendMessage({ type: 'openOptions', section }).catch(() => undefined);
+}
+
+/**
+ * Shows the verdict of the open listing on the toolbar button of this tab, or clears it with
+ * `null`. Only the level and the title are sent. Never rejects: a lost message (the extension was
+ * reloaded under the page) must not hurt the page.
+ */
+export function setVerdictBadge(verdict: BadgeVerdict | null) {
+  const badge = verdict && { level: verdict.level, title: verdict.title };
+  void sendMessage({ type: 'setVerdictBadge', verdict: badge }).catch(() => undefined);
 }
 
 const GATE_WORDS: readonly Gate[] = ['ready', 'no_key', 'quota', 'manual'];
