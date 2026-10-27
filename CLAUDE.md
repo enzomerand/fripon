@@ -8,6 +8,7 @@ Design: `docs/superpowers/specs/2026-10-20-fripon-extension-design.md`. Mockups:
 
 - `npm run dev` (Chrome, watch) / `npm run dev:firefox`; `npm run build` -> `.output/chrome-mv3`; `npm run zip`.
 - Load by hand: `chrome://extensions` -> Developer mode -> "Load unpacked" -> `.output/chrome-mv3`.
+- Safari (macOS only): `npm run build:safari` -> `.output/safari-mv3`; `npm run safari:sync` copies it into the Xcode project; `npm run safari:app` = both + `xcodebuild` Debug, ad-hoc signed -> `.output/safari-xcode/Build/Products/Debug/Fripon.app`. Steps to load it in Safari are in `README.md`.
 - `npm run check` = `format:check` + `lint` + `typecheck` + `test` (the local gate, run it before every commit).
 - `npm run format` fixes Prettier; `npm test` = `vitest run` (happy-dom + WXT fake browser).
 - One test file: `npx vitest run lib/credits.test.ts`; one test: add `-t "name"`.
@@ -24,6 +25,8 @@ WXT 0.21 + Preact 11 + TypeScript strict (`noUncheckedIndexedAccess`), Manifest 
 - AI review: `lib/google/gemini.ts` (`reviewListing`, the paid call: model in `GEMINI_MODEL`, JSON mode, fenced answers stripped, strict validation, 30 s timeout), `lib/ai/input.ts` (what the page sends: photo URL, title, description, price and one plain French line per signal, built from the raw rows; clamped in the background), `lib/ai/review.ts` (`createAiReviewer`, the `aiReview` handler, same steps as `search.ts`: cache, no key, key-failure memo, cap read, photo, `reserve`, call, `refund`), `lib/ai/review-cache.ts` (`fripon:ai:v1:<photo origin+path>:<hash of title+price+signals>`, 7 days), `lib/ai/block.ts` (the card's "L'avis de l'IA" states and failure lines).
 - Shared by Vision and Gemini: `lib/google/refusal.ts` (`readRefusal`: the one place of the refund rule, `isKeyFailure`), `lib/ttl-cache.ts` (7-day cache in `storage.local`, used by `search-cache.ts` and `review-cache.ts`), `lib/image/base64.ts`.
 - `lib/settings.ts` (`fripon:settings:v1`), `lib/credits.ts` (counters `fripon:credits:v1:<provider>:<period>`, periods and resets on Pacific time like Google, caps from `CREDIT_POLICY`, atomic `reserve`/`refund`), `lib/lock.ts` (`navigator.locks` with an in-module fallback), `lib/gate.ts` (one gate per paid step, `ready|no_key|quota|manual`: `getGates` answers `{ image, ai }`), `lib/google/key-check.ts` (free key test, and the Google error classifier `refusal.ts` reuses), `lib/google/vision.ts` (`webDetect`, the paid WEB_DETECTION call), `lib/options-nav.ts` (which options section to show, via `storage.session`).
+
+- `safari/Fripon/`: Xcode project (container app + Safari extension target, bundle id `fr.fripon.Fripon`), generated once by `safari-web-extension-converter` and committed. `Fripon Extension/Resources/` is an ignored copy of the WXT build (`scripts/safari-sync.mjs`); `scripts/safari-app.mjs` runs `xcodebuild`. ESLint and Prettier skip `safari/`.
 
 ## Conventions
 
@@ -51,3 +54,5 @@ WXT 0.21 + Preact 11 + TypeScript strict (`noUncheckedIndexedAccess`), Manifest 
 - The AI review's cache key hashes the signal lines: they are built from `rawChecks` (never from the AI-confirmed row, or the review would feed on its own answer), and any change in what a check says spends a new credit.
 - Titles and descriptions are the seller's words: the Gemini prompt quotes them as data and tells the model not to obey them. The AI only ever confirms a signal and writes a summary.
 - A free-tier Gemini key lets Google use the photo, title and description sent: the guide says so. Keep it there if the review ever sends more.
+- Safari: the Xcode project lists each top-level entry of the extension (files one by one, folders as references), so a new top-level file in the build (new HTML entrypoint...) makes `safari:sync` fail until the project is regenerated (README, "Régénérer le projet Xcode"); hashed files inside `chunks/`, `assets/`, `content-scripts/` are fine. The converter also rewrites the container app text and sets the deployment target to the host macOS: see README.
+- Safari: no Apple Developer account, so builds are ad-hoc signed and need Develop > "Allow Unsigned Extensions", which Safari resets at every restart. Safari asks the user to allow each site (vinted.*, `*.vinted.net`, Google APIs): without it the card does not show or the photo fetch fails. Safari suspends the service worker quickly: in-memory caches (analyzer, refused-key memo) are only optimisations, anything that must survive lives in `storage.local`.
