@@ -135,9 +135,28 @@ describe('the bar above the results', () => {
   });
 
   it('does not count the cards that already have a verdict, or are being analysed', async () => {
+    // The search of the second card is held back: that card is "running" for as long as we want.
+    let answer: (response: SearchImageResponse) => void = () => undefined;
+    search.mockImplementation((photoUrl) =>
+      photoUrl === THUMB(9000102)
+        ? new Promise((resolve) => (answer = resolve))
+        : Promise.resolve(FOUND),
+    );
     const running = start();
+    await until(() => barText() === '🦊 Analyser les 4 articles visibles');
+
     await running.analyze('9000101');
     await until(() => barText() === '🦊 Analyser les 3 articles visibles');
+
+    const second = running.analyze('9000102');
+    await until(() => cardText(9000102).includes('Analyse…'));
+    await until(() => barText() === '🦊 Analyser les 2 articles visibles');
+
+    answer(FOUND);
+    await second;
+    await until(() => cardText(9000102).includes('analyse rapide'));
+    // Done now, still not counted.
+    await until(() => barText() === '🦊 Analyser les 2 articles visibles');
   });
 
   it('comes back when the key is added, as the user returns to the tab', async () => {
