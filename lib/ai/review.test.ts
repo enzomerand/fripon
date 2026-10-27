@@ -21,6 +21,7 @@ const INPUT: AiReviewInput = {
   description: 'Robe portée une fois.',
   price: '12,00 €',
   signals: ['La photo est identique à celle d’articles vendus sur Shein.'],
+  fingerprint: ['Recherche d’image : la même photo est en vente sur Shein.'],
 };
 const REVIEW: AiReview = { catalogPhoto: true, summary: 'La photo vient de Shein.' };
 const FOUND: ReviewResult = { ok: true, review: REVIEW };
@@ -145,21 +146,23 @@ describe('createAiReviewer cache', () => {
     expect(await used()).toBe(1);
   });
 
-  it('reviews again when the price, the title or the signals changed', async () => {
+  it('reviews again when the price, the title or what the checks found changed', async () => {
     const { review, call } = setup();
     await review(INPUT);
     await review({ ...INPUT, price: '9,00 €' });
     await review({ ...INPUT, title: 'Robe à fleurs' });
-    await review({ ...INPUT, signals: ['Recherche d’image : non faite.'] });
+    await review({ ...INPUT, fingerprint: ['Recherche d’image : non faite.'] });
     expect(call).toHaveBeenCalledTimes(4);
     expect(await used()).toBe(4);
   });
 
-  it('does not review again when only the description changed', async () => {
+  it('does not review again when only the description or the counts in the signal lines changed', async () => {
     const { review, call } = setup();
     await review(INPUT);
     await review({ ...INPUT, description: 'Un tout autre texte.' });
+    await review({ ...INPUT, signals: ['Vendeur (Normal) : 13 avis, 31 articles.'] });
     expect(call).toHaveBeenCalledOnce();
+    expect(await used()).toBe(1);
   });
 
   it('serves the cache even without a key, or with the cap reached', async () => {
@@ -429,10 +432,10 @@ describe('createAiReviewer cache only', () => {
     expect(await used()).toBe(1);
   });
 
-  it('answers not_cached when the signals are not the ones that were reviewed', async () => {
+  it('answers not_cached when what the checks found is not what was reviewed', async () => {
     const { review } = setup();
     await review(INPUT);
-    expect(await review({ ...INPUT, signals: [] }, true)).toEqual({ status: 'not_cached' });
+    expect(await review({ ...INPUT, fingerprint: [] }, true)).toEqual({ status: 'not_cached' });
   });
 
   it('never calls Gemini, even with a key and credits', async () => {

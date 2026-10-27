@@ -11,6 +11,7 @@ const REVIEW_INPUT = {
   description: '',
   price: '12,00 €',
   signals: ['Recherche d’image : non faite.'],
+  fingerprint: ['Recherche d’image : non faite.'],
 };
 
 function makeDeps(overrides: Partial<BackgroundDeps> = {}): BackgroundDeps {

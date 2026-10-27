@@ -72,6 +72,7 @@ describe('sendMessage (settings messages)', () => {
       description: 'Belle robe',
       price: '12,00 €',
       signals: ['Vendeur : rien de notable.'],
+      fingerprint: ["Recherche d'image : non faite."],
     };
     const answer = {
       status: 'ok',
@@ -115,6 +116,7 @@ describe('isRuntimeMessage', () => {
       description: '',
       price: '12,00 €',
       signals: ['a', 'b'],
+      fingerprint: ['a'],
     };
     expect(isRuntimeMessage({ type: 'aiReview', input })).toBe(true);
     expect(isRuntimeMessage({ type: 'aiReview', input, cacheOnly: true })).toBe(true);
@@ -124,6 +126,9 @@ describe('isRuntimeMessage', () => {
     expect(isRuntimeMessage({ type: 'aiReview', input: { ...input, signals: 'a' } })).toBe(false);
     expect(isRuntimeMessage({ type: 'aiReview', input: { ...input, signals: [1] } })).toBe(false);
     expect(isRuntimeMessage({ type: 'aiReview', input: { ...input, title: 3 } })).toBe(false);
+    expect(
+      isRuntimeMessage({ type: 'aiReview', input: { ...input, fingerprint: undefined } }),
+    ).toBe(false);
     expect(isRuntimeMessage({ type: 'aiReview', input: { ...input, photoUrl: undefined } })).toBe(
       false,
     );

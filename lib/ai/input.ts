@@ -14,6 +14,13 @@ export interface AiReviewInput {
   price: string;
   /** One plain French line per check Fripon ran. */
   signals: string[];
+  /**
+   * What the checks found, in short and stable words (see `reviewFingerprint`): the image
+   * search's result first, then the status and tag of each row that ran. The cache key hashes
+   * this, not the signal lines, whose counts ("12 avis", "30 articles") change from one visit to
+   * the next without changing what there is to say.
+   */
+  fingerprint: string[];
 }
 
 /** The most the prompt (and so the cache key) ever sees of each part: a page cannot make it grow. */
@@ -23,6 +30,8 @@ export const REVIEW_LIMITS = {
   price: 40,
   signal: 400,
   signals: 12,
+  fingerprint: 8,
+  fingerprintLine: 200,
 } as const;
 
 /** Shape only: the sizes are bounded by `clampReviewInput`. */
@@ -34,7 +43,9 @@ export function isAiReviewInput(value: unknown): value is AiReviewInput {
     typeof value.description === 'string' &&
     typeof value.price === 'string' &&
     Array.isArray(value.signals) &&
-    value.signals.every((line) => typeof line === 'string')
+    value.signals.every((line) => typeof line === 'string') &&
+    Array.isArray(value.fingerprint) &&
+    value.fingerprint.every((line) => typeof line === 'string')
   );
 }
 
@@ -54,6 +65,9 @@ export function clampReviewInput(input: AiReviewInput): AiReviewInput {
     signals: input.signals
       .slice(0, REVIEW_LIMITS.signals)
       .map((line) => cut(line, REVIEW_LIMITS.signal)),
+    fingerprint: input.fingerprint
+      .slice(0, REVIEW_LIMITS.fingerprint)
+      .map((line) => cut(line, REVIEW_LIMITS.fingerprintLine)),
   };
 }
 
@@ -103,7 +117,24 @@ export function signalLines(rawChecks: CheckResult[]): string[] {
   return lines;
 }
 
-/** What the page sends to have a listing reviewed: its main photo, its text, and the signals. */
+/**
+ * What the checks found, in short and stable words: the image line first (it names the platforms
+ * and no number), then `id:status:tag` for each row that ran. It changes when a check changes its
+ * mind, not when a count moves. The first element is also what the review is "based on" for the
+ * page: when the image search's result changes, the review must be asked again.
+ */
+export function reviewFingerprint(rawChecks: CheckResult[]): string[] {
+  const rows = ROW_NAMES.flatMap(([id]) => {
+    const row = rawChecks.find((check) => check.id === id);
+    return row && row.status !== 'off' ? [`${id}:${row.status}:${row.tag}`] : [];
+  });
+  return [imageLine(rawChecks.find((check) => check.id === 'image')), ...rows];
+}
+
+/**
+ * What the page sends to have a listing reviewed: its main photo, its text, the signals, and
+ * their fingerprint.
+ */
 export function buildReviewInput(listing: Listing, rawChecks: CheckResult[]): AiReviewInput {
   return {
     photoUrl: listing.photoUrls[0] ?? '',
@@ -111,5 +142,6 @@ export function buildReviewInput(listing: Listing, rawChecks: CheckResult[]): Ai
     description: listing.description,
     price: formatMoney(listing.price),
     signals: signalLines(rawChecks),
+    fingerprint: reviewFingerprint(rawChecks),
   };
 }

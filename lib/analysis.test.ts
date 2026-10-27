@@ -396,6 +396,13 @@ describe('askAiReview', () => {
       description: listing.description,
     });
     expect(input?.signals[0]).toBe("Recherche d'image : la même photo est en vente sur Shein.");
+    // The fingerprint starts with the same image line, then the tags of the rows that ran.
+    expect(input?.fingerprint[0]).toBe(input?.signals[0]);
+    expect(input?.fingerprint.slice(1)).toEqual([
+      expect.stringMatching(/^seller:/),
+      expect.stringMatching(/^photos:/),
+      expect.stringMatching(/^description:/),
+    ]);
   });
 
   it('builds the signals from the raw rows, so a review never feeds on its own conclusion', async () => {

@@ -273,6 +273,7 @@ describe('background', () => {
       description: 'Robe portée une fois.',
       price: '12,50 €',
       signals: ['La photo est identique à celle d’articles vendus sur Shein.'],
+      fingerprint: ['Recherche d’image : la même photo est en vente sur Shein.'],
     };
     // The background remembers a refused key in memory across tests: each test gets its own key.
     let KEY = '';

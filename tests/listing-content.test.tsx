@@ -132,6 +132,7 @@ type SentMessage = {
     description: string;
     price: string;
     signals: string[];
+    fingerprint: string[];
   };
 };
 
@@ -740,6 +741,9 @@ describe('listing content script', () => {
         "Recherche d'image : la même photo est en vente sur Shein.",
       );
       expect(review?.input?.signals.join('\n')).toContain('Vendeur (');
+      expect(review?.input?.fingerprint[0]).toBe(
+        "Recherche d'image : la même photo est en vente sur Shein.",
+      );
       // The block: a title, the summary, the reminder that it can be wrong.
       expect(aiText()).toContain("L'avis de l'IA");
       expect(aiText()).toContain('Résumé de test.');

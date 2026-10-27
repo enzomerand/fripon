@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
+import { GEMINI_MODEL, PROMPT_VERSION } from '../google/gemini';
 import type { AiReview } from '../model';
 import type { AiReviewInput } from './input';
 import {
@@ -12,6 +13,23 @@ import {
   writeAiCache,
 } from './review-cache';
 
+// The model and the prompt version, as the cache key reads them: a test can change both.
+const versions = vi.hoisted(() => ({ model: '', prompt: 0 }));
+vi.mock('../google/gemini', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../google/gemini')>();
+  versions.model = actual.GEMINI_MODEL;
+  versions.prompt = actual.PROMPT_VERSION;
+  return {
+    ...actual,
+    get GEMINI_MODEL() {
+      return versions.model;
+    },
+    get PROMPT_VERSION() {
+      return versions.prompt;
+    },
+  };
+});
+
 const NOW = Date.UTC(2026, 9, 27, 12, 0, 0);
 const PHOTO = 'https://images1.vinted.net/t/01_abc/f800/123.webp?s=aa';
 const INPUT: AiReviewInput = {
@@ -19,7 +37,8 @@ const INPUT: AiReviewInput = {
   title: 'Robe fleurie',
   description: 'Robe portée une fois.',
   price: '12,00 €',
-  signals: ['Recherche d’image : non faite.'],
+  signals: ['Recherche d’image : non faite.', 'Vendeur (Normal) : 12 avis, 30 articles.'],
+  fingerprint: ['Recherche d’image : non faite.', 'seller:ok:Normal'],
 };
 const REVIEW: AiReview = { catalogPhoto: true, summary: 'La photo vient de Shein.' };
 
@@ -47,29 +66,54 @@ describe('aiCacheKey', () => {
     );
   });
 
-  it('changes with the title, the price or the signals', () => {
+  it('changes with the title, the price or what the checks found', () => {
     const key = aiCacheKey(PHOTO, INPUT);
     expect(aiCacheKey(PHOTO, { ...INPUT, title: 'Autre robe' })).not.toBe(key);
     expect(aiCacheKey(PHOTO, { ...INPUT, price: '10,00 €' })).not.toBe(key);
-    expect(aiCacheKey(PHOTO, { ...INPUT, signals: ['Autre ligne.'] })).not.toBe(key);
-    expect(aiCacheKey(PHOTO, { ...INPUT, signals: [...INPUT.signals, 'Une de plus.'] })).not.toBe(
-      key,
-    );
+    expect(aiCacheKey(PHOTO, { ...INPUT, fingerprint: ['Autre résultat.'] })).not.toBe(key);
+    expect(
+      aiCacheKey(PHOTO, {
+        ...INPUT,
+        fingerprint: [...INPUT.fingerprint, 'photos:warn:Photo réutilisée'],
+      }),
+    ).not.toBe(key);
   });
 
   it('does not mix up where one part ends and the next begins', () => {
     expect(aiCacheKey(PHOTO, { ...INPUT, title: 'ab', price: 'c' })).not.toBe(
       aiCacheKey(PHOTO, { ...INPUT, title: 'a', price: 'bc' }),
     );
-    expect(aiCacheKey(PHOTO, { ...INPUT, signals: ['a', 'b'] })).not.toBe(
-      aiCacheKey(PHOTO, { ...INPUT, signals: ['ab'] }),
+    expect(aiCacheKey(PHOTO, { ...INPUT, fingerprint: ['a', 'b'] })).not.toBe(
+      aiCacheKey(PHOTO, { ...INPUT, fingerprint: ['ab'] }),
     );
   });
 
-  it('ignores the description: the signals already say what was read in it', () => {
-    expect(aiCacheKey(PHOTO, { ...INPUT, description: 'Tout autre texte.' })).toBe(
-      aiCacheKey(PHOTO, INPUT),
-    );
+  it('ignores the description and the signal lines, whose counts move without changing the story', () => {
+    const key = aiCacheKey(PHOTO, INPUT);
+    expect(aiCacheKey(PHOTO, { ...INPUT, description: 'Tout autre texte.' })).toBe(key);
+    expect(
+      aiCacheKey(PHOTO, { ...INPUT, signals: ['Vendeur (Normal) : 13 avis, 31 articles.'] }),
+    ).toBe(key);
+    expect(aiCacheKey(PHOTO, { ...INPUT, signals: [] })).toBe(key);
+  });
+
+  describe('when the model or the question changes', () => {
+    afterEach(() => {
+      versions.model = GEMINI_MODEL;
+      versions.prompt = PROMPT_VERSION;
+    });
+
+    it('is another key for another model', () => {
+      const key = aiCacheKey(PHOTO, INPUT);
+      versions.model = 'gemini-other-model';
+      expect(aiCacheKey(PHOTO, INPUT)).not.toBe(key);
+    });
+
+    it('is another key for another version of the prompt', () => {
+      const key = aiCacheKey(PHOTO, INPUT);
+      versions.prompt = PROMPT_VERSION + 1;
+      expect(aiCacheKey(PHOTO, INPUT)).not.toBe(key);
+    });
   });
 });
 
