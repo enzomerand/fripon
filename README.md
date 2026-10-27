@@ -23,16 +23,16 @@ Fripon ajoute une carte sur chaque annonce que tu ouvres : un verdict en couleur
   boutique ou traduit).
 - **Recherche de la photo** sur Shein, Temu, AliExpress et sept autres boutiques, avec Google Vision.
 - **Avis de l’IA** (facultatif) : Gemini résume l’annonce en une à trois phrases.
-- **Dans les résultats de recherche**, un bouton « Analyser » sous chaque vignette, ou toute la page
-  d’un coup.
-- **Les annonces vendues** ne sont pas analysées.
+- **Dans les résultats de recherche**, un bouton « Analyser » sous chaque vignette, ou tous les
+  articles visibles d’un coup.
+- **Les annonces vendues** ne sont pas analysées à leur ouverture.
 
 ## Coûts
 
 Pas d’abonnement ni de compte. La recherche de photo et l’IA utilisent **tes propres clés Google** :
 
 - **Google Vision** : 1 000 recherches gratuites par mois, puis environ 3,50 $ les 1 000. Fripon
-  s’arrête à 1 000 par mois (modifiable) et ne repaie jamais une même photo pendant 7 jours.
+  s’arrête à 1 000 par mois (modifiable) et garde les recherches récentes en cache 7 jours.
 - **Gemini** : gratuit, dans un projet Google Cloud sans facturation.
 
 La page de réglages guide pas à pas la création des clés.
@@ -40,7 +40,7 @@ La page de réglages guide pas à pas la création des clés.
 ## Vie privée
 
 Fripon n’a aucun serveur et ne mesure rien. Tes clés restent dans ton navigateur. Seules la photo de
-l’annonce (et, pour l’IA, son texte) partent chez Google.
+l’annonce et, pour l’IA, son texte, son prix et les indices relevés partent chez Google.
 
 ## Installer
 
