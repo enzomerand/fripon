@@ -92,6 +92,7 @@ const FAILURE_DETAILS: Record<VisionFailure, string> = {
   quota: 'Google a atteint le quota de ta clé Vision, réessaie plus tard.',
   network: 'Google ne répond pas, réessaie plus tard.',
   photo: "La photo de l'annonce n'a pas pu être analysée.",
+  unavailable: 'Google Vision est indisponible pour le moment.',
 };
 
 /** What the retry button of a failed search says: the action is the one of the "Au clic" button. */

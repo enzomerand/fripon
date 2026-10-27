@@ -17,7 +17,7 @@ describe('isKeyFailure', () => {
   });
 
   it('is false for the others', () => {
-    for (const reason of ['quota', 'network', 'photo', 'invalid_answer']) {
+    for (const reason of ['quota', 'network', 'photo', 'unavailable', 'invalid_answer']) {
       expect(isKeyFailure(reason)).toBe(false);
     }
   });
@@ -48,7 +48,7 @@ describe('readRefusal', () => {
     });
   });
 
-  it('blames the image for an unrecognised 400 or 413, the key for anything else', async () => {
+  it('blames the image for an unrecognised 400 (by default) or 413, the key for anything else', async () => {
     expect(await readRefusal(new Response('{}', { status: 400 }))).toEqual({
       reason: 'photo',
       refundable: false,
@@ -60,6 +60,46 @@ describe('readRefusal', () => {
     expect(await readRefusal(new Response('{}', { status: 403 }))).toEqual({
       reason: 'invalid',
       refundable: false,
+    });
+  });
+
+  it('can blame the service for an unrecognised 400, but never for a 413', async () => {
+    expect(await readRefusal(new Response('{}', { status: 400 }), 'unavailable')).toEqual({
+      reason: 'unavailable',
+      refundable: false,
+    });
+    expect(await readRefusal(new Response('{}', { status: 413 }), 'unavailable')).toEqual({
+      reason: 'photo',
+      refundable: false,
+    });
+  });
+
+  it('calls a 404 unavailable, never a bad key, and refunds it only when Google says NOT_FOUND', async () => {
+    expect(await readRefusal(new Response('nothing here', { status: 404 }))).toEqual({
+      reason: 'unavailable',
+      refundable: false,
+    });
+    expect(await readRefusal(new Response('{}', { status: 404 }), 'unavailable')).toEqual({
+      reason: 'unavailable',
+      refundable: false,
+    });
+    expect(await readRefusal(named(404, 'NOT_FOUND', 'OTHER'))).toEqual({
+      reason: 'unavailable',
+      refundable: true,
+    });
+    // Google names NOT_FOUND on another status too: still a service that is gone.
+    expect(await readRefusal(named(400, 'NOT_FOUND', 'OTHER'))).toEqual({
+      reason: 'unavailable',
+      refundable: true,
+    });
+  });
+
+  it('keeps a refusal Google names as a key problem a key problem, whatever the 400 default', async () => {
+    expect(
+      await readRefusal(named(400, 'INVALID_ARGUMENT', 'API_KEY_INVALID'), 'unavailable'),
+    ).toEqual({
+      reason: 'invalid',
+      refundable: true,
     });
   });
 });

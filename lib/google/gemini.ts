@@ -184,7 +184,8 @@ export async function reviewListing(
     // Google having a bad moment (503 UNAVAILABLE is common) says nothing about the key, and may
     // have billed the call.
     if (response.status >= 500) return { ok: false, reason: 'network', refundable: false };
-    if (!response.ok) return { ok: false, ...(await readRefusal(response)) };
+    // An unrecognised 400 is not the photo's fault here: it comes from Vinted's CDN. Region, schema.
+    if (!response.ok) return { ok: false, ...(await readRefusal(response, 'unavailable')) };
 
     const review = parseReview(answerOf(await response.json()));
     // Google processed the call: a blocked or malformed answer does not give the credit back.

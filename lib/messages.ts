@@ -27,12 +27,15 @@ export type AnalyzeImageResponse =
  * Ask the background to run the reverse image search (Google Vision) on a listing photo. Costs one
  * Vision credit unless the same photo was searched in the last 7 days. The key and the raw
  * answer stay in the background: the page only gets the matches. With `cacheOnly` (the "Au clic"
- * mode) nothing is ever spent: the answer is the cached result, or `not_cached`.
+ * mode) nothing is ever spent: the answer is the cached result, or `not_cached`. With `retry` (the
+ * user clicked a button) a quota or a network failure that the background remembers for a moment
+ * is tried again instead of being answered again.
  */
 export interface SearchImageRequest {
   type: 'searchImage';
   photoUrl: string;
   cacheOnly?: boolean;
+  retry?: boolean;
 }
 
 export type SearchImageResponse =
@@ -51,12 +54,13 @@ export type SearchImageResponse =
  * whether the photo looks like a catalogue shot. Costs one Gemini credit unless the same review
  * was made in the last 7 days. The key and the raw answer stay in the background: the page only
  * gets the review. With `cacheOnly` (the "Au clic" mode) nothing is ever spent: the answer is the
- * cached review, or `not_cached`.
+ * cached review, or `not_cached`. `retry` is the same as for `searchImage`.
  */
 export interface AiReviewRequest {
   type: 'aiReview';
   input: AiReviewInput;
   cacheOnly?: boolean;
+  retry?: boolean;
 }
 
 export type AiReviewResponse =
@@ -128,6 +132,7 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
     url?: unknown;
     photoUrl?: unknown;
     cacheOnly?: unknown;
+    retry?: unknown;
     input?: unknown;
     section?: unknown;
     provider?: unknown;
@@ -139,12 +144,14 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
     case 'searchImage':
       return (
         typeof message.photoUrl === 'string' &&
-        (message.cacheOnly === undefined || typeof message.cacheOnly === 'boolean')
+        (message.cacheOnly === undefined || typeof message.cacheOnly === 'boolean') &&
+        (message.retry === undefined || typeof message.retry === 'boolean')
       );
     case 'aiReview':
       return (
         isAiReviewInput(message.input) &&
-        (message.cacheOnly === undefined || typeof message.cacheOnly === 'boolean')
+        (message.cacheOnly === undefined || typeof message.cacheOnly === 'boolean') &&
+        (message.retry === undefined || typeof message.retry === 'boolean')
       );
     case 'getGates':
       return true;

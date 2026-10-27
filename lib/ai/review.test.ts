@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { getUsage, reserve } from '../credits';
+import { KEY_FAILURE_MEMO_MS, TRANSIENT_FAILURE_MEMO_MS } from '../google/failure-memo';
 import type { ReviewInput, ReviewResult } from '../google/gemini';
-import { KEY_FAILURE_MEMO_MS } from '../image/search';
 import type { AiReview } from '../model';
 import { saveSettings } from '../settings';
 import type { AiReviewInput } from './input';
@@ -305,7 +305,8 @@ describe('createAiReviewer failures', () => {
       now: () => clock,
     });
     expect((await review(INPUT)).status).toBe('error');
-    expect((await review(INPUT)).status).toBe('ok');
+    // The quota is remembered for a moment: it is the click that tries again.
+    expect((await review(INPUT, false, true)).status).toBe('ok');
     expect(await used()).toBe(1);
   });
 
@@ -353,13 +354,102 @@ describe('createAiReviewer key failures', () => {
     expect(call).toHaveBeenCalledTimes(2);
   });
 
-  it('does not remember failures that say nothing about the key', async () => {
-    for (const reason of ['network', 'photo', 'quota', 'invalid_answer'] as const) {
-      const { review, call } = setup({ ok: false, reason, refundable: true });
+  it.each(['photo', 'invalid_answer'] as const)(
+    'does not remember a failure that is about this listing ("%s")',
+    async (reason) => {
+      const { review, call } = setup({ ok: false, reason, refundable: false });
       await review(INPUT);
       await review(OTHER);
       expect(call).toHaveBeenCalledTimes(2);
-    }
+    },
+  );
+
+  describe('a failure that passes by itself', () => {
+    it.each(['quota', 'network', 'unavailable'] as const)(
+      'is remembered for 90 seconds when it is "%s": no download, no call, no credit for the next listings',
+      async (reason) => {
+        const { review, photo, call } = setup({ ok: false, reason, refundable: false });
+        expect(await review(INPUT)).toEqual({ status: 'error', reason });
+        expect(await used()).toBe(1);
+
+        clock = NOW + TRANSIENT_FAILURE_MEMO_MS - 1;
+        expect(await review(OTHER)).toEqual({ status: 'error', reason });
+        expect(await review({ ...INPUT, price: '3 €' })).toEqual({ status: 'error', reason });
+        expect(photo).toHaveBeenCalledOnce();
+        expect(call).toHaveBeenCalledOnce();
+        // Not a credit more than the first call's.
+        expect(await used()).toBe(1);
+      },
+    );
+
+    it('is tried again after 90 seconds, which is much shorter than a refused key', async () => {
+      expect(TRANSIENT_FAILURE_MEMO_MS).toBe(90_000);
+      expect(KEY_FAILURE_MEMO_MS).toBeGreaterThan(TRANSIENT_FAILURE_MEMO_MS);
+      const { review, call } = setup({ ok: false, reason: 'network', refundable: false });
+      await review(INPUT);
+      clock = NOW + TRANSIENT_FAILURE_MEMO_MS;
+      await review(OTHER);
+      expect(call).toHaveBeenCalledTimes(2);
+    });
+
+    it('is tried again at once when the user clicked', async () => {
+      const { review, call } = setup({ ok: false, reason: 'network', refundable: false });
+      await review(INPUT);
+      await review(OTHER, false, true);
+      expect(call).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not make a click ignore a refused key: nothing on the card would change it', async () => {
+      const { review, call } = setup({ ok: false, reason: 'billing', refundable: true });
+      await review(INPUT);
+      expect(await review(OTHER, false, true)).toEqual({ status: 'error', reason: 'billing' });
+      expect(call).toHaveBeenCalledOnce();
+    });
+
+    it('still serves the cache, and a look in the cache, while a failure is remembered', async () => {
+      const call = vi
+        .fn<(input: ReviewInput, key: string) => Promise<ReviewResult>>()
+        .mockResolvedValueOnce(FOUND)
+        .mockResolvedValue({ ok: false, reason: 'network', refundable: false });
+      const review = createAiReviewer({
+        fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
+        reviewListing: call,
+        now: () => clock,
+      });
+      await review(INPUT);
+      await review(OTHER);
+      expect((await review(INPUT)).status).toBe('ok');
+      expect((await review(INPUT, true)).status).toBe('ok');
+      expect(await review(OTHER, true)).toEqual({ status: 'not_cached' });
+    });
+
+    it('is forgotten as soon as another key is saved, or when asked to', async () => {
+      const { review, call } = setup({ ok: false, reason: 'quota', refundable: false });
+      await review(INPUT);
+      await saveSettings({ keys: { gemini: `${KEY}2` } });
+      await review(OTHER);
+      expect(call).toHaveBeenCalledTimes(2);
+      review.forgetKeyFailure();
+      await review(INPUT);
+      expect(call).toHaveBeenCalledTimes(3);
+    });
+
+    it('is forgotten after a success', async () => {
+      const call = vi
+        .fn<(input: ReviewInput, key: string) => Promise<ReviewResult>>()
+        .mockResolvedValueOnce({ ok: false, reason: 'network', refundable: false })
+        .mockResolvedValue(FOUND);
+      const review = createAiReviewer({
+        fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
+        reviewListing: call,
+        now: () => clock,
+      });
+      await review(INPUT);
+      clock = NOW + TRANSIENT_FAILURE_MEMO_MS;
+      expect((await review(OTHER)).status).toBe('ok');
+      expect((await review({ ...INPUT, price: '3 €' })).status).toBe('ok');
+      expect(call).toHaveBeenCalledTimes(3);
+    });
   });
 
   it('forgets the failure as soon as another key is saved', async () => {
@@ -519,7 +609,9 @@ describe('createAiReviewer in flight', () => {
   it('forgets an in-flight review once it is over', async () => {
     const { review, call } = setup({ ok: false, reason: 'network', refundable: false });
     await review(INPUT);
-    await review(INPUT);
+    // Not answered from the in-flight review that is over; the memory of the failure is bypassed
+    // by the click.
+    await review(INPUT, false, true);
     expect(call).toHaveBeenCalledTimes(2);
     expect(await used()).toBe(2);
   });

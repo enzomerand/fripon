@@ -304,12 +304,14 @@ describe('searchPhoto', () => {
     expect(await searchPhoto('https://images1.vinted.net/a.webp', d)).toEqual(found(exactMatch));
   });
 
-  it('asks for the search, or for the cache alone', async () => {
+  it('asks for the search, for the cache alone, or for another attempt', async () => {
     const searchImage = vi.fn(() => Promise.resolve<SearchImageResponse>({ status: 'not_cached' }));
     await searchPhoto('https://images1.vinted.net/a.webp', searching(searchImage));
-    expect(searchImage).toHaveBeenLastCalledWith('https://images1.vinted.net/a.webp', false);
+    expect(searchImage).toHaveBeenLastCalledWith('https://images1.vinted.net/a.webp', false, false);
     await searchPhoto('https://images1.vinted.net/a.webp', searching(searchImage), true);
-    expect(searchImage).toHaveBeenLastCalledWith('https://images1.vinted.net/a.webp', true);
+    expect(searchImage).toHaveBeenLastCalledWith('https://images1.vinted.net/a.webp', true, false);
+    await searchPhoto('https://images1.vinted.net/a.webp', searching(searchImage), false, true);
+    expect(searchImage).toHaveBeenLastCalledWith('https://images1.vinted.net/a.webp', false, true);
   });
 
   it('turns a missing photo and a rejection into failures, never into an exception', async () => {
@@ -424,6 +426,8 @@ describe('askAiReview', () => {
       status: 'not_cached',
     });
     expect(aiReview.mock.calls[0]?.[1]).toBe(true);
+    await askAiReview(listing, await analysed(), { aiReview }, false, true);
+    expect(aiReview.mock.calls[1]?.slice(1)).toEqual([false, true]);
   });
 
   it('turns a missing photo, a rejection and no answer at all into failures, never into an exception', async () => {

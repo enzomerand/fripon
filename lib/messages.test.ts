@@ -177,6 +177,24 @@ describe('isRuntimeMessage', () => {
     expect(isRuntimeMessage({ type: 'searchImage', photoUrl, cacheOnly: null })).toBe(false);
   });
 
+  it('accepts retry on a searchImage or an aiReview request only as a boolean', () => {
+    const photoUrl = 'https://x.test/a.jpg';
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, retry: true })).toBe(true);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, retry: false })).toBe(true);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, retry: 'yes' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'searchImage', photoUrl, retry: 1 })).toBe(false);
+    const input = {
+      photoUrl,
+      title: 'Robe',
+      description: '',
+      price: '12,00 €',
+      signals: [],
+      fingerprint: [],
+    };
+    expect(isRuntimeMessage({ type: 'aiReview', input, retry: true })).toBe(true);
+    expect(isRuntimeMessage({ type: 'aiReview', input, retry: null })).toBe(false);
+  });
+
   it('accepts a well-formed analyzeImage request only', () => {
     expect(isRuntimeMessage({ type: 'analyzeImage', url: 'https://x.test/a.jpg' })).toBe(true);
     expect(isRuntimeMessage({ type: 'analyzeImage' })).toBe(false);

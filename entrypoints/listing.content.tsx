@@ -40,13 +40,23 @@ const analysisDeps: AnalysisDeps = {
 };
 
 const searchDeps: SearchDeps = {
-  searchImage: (photoUrl, cacheOnly) =>
-    sendMessage({ type: 'searchImage', photoUrl, ...(cacheOnly && { cacheOnly: true }) }),
+  searchImage: (photoUrl, cacheOnly, retry) =>
+    sendMessage({
+      type: 'searchImage',
+      photoUrl,
+      ...(cacheOnly && { cacheOnly: true }),
+      ...(retry && { retry: true }),
+    }),
 };
 
 const aiDeps: AiDeps = {
-  aiReview: (input, cacheOnly) =>
-    sendMessage({ type: 'aiReview', input, ...(cacheOnly && { cacheOnly: true }) }),
+  aiReview: (input, cacheOnly, retry) =>
+    sendMessage({
+      type: 'aiReview',
+      input,
+      ...(cacheOnly && { cacheOnly: true }),
+      ...(retry && { retry: true }),
+    }),
 };
 
 const GATE_WORDS: readonly Gate[] = ['ready', 'no_key', 'quota', 'manual'];
@@ -224,7 +234,13 @@ function createCardController(ctx: ContentScriptContext) {
       // The row already says "Recherche en cours…" when the search starts by itself; only a click
       // has to take the button's place.
       if (trigger === 'click') showAnalysed(current, true);
-      const response = await searchPhoto(current.listing.photoUrls[0], searchDeps, lookup);
+      // A click is the user asking for another attempt: no answer from the memory of a failure.
+      const response = await searchPhoto(
+        current.listing.photoUrls[0],
+        searchDeps,
+        lookup,
+        trigger === 'click',
+      );
       // A newer run (new item, bfcache restore) took the card over while the search ran.
       if (analysed !== current) return true;
       // A look in the cache only ever shows a result: a miss, a failure or a lost message leaves the
@@ -259,7 +275,7 @@ function createCardController(ctx: ContentScriptContext) {
       current.busyAi = true;
     }
     try {
-      for (;;) {
+      for (let pass = 0; ; pass++) {
         if (analysed !== current || ctx.isInvalid) return;
         const basis = imageBasis(current.result.rawChecks);
         if (current.aiBasis === basis) return;
@@ -272,7 +288,9 @@ function createCardController(ctx: ContentScriptContext) {
             showAnalysed(current);
           }
         }
-        const response = await askAiReview(current.listing, current.result, aiDeps, lookup);
+        // Asking again is the user's doing (a click changed the image row), like a click itself.
+        const retry = trigger === 'click' || pass > 0;
+        const response = await askAiReview(current.listing, current.result, aiDeps, lookup, retry);
         if (analysed !== current) return;
         const stale = basis !== imageBasis(current.result.rawChecks);
         if (lookup) {

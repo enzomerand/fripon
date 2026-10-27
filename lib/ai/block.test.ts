@@ -37,6 +37,7 @@ describe('aiBlockFor', () => {
     ['quota', 'Google a atteint la limite de ta clé Gemini, réessaie plus tard.'],
     ['network', "L'IA ne répond pas pour l'instant."],
     ['photo', "L'IA n'a pas pu lire la photo de l'annonce."],
+    ['unavailable', 'Gemini est indisponible pour le moment.'],
     ['invalid_answer', "L'IA a donné une réponse inutilisable."],
   ] as const)('gives one neutral line and no button for "%s"', (reason, message) => {
     expect(aiBlockFor({ status: 'error', reason })).toEqual({ status: 'failed', message });
@@ -51,6 +52,7 @@ describe('aiBlockFor', () => {
       'quota',
       'network',
       'photo',
+      'unavailable',
       'invalid_answer',
     ];
     for (const reason of reasons) {

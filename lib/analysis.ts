@@ -36,8 +36,11 @@ export interface AnalysisDeps {
  * `searchPhoto` and `withImageSearch`), automatically or on a click.
  */
 export interface SearchDeps {
-  /** With `cacheOnly` the background never spends: the cached result, or `not_cached`. */
-  searchImage(photoUrl: string, cacheOnly?: boolean): Promise<SearchImageResponse>;
+  /**
+   * With `cacheOnly` the background never spends: the cached result, or `not_cached`. With `retry`
+   * (a click) it tries again a failure it remembers for a moment.
+   */
+  searchImage(photoUrl: string, cacheOnly?: boolean, retry?: boolean): Promise<SearchImageResponse>;
 }
 
 /**
@@ -45,8 +48,8 @@ export interface SearchDeps {
  * that runs on its own, after the image search, with every signal the card already has.
  */
 export interface AiDeps {
-  /** With `cacheOnly` the background never spends: the cached review, or `not_cached`. */
-  aiReview(input: AiReviewInput, cacheOnly?: boolean): Promise<AiReviewResponse>;
+  /** Same as for `searchImage`: the cached review, or `not_cached`, and `retry` on a click. */
+  aiReview(input: AiReviewInput, cacheOnly?: boolean, retry?: boolean): Promise<AiReviewResponse>;
 }
 
 export interface AnalysisOptions {
@@ -112,10 +115,11 @@ export async function searchPhoto(
   photoUrl: string | undefined,
   deps: SearchDeps,
   cacheOnly = false,
+  retry = false,
 ): Promise<SearchImageResponse> {
   if (!photoUrl) return { status: 'error', reason: 'photo' };
   try {
-    const response = await deps.searchImage(photoUrl, cacheOnly);
+    const response = await deps.searchImage(photoUrl, cacheOnly, retry);
     // A background that did not answer at all resolves with `undefined`.
     return typeof response?.status === 'string' ? response : { status: 'error', reason: 'network' };
   } catch {
@@ -133,10 +137,15 @@ export async function askAiReview(
   result: AnalysisResult,
   deps: AiDeps,
   cacheOnly = false,
+  retry = false,
 ): Promise<AiReviewResponse> {
   if (!listing.photoUrls[0]) return { status: 'error', reason: 'photo' };
   try {
-    const response = await deps.aiReview(buildReviewInput(listing, result.rawChecks), cacheOnly);
+    const response = await deps.aiReview(
+      buildReviewInput(listing, result.rawChecks),
+      cacheOnly,
+      retry,
+    );
     // A background that did not answer at all resolves with `undefined`.
     return typeof response?.status === 'string' ? response : { status: 'error', reason: 'network' };
   } catch {

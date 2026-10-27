@@ -26,6 +26,7 @@ const FAILURE_LINES: Record<GeminiFailure, string> = {
   quota: 'Google a atteint la limite de ta clé Gemini, réessaie plus tard.',
   network: "L'IA ne répond pas pour l'instant.",
   photo: "L'IA n'a pas pu lire la photo de l'annonce.",
+  unavailable: 'Gemini est indisponible pour le moment.',
   invalid_answer: "L'IA a donné une réponse inutilisable.",
 };
 

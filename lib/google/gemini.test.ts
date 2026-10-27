@@ -313,6 +313,8 @@ describe('reviewListing HTTP refusals Google names', () => {
     [403, googleError(403, 'PERMISSION_DENIED', 'SERVICE_DISABLED'), 'disabled'],
     [403, googleError(403, 'PERMISSION_DENIED', 'API_KEY_SERVICE_BLOCKED'), 'restricted'],
     [429, googleError(429, 'RESOURCE_EXHAUSTED', 'RATE_LIMIT_EXCEEDED'), 'quota'],
+    // A retired model: nothing ran, and it says nothing about the key.
+    [404, googleError(404, 'NOT_FOUND', 'OTHER', 'models/x is not found'), 'unavailable'],
   ])('maps a %s to its reason and allows the refund', async (status, body, reason) => {
     expect(await reviewListing(INPUT, KEY, fakeFetch(json(status, body)))).toEqual({
       ok: false,
@@ -333,11 +335,18 @@ describe('reviewListing HTTP refusals Google names', () => {
 
 describe('reviewListing refusals that may have been billed', () => {
   it.each([
+    // The photo comes from Vinted's CDN: an unrecognised 400 is the request or the region, not it.
     [
-      'a 400 with no reason Google names',
+      'a 400 with no reason Google names (region, schema)',
       400,
       googleError(400, 'INVALID_ARGUMENT', 'OTHER'),
-      'photo',
+      'unavailable',
+    ],
+    [
+      'a 400 that is a region refusal',
+      400,
+      googleError(400, 'FAILED_PRECONDITION', 'OTHER'),
+      'unavailable',
     ],
     ['a payload too large', 413, googleError(413, 'OUT_OF_RANGE', 'OTHER'), 'photo'],
     [
@@ -346,7 +355,7 @@ describe('reviewListing refusals that may have been billed', () => {
       googleError(403, 'PERMISSION_DENIED', 'OTHER'),
       'invalid',
     ],
-    ['a model that does not exist', 404, googleError(404, 'NOT_FOUND', 'OTHER'), 'invalid'],
+    ['a 404 that Google does not name', 404, 'not here', 'unavailable'],
     ['a bare 429 (unreadable body)', 429, 'slow down', 'quota'],
   ])('keeps the credit on %s', async (_name, status, body, reason) => {
     const response = typeof body === 'string' ? new Response(body, { status }) : json(status, body);

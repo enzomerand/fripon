@@ -167,6 +167,16 @@ describe('imageCheckFailed', () => {
     );
   });
 
+  it('says Vision is unavailable, with no button: neither the key nor the photo is the problem', () => {
+    expect(imageCheckFailed('unavailable')).toEqual({
+      id: 'image',
+      status: 'off',
+      tag: 'Recherche impossible',
+      detail: 'Google Vision est indisponible pour le moment.',
+      signals: [],
+    });
+  });
+
   it.each(['network', 'quota'] as const)(
     'offers to search again when the failure may pass (%s)',
     (reason) => {

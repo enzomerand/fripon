@@ -1,6 +1,6 @@
 import { parseWebDetection } from '../checks/image-matches';
 import { getUsage, refund, reserve } from '../credits';
-import { isKeyFailure } from '../google/refusal';
+import { createFailureMemo } from '../google/failure-memo';
 import type { VisionFailure, WebDetectResult } from '../google/vision';
 import type { SearchImageResponse } from '../messages';
 import { loadSettings } from '../settings';
@@ -19,14 +19,15 @@ interface ImageSearcherDeps {
 
 const NETWORK_ERROR: SearchImageResponse = { status: 'error', reason: 'network' };
 
-/** A key Google refused is remembered this long: further listings do not retry it. */
-export const KEY_FAILURE_MEMO_MS = 10 * 60 * 1000;
-
-/** What `createImageSearcher` returns: the `searchImage` handler, and a way to forget a refused key. */
+/** What `createImageSearcher` returns: the `searchImage` handler, and a way to forget a failure. */
 interface ImageSearcher {
-  /** With `cacheOnly` nothing is ever spent: the answer is the cached result or `not_cached`. */
-  (photoUrl: string, cacheOnly?: boolean): Promise<SearchImageResponse>;
-  /** Forgets a remembered key failure: the user just fixed something (their key tested fine). */
+  /**
+   * With `cacheOnly` nothing is ever spent: the answer is the cached result or `not_cached`. With
+   * `retry` (the user clicked) a quota or a network failure remembered for a moment is tried
+   * again instead of being answered from the memory.
+   */
+  (photoUrl: string, cacheOnly?: boolean, retry?: boolean): Promise<SearchImageResponse>;
+  /** Forgets a remembered failure: the user just fixed something (their key tested fine). */
   forgetKeyFailure(): void;
 }
 
@@ -35,8 +36,9 @@ interface ImageSearcher {
  *
  * The steps, cheapest first, each one answering before the next costs anything:
  * 1. A search made in the last 7 days is answered from the cache, for free, even without a key.
- * 2. No key: `no_key`. A key that Google refused less than 10 minutes ago: the same refusal,
- *    without downloading the photo or calling Google again.
+ * 2. No key: `no_key`. A key that Google refused less than 10 minutes ago, or a quota, a network
+ *    failure or an unavailable service less than 90 seconds ago: the same failure, without
+ *    downloading the photo or calling Google again (`createFailureMemo`).
  * 3. The cap, checked without spending: `quota` when it is reached.
  * 4. The photo is downloaded. The analyzer keeps only the hash of the photos it fetched, not their
  *    bytes, so this is a second download of the main photo (the browser's HTTP cache usually
@@ -50,23 +52,24 @@ interface ImageSearcher {
 export function createImageSearcher(deps: ImageSearcherDeps): ImageSearcher {
   const now = deps.now ?? (() => Date.now());
   const inFlight = new Map<string, Promise<SearchImageResponse>>();
-  /** In memory only: a restarted service worker simply tries the key again. */
-  let keyFailure: { key: string; reason: VisionFailure; until: number } | null = null;
+  const memo = createFailureMemo<VisionFailure>(now);
 
   /** A cache that cannot be read is a cache that is empty: the search still works. */
   const cachedMatches = (cacheKey: string) => readVisionCache(cacheKey, now()).catch(() => null);
 
-  async function run(photoUrl: string, cacheKey: string): Promise<SearchImageResponse> {
+  async function run(
+    photoUrl: string,
+    cacheKey: string,
+    retry: boolean,
+  ): Promise<SearchImageResponse> {
     const cached = await cachedMatches(cacheKey);
     if (cached) return { status: 'ok', matches: cached };
 
     const settings = await loadSettings();
     const key = settings.keys.vision;
     if (key === '') return { status: 'no_key' };
-    // Remembered for this very key only: saving another one tries again at once.
-    if (keyFailure && keyFailure.key === key && now() < keyFailure.until) {
-      return { status: 'error', reason: keyFailure.reason };
-    }
+    const remembered = memo.recall(key, retry);
+    if (remembered) return { status: 'error', reason: remembered };
     // The cap comes from the stored settings, not from any gate a page was shown earlier. Only
     // looked at here: the credit is taken later, right before the call.
     if ((await getUsage('vision', settings.caps.vision)).state === 'reached') {
@@ -94,20 +97,22 @@ export function createImageSearcher(deps: ImageSearcherDeps): ImageSearcher {
       // Only a call Google certainly did not bill gives its credit back: after a timeout or a
       // 5xx the image may have been processed, and the counter must not understate the spend.
       if (result.refundable) await refund('vision', 1, reservation.periodId).catch(() => undefined);
-      if (isKeyFailure(result.reason)) {
-        keyFailure = { key, reason: result.reason, until: now() + KEY_FAILURE_MEMO_MS };
-      }
+      memo.remember(key, result.reason);
       return { status: 'error', reason: result.reason };
     }
 
-    keyFailure = null;
+    memo.forget();
     const matches = parseWebDetection(result.webDetection);
     // The search was paid for: a cache that cannot be written must not hide its result.
     await writeVisionCache(cacheKey, matches, now()).catch(() => undefined);
     return { status: 'ok', matches };
   }
 
-  function searchImage(photoUrl: string, cacheOnly = false): Promise<SearchImageResponse> {
+  function searchImage(
+    photoUrl: string,
+    cacheOnly = false,
+    retry = false,
+  ): Promise<SearchImageResponse> {
     // Validated first: a refused URL never reaches the cache, the settings or the network.
     if (!isAllowedImageUrl(photoUrl)) return Promise.resolve({ status: 'error', reason: 'photo' });
 
@@ -121,7 +126,7 @@ export function createImageSearcher(deps: ImageSearcherDeps): ImageSearcher {
     const pending = inFlight.get(cacheKey);
     if (pending) return pending;
 
-    const search = run(photoUrl, cacheKey)
+    const search = run(photoUrl, cacheKey, retry)
       .catch((): SearchImageResponse => NETWORK_ERROR)
       .finally(() => inFlight.delete(cacheKey));
     inFlight.set(cacheKey, search);
@@ -130,7 +135,7 @@ export function createImageSearcher(deps: ImageSearcherDeps): ImageSearcher {
 
   return Object.assign(searchImage, {
     forgetKeyFailure() {
-      keyFailure = null;
+      memo.forget();
     },
   });
 }

@@ -87,7 +87,7 @@ describe('handleMessage', () => {
       { type: 'searchImage', photoUrl: 'https://images1.vinted.net/a.jpg' },
       deps,
     );
-    expect(deps.searchImage).toHaveBeenCalledWith('https://images1.vinted.net/a.jpg', false);
+    expect(deps.searchImage).toHaveBeenCalledWith('https://images1.vinted.net/a.jpg', false, false);
     expect(response).toEqual({ status: 'ok', matches });
   });
 
@@ -99,9 +99,18 @@ describe('handleMessage', () => {
     expect(await handleMessage({ type: 'searchImage', photoUrl, cacheOnly: true }, deps)).toEqual({
       status: 'not_cached',
     });
-    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, true);
+    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, true, false);
     await handleMessage({ type: 'searchImage', photoUrl, cacheOnly: false }, deps);
-    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, false);
+    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, false, false);
+  });
+
+  it('tells the searcher and the reviewer when the user asked for another attempt', async () => {
+    const deps = makeDeps();
+    const photoUrl = 'https://images1.vinted.net/a.jpg';
+    await handleMessage({ type: 'searchImage', photoUrl, retry: true }, deps);
+    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, false, true);
+    await handleMessage({ type: 'aiReview', input: REVIEW_INPUT, retry: true }, deps);
+    expect(deps.aiReview).toHaveBeenLastCalledWith(REVIEW_INPUT, false, true);
   });
 
   it('still answers a searchImage whose searcher rejects', async () => {
@@ -120,9 +129,9 @@ describe('handleMessage', () => {
       status: 'ok',
       review: { catalogPhoto: false, summary: 'Ok.' },
     });
-    expect(deps.aiReview).toHaveBeenLastCalledWith(REVIEW_INPUT, false);
+    expect(deps.aiReview).toHaveBeenLastCalledWith(REVIEW_INPUT, false, false);
     await handleMessage({ type: 'aiReview', input: REVIEW_INPUT, cacheOnly: true }, deps);
-    expect(deps.aiReview).toHaveBeenLastCalledWith(REVIEW_INPUT, true);
+    expect(deps.aiReview).toHaveBeenLastCalledWith(REVIEW_INPUT, true, false);
   });
 
   it('still answers an aiReview whose reviewer rejects', async () => {

@@ -1,9 +1,8 @@
 import { getUsage, refund, reserve } from '../credits';
 import type { GeminiFailure, ReviewInput, ReviewResult } from '../google/gemini';
-import { isKeyFailure } from '../google/refusal';
+import { createFailureMemo } from '../google/failure-memo';
 import { isAllowedImageUrl } from '../image/analyzer';
 import { blobToBase64 } from '../image/base64';
-import { KEY_FAILURE_MEMO_MS } from '../image/search';
 import type { AiReviewResponse } from '../messages';
 import { loadSettings } from '../settings';
 import { clampReviewInput, type AiReviewInput } from './input';
@@ -35,11 +34,15 @@ export function mimeTypeOf(blob: Blob): string {
   return IMAGE_MIME_TYPES.has(type) ? type : 'image/jpeg';
 }
 
-/** What `createAiReviewer` returns: the `aiReview` handler, and a way to forget a refused key. */
+/** What `createAiReviewer` returns: the `aiReview` handler, and a way to forget a failure. */
 interface AiReviewer {
-  /** With `cacheOnly` nothing is ever spent: the answer is the cached review or `not_cached`. */
-  (input: AiReviewInput, cacheOnly?: boolean): Promise<AiReviewResponse>;
-  /** Forgets a remembered key failure: the user just fixed something (their key tested fine). */
+  /**
+   * With `cacheOnly` nothing is ever spent: the answer is the cached review or `not_cached`. With
+   * `retry` (the user clicked) a quota or a network failure remembered for a moment is tried
+   * again instead of being answered from the memory.
+   */
+  (input: AiReviewInput, cacheOnly?: boolean, retry?: boolean): Promise<AiReviewResponse>;
+  /** Forgets a remembered failure: the user just fixed something (their key tested fine). */
   forgetKeyFailure(): void;
 }
 
@@ -48,8 +51,9 @@ interface AiReviewer {
  * each one answering before the next costs anything:
  * 1. A review made in the last 7 days for the same photo and the same signals is answered from the
  *    cache, for free, even without a key.
- * 2. No key: `no_key`. A key that Google refused less than 10 minutes ago: the same refusal,
- *    without downloading the photo or calling Google again.
+ * 2. No key: `no_key`. A key that Google refused less than 10 minutes ago, or a quota, a network
+ *    failure or an unavailable service less than 90 seconds ago: the same failure, without
+ *    downloading the photo or calling Google again (`createFailureMemo`).
  * 3. The cap, checked without spending: `quota` when it is reached.
  * 4. The photo is downloaded (the browser's HTTP cache usually serves it).
  * 5. A Gemini credit is reserved right before the paid call, and given back only when Google
@@ -61,23 +65,24 @@ interface AiReviewer {
 export function createAiReviewer(deps: AiReviewerDeps): AiReviewer {
   const now = deps.now ?? (() => Date.now());
   const inFlight = new Map<string, Promise<AiReviewResponse>>();
-  /** In memory only: a restarted service worker simply tries the key again. */
-  let keyFailure: { key: string; reason: GeminiFailure; until: number } | null = null;
+  const memo = createFailureMemo<GeminiFailure>(now);
 
   /** A cache that cannot be read is a cache that is empty: the review still works. */
   const cachedReview = (cacheKey: string) => readAiCache(cacheKey, now()).catch(() => null);
 
-  async function run(input: AiReviewInput, cacheKey: string): Promise<AiReviewResponse> {
+  async function run(
+    input: AiReviewInput,
+    cacheKey: string,
+    retry: boolean,
+  ): Promise<AiReviewResponse> {
     const cached = await cachedReview(cacheKey);
     if (cached) return { status: 'ok', review: cached };
 
     const settings = await loadSettings();
     const key = settings.keys.gemini;
     if (key === '') return { status: 'no_key' };
-    // Remembered for this very key only: saving another one tries again at once.
-    if (keyFailure && keyFailure.key === key && now() < keyFailure.until) {
-      return { status: 'error', reason: keyFailure.reason };
-    }
+    const remembered = memo.recall(key, retry);
+    if (remembered) return { status: 'error', reason: remembered };
     // The cap comes from the stored settings, not from any gate a page was shown earlier. Only
     // looked at here: the credit is taken later, right before the call.
     if ((await getUsage('gemini', settings.caps.gemini)).state === 'reached') {
@@ -115,19 +120,21 @@ export function createAiReviewer(deps: AiReviewerDeps): AiReviewer {
       // Only a call Google certainly did not bill gives its credit back: after a timeout or a
       // 5xx the photo may have been processed, and the counter must not understate the spend.
       if (result.refundable) await refund('gemini', 1, reservation.periodId).catch(() => undefined);
-      if (isKeyFailure(result.reason)) {
-        keyFailure = { key, reason: result.reason, until: now() + KEY_FAILURE_MEMO_MS };
-      }
+      memo.remember(key, result.reason);
       return { status: 'error', reason: result.reason };
     }
 
-    keyFailure = null;
+    memo.forget();
     // The review was paid for: a cache that cannot be written must not hide it.
     await writeAiCache(cacheKey, result.review, now()).catch(() => undefined);
     return { status: 'ok', review: result.review };
   }
 
-  function aiReview(rawInput: AiReviewInput, cacheOnly = false): Promise<AiReviewResponse> {
+  function aiReview(
+    rawInput: AiReviewInput,
+    cacheOnly = false,
+    retry = false,
+  ): Promise<AiReviewResponse> {
     // Validated first: a refused URL never reaches the cache, the settings or the network.
     if (!isAllowedImageUrl(rawInput.photoUrl)) {
       return Promise.resolve({ status: 'error', reason: 'photo' });
@@ -144,7 +151,7 @@ export function createAiReviewer(deps: AiReviewerDeps): AiReviewer {
     const pending = inFlight.get(cacheKey);
     if (pending) return pending;
 
-    const review = run(input, cacheKey)
+    const review = run(input, cacheKey, retry)
       .catch((): AiReviewResponse => NETWORK_ERROR)
       .finally(() => inFlight.delete(cacheKey));
     inFlight.set(cacheKey, review);
@@ -153,7 +160,7 @@ export function createAiReviewer(deps: AiReviewerDeps): AiReviewer {
 
   return Object.assign(aiReview, {
     forgetKeyFailure() {
-      keyFailure = null;
+      memo.forget();
     },
   });
 }

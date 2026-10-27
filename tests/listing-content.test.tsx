@@ -125,6 +125,7 @@ type SentMessage = {
   url?: string;
   photoUrl?: string;
   cacheOnly?: boolean;
+  retry?: boolean;
   section?: string;
   input?: {
     photoUrl: string;
@@ -1103,6 +1104,27 @@ describe('listing content script', () => {
           "Recherche d'image : la même photo est en vente sur Shein.",
         );
         expect(shadowText()).toContain('Trouvée sur Shein');
+      }, 15_000);
+
+      it('sends retry only with a click, never with what the page starts by itself', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        await openCard();
+        await until(() => sentMessages('aiReview').length === 1);
+        expect(sentMessages('searchImage')).toEqual([
+          { type: 'searchImage', photoUrl: PHOTO_URL, cacheOnly: true },
+        ]);
+        expect(sentMessages('aiReview')[0]?.retry).toBeUndefined();
+
+        actionButton()?.click();
+        await until(() => sentMessages('aiReview').length === 2);
+        expect(sentMessages('searchImage')[1]).toEqual({
+          type: 'searchImage',
+          photoUrl: PHOTO_URL,
+          retry: true,
+        });
+        expect(sentMessages('aiReview')[1]?.retry).toBe(true);
+        expect(sentMessages('aiReview')[1]?.cacheOnly).toBeUndefined();
       }, 15_000);
 
       it('shows no second button while the steps of a click run', async () => {

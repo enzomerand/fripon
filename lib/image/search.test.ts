@@ -4,7 +4,8 @@ import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { getUsage, reserve } from '../credits';
 import type { WebDetectResult } from '../google/vision';
 import { saveSettings } from '../settings';
-import { KEY_FAILURE_MEMO_MS, createImageSearcher } from './search';
+import { KEY_FAILURE_MEMO_MS, TRANSIENT_FAILURE_MEMO_MS } from '../google/failure-memo';
+import { createImageSearcher } from './search';
 import { VISION_CACHE_PREFIX, VISION_CACHE_TTL_MS } from './search-cache';
 
 const KEY = 'AIzaSyFakeKeyForTestsOnly_0123456789abcd';
@@ -271,7 +272,8 @@ describe('createImageSearcher failures', () => {
       now: () => clock,
     });
     expect((await search(PHOTO)).status).toBe('error');
-    expect((await search(PHOTO)).status).toBe('ok');
+    // The quota is remembered for a moment: it is the click that tries again.
+    expect((await search(PHOTO, false, true)).status).toBe('ok');
     expect(await used()).toBe(1);
   });
 
@@ -326,13 +328,102 @@ describe('createImageSearcher key failures', () => {
     expect(detect).toHaveBeenCalledOnce();
   });
 
-  it('does not remember failures that say nothing about the key', async () => {
-    for (const reason of ['network', 'photo', 'quota'] as const) {
-      const { search, detect } = setup({ ok: false, reason, refundable: true });
+  it('does not remember a failure of the photo itself', async () => {
+    const { search, detect } = setup({ ok: false, reason: 'photo', refundable: false });
+    await search(PHOTO);
+    await search(OTHER);
+    expect(detect).toHaveBeenCalledTimes(2);
+  });
+
+  describe('a failure that passes by itself', () => {
+    it.each(['quota', 'network', 'unavailable'] as const)(
+      'is remembered for 90 seconds when it is "%s": no download, no call, no credit for the next listings',
+      async (reason) => {
+        const { search, photo, detect } = setup({ ok: false, reason, refundable: false });
+        expect(await search(PHOTO)).toEqual({ status: 'error', reason });
+        expect(await used()).toBe(1);
+
+        clock = NOW + TRANSIENT_FAILURE_MEMO_MS - 1;
+        expect(await search(OTHER)).toEqual({ status: 'error', reason });
+        expect(await search('https://images1.vinted.net/t/3/f800/c.webp')).toEqual({
+          status: 'error',
+          reason,
+        });
+        expect(photo).toHaveBeenCalledOnce();
+        expect(detect).toHaveBeenCalledOnce();
+        // Not a credit more than the first call's.
+        expect(await used()).toBe(1);
+      },
+    );
+
+    it('is tried again after 90 seconds, which is much shorter than a refused key', async () => {
+      expect(TRANSIENT_FAILURE_MEMO_MS).toBe(90_000);
+      expect(KEY_FAILURE_MEMO_MS).toBeGreaterThan(TRANSIENT_FAILURE_MEMO_MS);
+      const { search, detect } = setup({ ok: false, reason: 'network', refundable: false });
       await search(PHOTO);
+      clock = NOW + TRANSIENT_FAILURE_MEMO_MS;
       await search(OTHER);
       expect(detect).toHaveBeenCalledTimes(2);
-    }
+    });
+
+    it('is tried again at once when the user clicked', async () => {
+      const { search, detect } = setup({ ok: false, reason: 'network', refundable: false });
+      await search(PHOTO);
+      await search(OTHER, false, true);
+      expect(detect).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not make a click ignore a refused key: nothing on the card would change it', async () => {
+      const { search, detect } = setup({ ok: false, reason: 'billing', refundable: true });
+      await search(PHOTO);
+      expect(await search(OTHER, false, true)).toEqual({ status: 'error', reason: 'billing' });
+      expect(detect).toHaveBeenCalledOnce();
+    });
+
+    it('still serves the cache, and a look in the cache, while a failure is remembered', async () => {
+      const detect = vi
+        .fn<(base64: string, key: string) => Promise<WebDetectResult>>()
+        .mockResolvedValueOnce(FOUND)
+        .mockResolvedValue({ ok: false, reason: 'network', refundable: false });
+      const search = createImageSearcher({
+        fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
+        webDetect: detect,
+        now: () => clock,
+      });
+      await search(PHOTO);
+      await search(OTHER);
+      expect((await search(PHOTO)).status).toBe('ok');
+      expect((await search(PHOTO, true)).status).toBe('ok');
+      expect(await search(OTHER, true)).toEqual({ status: 'not_cached' });
+    });
+
+    it('is forgotten as soon as another key is saved, or when asked to', async () => {
+      const { search, detect } = setup({ ok: false, reason: 'quota', refundable: false });
+      await search(PHOTO);
+      await saveSettings({ keys: { vision: `${KEY}2` } });
+      await search(OTHER);
+      expect(detect).toHaveBeenCalledTimes(2);
+      search.forgetKeyFailure();
+      await search(PHOTO);
+      expect(detect).toHaveBeenCalledTimes(3);
+    });
+
+    it('is forgotten after a success', async () => {
+      const detect = vi
+        .fn<(base64: string, key: string) => Promise<WebDetectResult>>()
+        .mockResolvedValueOnce({ ok: false, reason: 'network', refundable: false })
+        .mockResolvedValue(FOUND);
+      const search = createImageSearcher({
+        fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
+        webDetect: detect,
+        now: () => clock,
+      });
+      await search(PHOTO);
+      clock = NOW + TRANSIENT_FAILURE_MEMO_MS;
+      expect((await search(OTHER)).status).toBe('ok');
+      expect((await search('https://images1.vinted.net/t/3/f800/c.webp')).status).toBe('ok');
+      expect(detect).toHaveBeenCalledTimes(3);
+    });
   });
 
   it('forgets the failure as soon as another key is saved', async () => {
@@ -488,7 +579,9 @@ describe('createImageSearcher in flight', () => {
   it('forgets an in-flight search once it is over', async () => {
     const { search, detect } = setup({ ok: false, reason: 'network', refundable: false });
     await search(PHOTO);
-    await search(PHOTO);
+    // Not answered from the in-flight search that is over; the memory of the failure is bypassed
+    // by the click.
+    await search(PHOTO, false, true);
     expect(detect).toHaveBeenCalledTimes(2);
     expect(await used()).toBe(2);
   });
