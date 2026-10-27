@@ -2,3 +2,4 @@
 .wxt/
 docs/mockups/
 package-lock.json
+.claude/
