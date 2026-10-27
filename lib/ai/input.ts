@@ -1,4 +1,6 @@
+import { formatMoney } from '../format';
 import { isRecord } from '../json';
+import type { CheckId, CheckResult, Listing } from '../model';
 
 /**
  * What the page sends the background to have a listing reviewed: the main photo (the background
@@ -46,5 +48,62 @@ export function clampReviewInput(input: AiReviewInput): AiReviewInput {
     signals: input.signals
       .slice(0, REVIEW_LIMITS.signals)
       .map((s) => s.slice(0, REVIEW_LIMITS.signal)),
+  };
+}
+
+/** "Shein", "Shein et Temu", "Shein, Temu et AliExpress". */
+function joinNames(names: string[]): string {
+  return names.length < 2
+    ? (names[0] ?? '')
+    : `${names.slice(0, -1).join(', ')} et ${names[names.length - 1]}`;
+}
+
+/** What the image search found, in a sentence for the AI; "not done" whenever it did not run. */
+function imageLine(image: CheckResult | undefined): string {
+  if (!image || image.status === 'off') return "Recherche d'image : non faite.";
+  const platforms = (exact: boolean) => [
+    ...new Set((image.matches ?? []).filter((m) => m.exact === exact).map((m) => m.platform)),
+  ];
+  const copies = platforms(true);
+  if (copies.length > 0) {
+    return `Recherche d'image : la même photo est en vente sur ${joinNames(copies)}.`;
+  }
+  const lookalikes = platforms(false);
+  if (lookalikes.length > 0) {
+    return `Recherche d'image : une photo très proche existe sur ${joinNames(lookalikes)}.`;
+  }
+  return "Recherche d'image : aucune trace de la photo sur Shein, Temu, AliExpress…";
+}
+
+/** The rows that tell the AI something, with the name it reads them under. */
+const ROW_NAMES: Array<[CheckId, string]> = [
+  ['seller', 'Vendeur'],
+  ['photos', 'Photos'],
+  ['description', 'Description'],
+];
+
+/**
+ * The signals Fripon computed, one plain French line each, for the AI to summarise. Built from the
+ * rows as they were before any AI confirmation (`AnalysisResult.rawChecks`), so a review never
+ * feeds on its own conclusion, and the same listing gives the same lines (they are part of the
+ * cache key). A row that did not run says nothing: the AI must not guess at what was not read.
+ */
+export function signalLines(rawChecks: CheckResult[]): string[] {
+  const lines = [imageLine(rawChecks.find((check) => check.id === 'image'))];
+  for (const [id, name] of ROW_NAMES) {
+    const row = rawChecks.find((check) => check.id === id);
+    if (row && row.status !== 'off') lines.push(`${name} (${row.tag}) : ${row.detail}`);
+  }
+  return lines;
+}
+
+/** What the page sends to have a listing reviewed: its main photo, its text, and the signals. */
+export function buildReviewInput(listing: Listing, rawChecks: CheckResult[]): AiReviewInput {
+  return {
+    photoUrl: listing.photoUrls[0] ?? '',
+    title: listing.title,
+    description: listing.description,
+    price: formatMoney(listing.price),
+    signals: signalLines(rawChecks),
   };
 }

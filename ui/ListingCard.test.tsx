@@ -1,6 +1,7 @@
 import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AiBlock } from '../lib/ai/block';
 import type { OptionsSection } from '../lib/messages';
 import type { CheckResult, ImageMatch, Listing, Verdict } from '../lib/model';
 import { ListingCard, PRUDENCE_NOTE, type CardState } from './ListingCard';
@@ -52,6 +53,7 @@ async function show(
   onRetry?: () => void,
   onOpenOptions?: (section: OptionsSection) => void,
   onRunImageSearch?: () => void,
+  onRunAiReview?: () => void,
 ) {
   await act(() =>
     render(
@@ -60,6 +62,7 @@ async function show(
         onRetry={onRetry}
         onOpenOptions={onOpenOptions}
         onRunImageSearch={onRunImageSearch}
+        onRunAiReview={onRunAiReview}
       />,
       root,
     ),
@@ -444,6 +447,183 @@ describe('ListingCard', () => {
       await show(withImage({ matches: [match('Shein', 1, true)] }), undefined, undefined, run);
       expect(root.querySelector('.fripon__check')).not.toBeNull();
       expect(links()[0]?.textContent).toBe('Voir sur Shein');
+    });
+  });
+
+  describe('AI review', () => {
+    const withAi = (ai: AiBlock | undefined, rows: CheckResult[] = checks): CardState => ({
+      ...done,
+      checks: rows,
+      ...(ai && { ai }),
+    });
+    const block = () => root.querySelector('.fripon__ai');
+    const topButtons = () => [
+      ...root.querySelectorAll<HTMLButtonElement>('.fripon > .fripon__actions .fripon__action'),
+    ];
+    const aiButtons = () => [
+      ...root.querySelectorAll<HTMLButtonElement>('.fripon__ai .fripon__action'),
+    ];
+
+    async function expand() {
+      await act(() => (root.querySelector('.fripon__toggle') as HTMLButtonElement).click());
+    }
+
+    it('has no AI block without an AI state, expanded or not', async () => {
+      await show(withAi(undefined));
+      await expand();
+      expect(block()).toBeNull();
+      expect(root.textContent).not.toContain("L'avis de l'IA");
+    });
+
+    it('shows the summary and the reminder that it can be wrong, in the expanded card only', async () => {
+      await show(withAi({ status: 'done', summary: 'Photo de studio, vue sur Shein.' }));
+      expect(block()).toBeNull();
+      expect(root.textContent).not.toContain('Photo de studio');
+
+      await expand();
+      expect(block()?.querySelector('.fripon__ai-title')?.textContent).toBe("L'avis de l'IA");
+      expect(block()?.textContent).toContain('Photo de studio, vue sur Shein.');
+      expect(block()?.textContent).toContain('Résumé par Gemini, il peut se tromper.');
+    });
+
+    it('puts the block after the checks and before the prudence note', async () => {
+      await show(withAi({ status: 'done', summary: 'Un résumé.' }));
+      await expand();
+      const children = [...(root.querySelector('#fripon-checks')?.children ?? [])].map(
+        (el) => el.className,
+      );
+      expect(children).toEqual(['fripon__checks', 'fripon__ai', 'fripon__foot']);
+    });
+
+    it('shows the summary as plain text, whatever it looks like', async () => {
+      await show(withAi({ status: 'done', summary: '<img src=x onerror=alert(1)> Salut' }));
+      await expand();
+      expect(block()?.querySelector('img')).toBeNull();
+      expect(block()?.textContent).toContain('<img src=x onerror=alert(1)> Salut');
+    });
+
+    it('says the AI is reading while the review runs, with no note and no button', async () => {
+      await show(withAi({ status: 'running' }), undefined, undefined, vi.fn(), vi.fn());
+      await expand();
+      expect(block()?.querySelector('[role="status"]')?.textContent).toBe("L'IA lit l'annonce…");
+      expect(block()?.textContent).not.toContain('Résumé par Gemini');
+      expect(aiButtons()).toHaveLength(0);
+    });
+
+    it('shows a failure as one neutral line', async () => {
+      await show(withAi({ status: 'failed', message: "L'IA ne répond pas pour l'instant." }));
+      await expand();
+      expect(block()?.textContent).toContain("L'IA ne répond pas pour l'instant.");
+      expect(block()?.textContent).not.toContain('Résumé par Gemini');
+      expect(aiButtons()).toHaveLength(0);
+    });
+
+    it('adds the "Vérifier ma clé" button to a key failure, and opens the keys', async () => {
+      const open = vi.fn();
+      await show(
+        withAi({ status: 'failed', message: 'Google refuse ta clé Gemini.', action: 'open_keys' }),
+        undefined,
+        open,
+      );
+      await expand();
+      expect(aiButtons().map((b) => b.textContent)).toEqual(['Vérifier ma clé']);
+      await act(() => aiButtons()[0]?.click());
+      expect(open).toHaveBeenCalledWith('keys');
+    });
+
+    it('has no key button when nobody handles the click', async () => {
+      await show(withAi({ status: 'failed', message: 'Refusée.', action: 'open_keys' }));
+      await expand();
+      expect(aiButtons()).toHaveLength(0);
+    });
+
+    describe('waiting for a click (Au clic)', () => {
+      const imageOnly = [
+        check('image', { status: 'off', tag: 'Désactivée', action: 'open_guide' }),
+        ...checks.slice(1),
+      ];
+      const imageButton = [
+        check('image', { status: 'off', tag: 'Au clic', action: 'run_image_search' }),
+        ...checks.slice(1),
+      ];
+
+      it('puts "Lancer l\'avis IA" under the verdict lines of the collapsed card, and runs the review', async () => {
+        const run = vi.fn();
+        await show(withAi({ status: 'waiting' }, imageOnly), undefined, undefined, undefined, run);
+        expect(topButtons().map((b) => b.textContent)).toEqual(["Lancer l'avis IA"]);
+        const card = root.querySelector('.fripon') as HTMLElement;
+        const order = [...card.children].map((el) => el.className);
+        expect(order.indexOf('fripon__actions')).toBeLessThan(order.indexOf('fripon__toggle'));
+        await act(() => topButtons()[0]?.click());
+        expect(run).toHaveBeenCalledOnce();
+      });
+
+      it('hands over to the AI block once the checks are expanded: one button at a time', async () => {
+        const run = vi.fn();
+        await show(withAi({ status: 'waiting' }, imageOnly), undefined, undefined, undefined, run);
+        await expand();
+        expect(topButtons()).toHaveLength(0);
+        // The image row has its own button (the guide's); the AI one is in the block.
+        expect(aiButtons().map((b) => b.textContent)).toEqual(["Lancer l'avis IA"]);
+        expect(block()?.querySelector('.fripon__ai-title')?.textContent).toBe("L'avis de l'IA");
+        await act(() => aiButtons()[0]?.click());
+        expect(run).toHaveBeenCalledOnce();
+        await expand();
+        expect(topButtons()).toHaveLength(1);
+      });
+
+      it('leaves the review to the image search button when the image row has one', async () => {
+        const runImage = vi.fn();
+        const runAi = vi.fn();
+        await show(
+          withAi({ status: 'waiting' }, imageButton),
+          undefined,
+          undefined,
+          runImage,
+          runAi,
+        );
+        expect(topButtons().map((b) => b.textContent)).toEqual(["Lancer la recherche d'image"]);
+        await expand();
+        // One button for both, on the image row; no block, no second button.
+        expect(block()).toBeNull();
+        expect(root.querySelectorAll('.fripon__action')).toHaveLength(1);
+        expect(root.querySelector('.fripon__check .fripon__action')?.textContent).toBe(
+          "Lancer la recherche d'image",
+        );
+        await act(() => (root.querySelector('.fripon__action') as HTMLButtonElement).click());
+        expect(runImage).toHaveBeenCalledOnce();
+        expect(runAi).not.toHaveBeenCalled();
+      });
+
+      it('has no button and no block when nobody handles the click', async () => {
+        await show(withAi({ status: 'waiting' }, imageOnly));
+        expect(topButtons()).toHaveLength(0);
+        await expand();
+        expect(aiButtons()).toHaveLength(0);
+        expect(root.querySelectorAll('.fripon__ai .fripon__action')).toHaveLength(0);
+      });
+
+      it('shows no waiting button once the review is running or done', async () => {
+        const run = vi.fn();
+        for (const ai of [
+          { status: 'running' },
+          { status: 'done', summary: 'Un résumé.' },
+        ] as const) {
+          await show(withAi(ai, imageOnly), undefined, undefined, undefined, run);
+          expect(topButtons()).toHaveLength(0);
+          await expand();
+          expect(aiButtons()).toHaveLength(0);
+          await expand();
+        }
+      });
+    });
+
+    it('keeps the checks expanded when the AI block changes', async () => {
+      await show(withAi({ status: 'running' }));
+      await expand();
+      await show(withAi({ status: 'done', summary: 'Le résumé est arrivé.' }));
+      expect(root.querySelector('.fripon__check')).not.toBeNull();
+      expect(block()?.textContent).toContain('Le résumé est arrivé.');
     });
   });
 

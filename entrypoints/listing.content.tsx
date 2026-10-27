@@ -1,16 +1,20 @@
 import { render } from 'preact';
 import type { ContentScriptContext } from 'wxt/utils/content-script-context';
+import { aiBlockFor, type AiBlock } from '../lib/ai/block';
 import {
   AnalysisCancelledError,
   analyzeListing,
+  askAiReview,
   searchPhoto,
+  withAiReview,
   withImageSearch,
+  type AiDeps,
   type AnalysisDeps,
   type AnalysisResult,
   type SearchDeps,
 } from '../lib/analysis';
 import { imageCheckSearching } from '../lib/checks/image';
-import type { Gate, ImageGate } from '../lib/gate';
+import type { Gate, Gates } from '../lib/gate';
 import { sendMessage, type OptionsSection } from '../lib/messages';
 import type { Listing } from '../lib/model';
 import { waitFor } from '../lib/wait';
@@ -39,18 +43,27 @@ const searchDeps: SearchDeps = {
     sendMessage({ type: 'searchImage', photoUrl, ...(cacheOnly && { cacheOnly: true }) }),
 };
 
+const aiDeps: AiDeps = {
+  aiReview: (input, cacheOnly) =>
+    sendMessage({ type: 'aiReview', input, ...(cacheOnly && { cacheOnly: true }) }),
+};
+
 const GATE_WORDS: readonly Gate[] = ['ready', 'no_key', 'quota', 'manual'];
+const NO_GATES: Gates = { image: 'no_key', ai: 'no_key' };
+
+const wordOf = (gate: unknown): Gate =>
+  GATE_WORDS.includes(gate as Gate) ? (gate as Gate) : 'no_key';
 
 /**
  * What the background says about the paid steps. The keys never leave it: this is all we learn.
  * Any failure counts as "no key", the safe state in which nothing paid is attempted.
  */
-async function askImageGate(): Promise<ImageGate> {
+async function askGates(): Promise<Gates> {
   try {
-    const { image } = await sendMessage({ type: 'getGates' });
-    return GATE_WORDS.includes(image) ? image : 'no_key';
+    const gates = await sendMessage({ type: 'getGates' });
+    return { image: wordOf(gates?.image), ai: wordOf(gates?.ai) };
   } catch {
-    return 'no_key';
+    return NO_GATES;
   }
 }
 
@@ -60,21 +73,42 @@ function openOptions(section: OptionsSection) {
 
 type Ui = Awaited<ReturnType<typeof createShadowRootUi<HTMLElement>>>;
 
-/** What the card currently shows, kept to redo the verdict once the image search answers. */
+/** What the card currently shows, kept to redo the verdict once the paid steps answer. */
 interface Analysed {
   listing: Listing;
   result: AnalysisResult;
-  /** What the background said about the search when the page opened (a display hint). */
-  gate: ImageGate;
-  /** true while a search that can spend is running (not the look in the cache): a second one does not start. */
-  searching: boolean;
+  /** What the background said about the paid steps when the page opened (a display hint). */
+  gates: Gates;
+  /** The AI block of the expanded card, null when the card says nothing of the AI. */
+  ai: AiBlock | null;
+  /** true while steps that can spend are running (not the look in the cache): a second run does not start. */
+  busy: boolean;
+  /** true once a review that can spend was asked for: the AI is asked once per page, then a reload. */
+  aiAsked: boolean;
 }
 
 /**
- * auto: the search the card starts by itself once it is shown. click: the button of the image row.
- * One code path for both: automatic mode is a click nobody has to make.
+ * auto: the steps the card starts by itself once it is shown. click: the button of the card (the
+ * image row's, which starts the AI review along with it, or the AI block's). One code path for
+ * both: automatic mode is a click nobody has to make.
  */
-type SearchTrigger = 'auto' | 'click';
+type Trigger = 'auto' | 'click';
+
+/**
+ * What a paid step does in one run. lookup: only a look in the cache, which costs nothing and
+ * shows nothing but a result. run: the real request (the background has the last word on keys
+ * and credits). skip: not this time.
+ */
+type StepMode = 'lookup' | 'run' | 'skip';
+
+/** Whether a step with this gate can really spend a credit. */
+const canSpend = (gate: Gate) => gate === 'ready' || gate === 'manual';
+
+/** The AI block a card starts with, from the gate the page was given. */
+function initialAiBlock(gate: Gate): AiBlock | null {
+  if (gate === 'ready') return { status: 'running' };
+  return gate === 'manual' ? { status: 'waiting' } : null;
+}
 
 /** Owns the card of this page: mounts it, updates it, and replaces it on a new run. */
 function createCardController(ctx: ContentScriptContext) {
@@ -95,69 +129,124 @@ function createCardController(ctx: ContentScriptContext) {
         state={state}
         onRetry={() => void start()}
         onOpenOptions={openOptions}
-        onRunImageSearch={() => searchImage('click')}
+        onRunImageSearch={() => runPaidSteps('click')}
+        onRunAiReview={() => runPaidSteps('click')}
       />,
       container,
     );
   }
 
-  /** Starts the image search without waiting for it. Never rejects: a failure must not hurt the page. */
-  function searchImage(trigger: SearchTrigger) {
-    void runImageSearch(trigger).catch((error: unknown) => {
-      console.warn('[Fripon] The image search failed.', error);
+  /** Shows the current analysis; `searchingImage` puts the "search running" row in the image row's place. */
+  function showAnalysed(current: Analysed, searchingImage = false) {
+    const { listing, result, ai } = current;
+    show({
+      status: 'done',
+      listing,
+      verdict: result.verdict,
+      checks: searchingImage
+        ? result.checks.map((check) => (check.id === 'image' ? imageCheckSearching() : check))
+        : result.checks,
+      ...(ai && { ai }),
+    });
+  }
+
+  /** Starts the paid steps without waiting for them. Never rejects: a failure must not hurt the page. */
+  function runPaidSteps(trigger: Trigger) {
+    void paidSteps(trigger).catch((error: unknown) => {
+      console.warn('[Fripon] The paid steps failed.', error);
     });
   }
 
   /**
-   * Searches the photo, then redoes the verdict from the checks the page already has: no new seller
-   * request, no new photo download, no free check run again.
+   * The image search, then the AI review with every signal including the search's result, then the
+   * verdict redone from the checks the page already has each time: no new seller request, no new
+   * photo download, no free check run again.
    *
-   * What the page asks follows the gate, but the background has the last word on keys and credits:
-   * - ready: the search, started as soon as the card shows (the image row already says it runs).
+   * What the page asks follows the gates, but the background has the last word on keys and credits:
+   * - ready: the real request, started as soon as the card shows (the rows already say it runs).
    * - no_key, quota: the same request. The background answers the same words without spending, or
-   *   with a result when this photo was searched before.
-   * - manual: by itself only a look in the cache (`cacheOnly`), which costs nothing; the click
-   *   sends the real search.
+   *   with a result when this listing was reviewed before.
+   * - manual: by itself only a look in the cache (`lookup`), which costs nothing; the click sends
+   *   the real request. A click starts the image search only when its row has the button (a manual
+   *   search, or the retry of a failed one) and the review only when it was never asked for.
    */
-  async function runImageSearch(trigger: SearchTrigger) {
+  async function paidSteps(trigger: Trigger) {
     const current = analysed;
     if (!current) return;
-    const { listing, result, gate } = current;
-    const cacheOnly = trigger === 'auto' && gate === 'manual';
-    // A look in the cache is quick and free: it never keeps a click from starting its search.
-    if (!cacheOnly) {
-      if (current.searching) return;
-      current.searching = true;
+    const { gates } = current;
+    const imageHasButton =
+      current.result.checks.find((check) => check.id === 'image')?.action === 'run_image_search';
+    const imageStep: StepMode =
+      trigger === 'click'
+        ? imageHasButton
+          ? 'run'
+          : 'skip'
+        : gates.image === 'manual'
+          ? 'lookup'
+          : 'run';
+    const aiSettled = current.aiAsked || current.result.aiReview !== null;
+    const aiStep: StepMode = aiSettled
+      ? 'skip'
+      : trigger === 'click'
+        ? gates.ai === 'manual'
+          ? 'run'
+          : 'skip'
+        : gates.ai === 'manual'
+          ? 'lookup'
+          : 'run';
+
+    // Only steps that can really spend keep a second run from starting. A look in the cache is
+    // quick and free, and so is a request the gate says the background will refuse ("no key", no
+    // credits left): none of them may keep a click from starting its steps.
+    const spends =
+      (imageStep === 'run' && canSpend(gates.image)) || (aiStep === 'run' && canSpend(gates.ai));
+    if (spends) {
+      if (current.busy) return;
+      current.busy = true;
     }
+    // The click that starts the review also takes the AI block's button away, from the first render.
+    if (trigger === 'click' && aiStep === 'run') current.ai = { status: 'running' };
     try {
-      // The row already says "Recherche en cours…" when the search starts by itself; only a click
-      // has to take the button's place.
-      if (trigger === 'click') {
-        show({
-          status: 'done',
-          listing,
-          verdict: result.verdict,
-          checks: result.checks.map((check) =>
-            check.id === 'image' ? imageCheckSearching() : check,
-          ),
-        });
-      }
-      const response = await searchPhoto(listing.photoUrls[0], searchDeps, cacheOnly);
-      // A newer run (new item, bfcache restore) took the card over while the search ran.
-      if (analysed !== current) return;
-      // A look in the cache only ever shows a result: a miss, a failure or a lost message leaves the
-      // "Au clic" row alone (it is not a failed search), and so does a click that got there first.
-      if (cacheOnly && (current.searching || response.status !== 'ok')) return;
-      current.result = withImageSearch(result, response);
-      show({
-        status: 'done',
-        listing,
-        verdict: current.result.verdict,
-        checks: current.result.checks,
-      });
+      if (imageStep !== 'skip') await imageSearchStep(current, imageStep === 'lookup', trigger);
+      if (analysed !== current || ctx.isInvalid) return;
+      if (aiStep !== 'skip') await aiReviewStep(current, aiStep === 'lookup');
     } finally {
-      if (!cacheOnly) current.searching = false;
+      if (spends) current.busy = false;
     }
+  }
+
+  async function imageSearchStep(current: Analysed, lookup: boolean, trigger: Trigger) {
+    const { listing } = current;
+    // The row already says "Recherche en cours…" when the search starts by itself; only a click
+    // has to take the button's place.
+    if (trigger === 'click') showAnalysed(current, true);
+    const response = await searchPhoto(listing.photoUrls[0], searchDeps, lookup);
+    // A newer run (new item, bfcache restore) took the card over while the search ran.
+    if (analysed !== current) return;
+    // A look in the cache only ever shows a result: a miss, a failure or a lost message leaves the
+    // "Au clic" row alone (it is not a failed search), and so does a click that got there first.
+    if (lookup && (current.busy || response.status !== 'ok')) return;
+    current.result = withImageSearch(current.result, response);
+    showAnalysed(current);
+  }
+
+  async function aiReviewStep(current: Analysed, lookup: boolean) {
+    if (!lookup) {
+      current.aiAsked = true;
+      // With no key or no credits left the answer is immediate and shows nothing: no flash of
+      // "L'IA lit l'annonce…" then.
+      if (canSpend(current.gates.ai)) {
+        current.ai = { status: 'running' };
+        showAnalysed(current);
+      }
+    }
+    const response = await askAiReview(current.listing, current.result, aiDeps, lookup);
+    if (analysed !== current) return;
+    // The same rule as the search: a look in the cache only ever shows a review.
+    if (lookup && (current.busy || response.status !== 'ok')) return;
+    current.result = withAiReview(current.result, response);
+    current.ai = aiBlockFor(response);
+    showAnalysed(current);
   }
 
   function stopKeepingAttached() {
@@ -229,7 +318,7 @@ function createCardController(ctx: ContentScriptContext) {
     show({ status: 'loading' });
 
     // Asked while the page is still being read; it never rejects.
-    const imageGate = askImageGate();
+    const pendingGates = askGates();
     const listing = await waitFor(() => readListing(document, location.href), {
       timeoutMs: LISTING_TIMEOUT_MS,
     });
@@ -243,19 +332,26 @@ function createCardController(ctx: ContentScriptContext) {
       return;
     }
 
-    const gate = await imageGate;
+    const gates = await pendingGates;
     const isCancelled = () => id !== runId || ctx.isInvalid;
     const result = await analyzeListing(listing, analysisDeps, {
-      imageGate: gate,
+      imageGate: gates.image,
       // A superseded run must not send further requests or download further photos.
       isCancelled,
     });
     if (id !== runId) return;
-    analysed = { listing, result, gate, searching: false };
-    show({ status: 'done', listing, verdict: result.verdict, checks: result.checks });
-    // The card does not wait for Google. The search starts only now, and only for a run that is
+    analysed = {
+      listing,
+      result,
+      gates,
+      ai: initialAiBlock(gates.ai),
+      busy: false,
+      aiAsked: false,
+    };
+    showAnalysed(analysed);
+    // The card does not wait for Google. The paid steps start only now, and only for a run that is
     // still current: a superseded run (new item, bfcache restore, invalidated script) spends nothing.
-    if (!isCancelled()) searchImage('auto');
+    if (!isCancelled()) runPaidSteps('auto');
   }
 
   /** (Re)starts the whole run. Never rejects: the page must not be affected by a failure here. */

@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import type { AiBlock } from '../lib/ai/block';
 import { googleLensUrl } from '../lib/checks/image';
 import type { OptionsSection } from '../lib/messages';
 import type {
@@ -15,7 +16,14 @@ import type {
 export type CardState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'done'; listing: Listing; verdict: Verdict; checks: CheckResult[] };
+  | {
+      status: 'done';
+      listing: Listing;
+      verdict: Verdict;
+      checks: CheckResult[];
+      /** The AI review block of the expanded card; without it the card says nothing of the AI. */
+      ai?: AiBlock;
+    };
 
 export interface ListingCardProps {
   state: CardState;
@@ -27,10 +35,16 @@ export interface ListingCardProps {
    */
   onOpenOptions?: (section: OptionsSection) => void;
   /**
-   * Called by the "Lancer la recherche d'image" button of the image row in "Au clic" mode. Without
-   * it, that row shows no button.
+   * Called by the "Lancer la recherche d'image" button of the image row in "Au clic" mode (it
+   * starts the AI review too), and by the retry button of a failed search. Without it, that row
+   * shows no button.
    */
   onRunImageSearch?: () => void;
+  /**
+   * Called by the "Lancer l'avis IA" button, shown in "Au clic" mode when there is no image search
+   * button to start the review along with. Without it, the AI block shows no button.
+   */
+  onRunAiReview?: () => void;
 }
 
 /** Where each check action that opens the options page leads, and what its button says. */
@@ -44,6 +58,10 @@ const OPTIONS_ACTIONS: Record<
 };
 
 const RUN_IMAGE_SEARCH_LABEL = "Lancer la recherche d'image";
+const RUN_AI_REVIEW_LABEL = "Lancer l'avis IA";
+export const AI_BLOCK_TITLE = "L'avis de l'IA";
+export const AI_NOTE = 'Résumé par Gemini, il peut se tromper.';
+export const AI_RUNNING = "L'IA lit l'annonce…";
 
 /** "Voir sur Shein" for a copy of the photo, "Photo proche sur Temu" for a lookalike. */
 function matchLinkLabel(match: ImageMatch): string {
@@ -88,6 +106,62 @@ function RunSearchButton({ check, onRun }: { check: CheckResult; onRun: () => vo
   return (
     <button type="button" class="fripon__action" onClick={onRun}>
       {check.actionLabel ?? RUN_IMAGE_SEARCH_LABEL}
+    </button>
+  );
+}
+
+interface AiReviewBlockProps {
+  ai: AiBlock;
+  onRun?: () => void;
+  onOpenOptions?: (section: OptionsSection) => void;
+}
+
+/** "L'avis de l'IA": the summary, with the reminder that it can be wrong. */
+function AiReviewBlock({ ai, onRun, onOpenOptions }: AiReviewBlockProps) {
+  return (
+    <div class="fripon__ai" role="group" aria-label={AI_BLOCK_TITLE}>
+      <div class="fripon__ai-title">{AI_BLOCK_TITLE}</div>
+      {ai.status === 'running' && (
+        <p class="fripon__ai-text" role="status">
+          <span class="fripon__pulse">{AI_RUNNING}</span>
+        </p>
+      )}
+      {ai.status === 'done' && (
+        <>
+          <p class="fripon__ai-text">{ai.summary}</p>
+          <p class="fripon__ai-note">{AI_NOTE}</p>
+        </>
+      )}
+      {ai.status === 'failed' && (
+        <>
+          <p class="fripon__ai-text">{ai.message}</p>
+          {ai.action === 'open_keys' && onOpenOptions && (
+            <div class="fripon__actions">
+              <button
+                type="button"
+                class="fripon__action"
+                onClick={() => onOpenOptions(OPTIONS_ACTIONS.open_keys.section)}
+              >
+                {OPTIONS_ACTIONS.open_keys.label}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+      {ai.status === 'waiting' && onRun && (
+        <div class="fripon__actions">
+          <RunAiReviewButton onRun={onRun} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The "Au clic" button of the AI review, when no image search button starts it along. */
+function RunAiReviewButton({ onRun }: { onRun: () => void }) {
+  return (
+    <button type="button" class="fripon__action" onClick={onRun}>
+      {RUN_AI_REVIEW_LABEL}
     </button>
   );
 }
@@ -164,19 +238,33 @@ function CheckRow({ check, listing, onOpenOptions, onRunImageSearch }: CheckRowP
 }
 
 type ResultProps = Extract<CardState, { status: 'done' }> &
-  Pick<ListingCardProps, 'onOpenOptions' | 'onRunImageSearch'>;
+  Pick<ListingCardProps, 'onOpenOptions' | 'onRunImageSearch' | 'onRunAiReview'>;
 
-function Result({ listing, verdict, checks, onOpenOptions, onRunImageSearch }: ResultProps) {
+function Result({
+  listing,
+  verdict,
+  checks,
+  ai,
+  onOpenOptions,
+  onRunImageSearch,
+  onRunAiReview,
+}: ResultProps) {
   const [expanded, setExpanded] = useState(false);
-  // The collapsed card is all most people see: the button that runs the search must be there too.
-  // Once expanded, the image row carries it.
+  // The collapsed card is all most people see: the button that runs the paid steps must be there
+  // too. Once expanded, the image row carries it, or the AI block when there is no image button.
+  // One button is enough: the image search button starts the AI review along with it.
   const imageCheck = checks.find((check) => check.id === 'image');
-  const searchButton =
-    !expanded && imageCheck?.action === 'run_image_search' && onRunImageSearch ? (
-      <div class="fripon__actions">
-        <RunSearchButton check={imageCheck} onRun={onRunImageSearch} />
-      </div>
+  const imageButton =
+    imageCheck?.action === 'run_image_search' && onRunImageSearch ? (
+      <RunSearchButton check={imageCheck} onRun={onRunImageSearch} />
     ) : null;
+  const aiWaiting = ai?.status === 'waiting' && onRunAiReview !== undefined;
+  const collapsedButton =
+    !expanded && (imageButton ?? (aiWaiting ? <RunAiReviewButton onRun={onRunAiReview} /> : null));
+  const searchButton = collapsedButton ? (
+    <div class="fripon__actions">{collapsedButton}</div>
+  ) : null;
+  const showAi = ai !== undefined && !(ai.status === 'waiting' && imageButton !== null);
   return (
     <section
       class={`fripon fripon--${LEVEL_COLOUR[verdict.level]}`}
@@ -214,6 +302,7 @@ function Result({ listing, verdict, checks, onOpenOptions, onRunImageSearch }: R
               />
             ))}
           </ul>
+          {showAi && <AiReviewBlock ai={ai} onRun={onRunAiReview} onOpenOptions={onOpenOptions} />}
           <p class="fripon__foot">{PRUDENCE_NOTE}</p>
         </div>
       )}
@@ -221,7 +310,13 @@ function Result({ listing, verdict, checks, onOpenOptions, onRunImageSearch }: R
   );
 }
 
-export function ListingCard({ state, onRetry, onOpenOptions, onRunImageSearch }: ListingCardProps) {
+export function ListingCard({
+  state,
+  onRetry,
+  onOpenOptions,
+  onRunImageSearch,
+  onRunAiReview,
+}: ListingCardProps) {
   if (state.status === 'loading') {
     return (
       <section class="fripon fripon--neutral" role="status">
@@ -242,5 +337,12 @@ export function ListingCard({ state, onRetry, onOpenOptions, onRunImageSearch }:
       </section>
     );
   }
-  return <Result {...state} onOpenOptions={onOpenOptions} onRunImageSearch={onRunImageSearch} />;
+  return (
+    <Result
+      {...state}
+      onOpenOptions={onOpenOptions}
+      onRunImageSearch={onRunImageSearch}
+      onRunAiReview={onRunAiReview}
+    />
+  );
 }

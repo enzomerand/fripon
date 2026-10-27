@@ -1,3 +1,4 @@
+import { buildReviewInput, type AiReviewInput } from './ai/input';
 import { checkDescription } from './checks/description';
 import { imageCheckForSearch, imageCheckOff, imageCheckSearching } from './checks/image';
 import { checkPhotos, confirmCatalogPhoto } from './checks/photos';
@@ -37,6 +38,15 @@ export interface AnalysisDeps {
 export interface SearchDeps {
   /** With `cacheOnly` the background never spends: the cached result, or `not_cached`. */
   searchImage(photoUrl: string, cacheOnly?: boolean): Promise<SearchImageResponse>;
+}
+
+/**
+ * The AI review, apart from `AnalysisDeps` and `SearchDeps` for the same reason: it is a paid call
+ * that runs on its own, after the image search, with every signal the card already has.
+ */
+export interface AiDeps {
+  /** With `cacheOnly` the background never spends: the cached review, or `not_cached`. */
+  aiReview(input: AiReviewInput, cacheOnly?: boolean): Promise<AiReviewResponse>;
 }
 
 export interface AnalysisOptions {
@@ -106,6 +116,27 @@ export async function searchPhoto(
   if (!photoUrl) return { status: 'error', reason: 'photo' };
   try {
     const response = await deps.searchImage(photoUrl, cacheOnly);
+    // A background that did not answer at all resolves with `undefined`.
+    return typeof response?.status === 'string' ? response : { status: 'error', reason: 'network' };
+  } catch {
+    return { status: 'error', reason: 'network' };
+  }
+}
+
+/**
+ * Asks the AI to review the listing from the signals of `result` (a paid call, unless
+ * `cacheOnly`). Never rejects: a listing without a photo, a background that does not answer or a
+ * context that was invalidated all count as a failed review.
+ */
+export async function askAiReview(
+  listing: Listing,
+  result: AnalysisResult,
+  deps: AiDeps,
+  cacheOnly = false,
+): Promise<AiReviewResponse> {
+  if (!listing.photoUrls[0]) return { status: 'error', reason: 'photo' };
+  try {
+    const response = await deps.aiReview(buildReviewInput(listing, result.rawChecks), cacheOnly);
     // A background that did not answer at all resolves with `undefined`.
     return typeof response?.status === 'string' ? response : { status: 'error', reason: 'network' };
   } catch {

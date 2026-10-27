@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   AnalysisCancelledError,
+  askAiReview,
   capLocalHeuristics,
   IMAGE_CONCURRENCY,
   MAX_OTHER_PHOTOS,
@@ -8,6 +9,7 @@ import {
   searchPhoto,
   withAiReview,
   withImageSearch,
+  type AiDeps,
   type AnalysisDeps,
   type SearchDeps,
 } from './analysis';
@@ -326,6 +328,74 @@ describe('searchPhoto', () => {
   it('reads no answer at all (a background that did not reply) as a failed search', async () => {
     const nothing = searching(() => Promise.resolve(undefined as unknown as SearchImageResponse));
     expect(await searchPhoto('https://images1.vinted.net/a.webp', nothing)).toEqual({
+      status: 'error',
+      reason: 'network',
+    });
+  });
+});
+
+describe('askAiReview', () => {
+  const okReview: AiReviewResponse = {
+    status: 'ok',
+    review: { catalogPhoto: false, summary: 'Ok.' },
+  };
+  const analysed = () => analyzeListing(listing, deps(), { imageGate: 'manual' });
+
+  it('sends the listing and the signals of the result, and passes the answer through', async () => {
+    const aiReview = vi.fn<AiDeps['aiReview']>(() => Promise.resolve(okReview));
+    const result = withImageSearch(await analysed(), found(exactMatch));
+    expect(await askAiReview(listing, result, { aiReview })).toEqual(okReview);
+
+    expect(aiReview).toHaveBeenCalledOnce();
+    const [input, cacheOnly] = aiReview.mock.calls[0] ?? [];
+    expect(cacheOnly).toBe(false);
+    expect(input).toMatchObject({
+      photoUrl: listing.photoUrls[0],
+      title: 'Robe fleurie',
+      description: listing.description,
+    });
+    expect(input?.signals[0]).toBe("Recherche d'image : la même photo est en vente sur Shein.");
+  });
+
+  it('builds the signals from the raw rows, so a review never feeds on its own conclusion', async () => {
+    const aiReview = vi.fn<AiDeps['aiReview']>(() => Promise.resolve(okReview));
+    const before = await analysed();
+    const reviewed = withAiReview(before, {
+      status: 'ok',
+      review: { catalogPhoto: true, summary: 'Photo de studio.' },
+    });
+    await askAiReview(listing, before, { aiReview });
+    await askAiReview(listing, reviewed, { aiReview });
+    expect(aiReview.mock.calls[1]?.[0]).toEqual(aiReview.mock.calls[0]?.[0]);
+    expect(JSON.stringify(aiReview.mock.calls[1]?.[0])).not.toContain("L'IA confirme");
+  });
+
+  it('asks for the cache alone when told to', async () => {
+    const aiReview = vi.fn<AiDeps['aiReview']>(() => Promise.resolve({ status: 'not_cached' }));
+    expect(await askAiReview(listing, await analysed(), { aiReview }, true)).toEqual({
+      status: 'not_cached',
+    });
+    expect(aiReview.mock.calls[0]?.[1]).toBe(true);
+  });
+
+  it('turns a missing photo, a rejection and no answer at all into failures, never into an exception', async () => {
+    const result = await analysed();
+    const aiReview = vi.fn<AiDeps['aiReview']>(() => Promise.resolve(okReview));
+    expect(await askAiReview({ ...listing, photoUrls: [] }, result, { aiReview })).toEqual({
+      status: 'error',
+      reason: 'photo',
+    });
+    expect(aiReview).not.toHaveBeenCalled();
+
+    const rejecting = {
+      aiReview: () => Promise.reject(new Error('Extension context invalidated')),
+    };
+    expect(await askAiReview(listing, result, rejecting)).toEqual({
+      status: 'error',
+      reason: 'network',
+    });
+    const silent = { aiReview: () => Promise.resolve(undefined as never) };
+    expect(await askAiReview(listing, result, silent)).toEqual({
       status: 'error',
       reason: 'network',
     });

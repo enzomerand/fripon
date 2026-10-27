@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { REVIEW_LIMITS, clampReviewInput, isAiReviewInput, type AiReviewInput } from './input';
+import type { CheckResult, ImageMatch, Listing } from '../model';
+import {
+  REVIEW_LIMITS,
+  buildReviewInput,
+  clampReviewInput,
+  isAiReviewInput,
+  signalLines,
+  type AiReviewInput,
+} from './input';
 
 const INPUT: AiReviewInput = {
   photoUrl: 'https://images1.vinted.net/t/01_a/f800/main.webp?s=aa',
@@ -61,5 +69,125 @@ describe('clampReviewInput', () => {
       'signals',
       'title',
     ]);
+  });
+});
+
+const row = (id: CheckResult['id'], overrides: Partial<CheckResult> = {}): CheckResult => ({
+  id,
+  status: 'ok',
+  tag: 'Rien de notable',
+  detail: `Détail ${id}.`,
+  signals: [],
+  ...overrides,
+});
+
+const match = (platform: string, exact: boolean): ImageMatch => ({
+  platform,
+  url: `https://example.test/${platform}/${exact}`,
+  exact,
+  price: null,
+});
+
+const searched = (matches: ImageMatch[]) =>
+  row('image', matches.length === 0 ? { status: 'ok' } : { status: 'bad', matches });
+
+const OFF_IMAGE = row('image', { status: 'off', tag: 'Au clic', detail: 'Lance la recherche.' });
+
+describe('signalLines', () => {
+  it('starts with the image search, then the rows that ran, in a fixed order', () => {
+    const lines = signalLines([
+      searched([]),
+      row('price', { status: 'off', tag: 'Non comparé' }),
+      row('seller', { tag: 'Normal', detail: 'Vendeur ancien.' }),
+      row('photos'),
+      row('description', { status: 'warn', tag: 'Style boutique', detail: 'Texte traduit.' }),
+    ]);
+    expect(lines).toEqual([
+      "Recherche d'image : aucune trace de la photo sur Shein, Temu, AliExpress…",
+      'Vendeur (Normal) : Vendeur ancien.',
+      'Photos (Rien de notable) : Détail photos.',
+      'Description (Style boutique) : Texte traduit.',
+    ]);
+  });
+
+  it('names the platforms where the same photo is on sale, each once', () => {
+    const [line] = signalLines([
+      searched([
+        match('Shein', true),
+        match('Shein', true),
+        match('Temu', true),
+        match('Wish', false),
+      ]),
+    ]);
+    expect(line).toBe("Recherche d'image : la même photo est en vente sur Shein et Temu.");
+    expect(
+      signalLines([searched([match('Shein', true), match('Temu', true), match('Wish', true)])])[0],
+    ).toBe("Recherche d'image : la même photo est en vente sur Shein, Temu et Wish.");
+  });
+
+  it('says a lookalike is only that', () => {
+    expect(signalLines([searched([match('Temu', false)])])[0]).toBe(
+      "Recherche d'image : une photo très proche existe sur Temu.",
+    );
+  });
+
+  it('says the search was not done whenever it did not run, whatever the reason', () => {
+    expect(signalLines([OFF_IMAGE])[0]).toBe("Recherche d'image : non faite.");
+    expect(signalLines([row('image', { status: 'off', tag: 'En cours' })])[0]).toBe(
+      "Recherche d'image : non faite.",
+    );
+    expect(signalLines([row('seller')])[0]).toBe("Recherche d'image : non faite.");
+  });
+
+  it('says nothing of a row that did not run', () => {
+    const lines = signalLines([
+      OFF_IMAGE,
+      row('seller', { status: 'off', tag: 'Indisponible' }),
+      row('photos', { status: 'off', tag: 'Non analysée' }),
+      row('description'),
+    ]);
+    expect(lines).toEqual([
+      "Recherche d'image : non faite.",
+      'Description (Rien de notable) : Détail description.',
+    ]);
+  });
+
+  it('is the same for the same rows', () => {
+    const rows = [searched([match('Shein', true)]), row('seller'), row('photos')];
+    expect(signalLines(rows)).toEqual(signalLines(structuredClone(rows)));
+  });
+});
+
+describe('buildReviewInput', () => {
+  const listing: Listing = {
+    id: '100',
+    url: 'https://www.vinted.fr/items/100-robe',
+    title: 'Robe fleurie',
+    description: 'Robe portée deux fois.',
+    price: { amount: 12.5, currency: 'EUR' },
+    brand: null,
+    size: null,
+    condition: 'unknown',
+    photoUrls: [
+      'https://images1.vinted.net/t/main/f800/main.webp?s=m',
+      'https://images1.vinted.net/t/2/f800/other.webp?s=m',
+    ],
+    sellerId: '7000001',
+  };
+
+  it('gives the main photo, the text, the price as the buyer reads it and the signals', () => {
+    const input = buildReviewInput(listing, [OFF_IMAGE, row('seller')]);
+    expect(input).toEqual({
+      photoUrl: 'https://images1.vinted.net/t/main/f800/main.webp?s=m',
+      title: 'Robe fleurie',
+      description: 'Robe portée deux fois.',
+      price: expect.stringMatching(/^12,50\s€$/),
+      signals: ["Recherche d'image : non faite.", 'Vendeur (Rien de notable) : Détail seller.'],
+    });
+    expect(isAiReviewInput(input)).toBe(true);
+  });
+
+  it('has an empty photo URL for a listing without photos (the page does not ask then)', () => {
+    expect(buildReviewInput({ ...listing, photoUrls: [] }, []).photoUrl).toBe('');
   });
 });
