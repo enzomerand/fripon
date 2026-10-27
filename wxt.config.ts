@@ -1,5 +1,6 @@
 import preact from '@preact/preset-vite';
 import { defineConfig } from 'wxt';
+import { CLOUD_ORIGIN } from './lib/cloud/config';
 
 // See https://wxt.dev/api/reference/wxt/interfaces/inlineconfig.html
 export default defineConfig({
@@ -17,6 +18,8 @@ export default defineConfig({
       // The paid services reached with the user's own keys (called from the background only).
       'https://vision.googleapis.com/*',
       'https://generativelanguage.googleapis.com/*',
+      // The Fripon Cloud server (subscription mode), called from the background only.
+      `${CLOUD_ORIGIN}/*`,
     ],
     // Safari 16.4 is the first with `storage.session` and `OffscreenCanvas` (the photo hashing in
     // the background): refuse older versions rather than run with half the checks.

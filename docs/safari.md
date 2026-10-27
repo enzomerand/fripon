@@ -27,8 +27,8 @@ Prérequis : macOS 13 ou plus récent, Xcode (avec ses outils en ligne de comman
 5. Safari → Réglages → Extensions → cocher « Fripon ».
 6. Toujours dans cet écran, autoriser l’extension sur les sites : `vinted.fr` (ou le domaine Vinted
    utilisé) et, pour l’analyse des photos et la recherche d’image, les autres sites demandés
-   (`vinted.net`, `googleapis.com`). Le plus simple est de mettre « Autres sites web » sur
-   « Autoriser » (bouton « Modifier les sites web »).
+   (`vinted.net`, `googleapis.com`, et `fripon.endurance.tools` pour l’abonnement Fripon). Le plus
+   simple est de mettre « Autres sites web » sur « Autoriser » (bouton « Modifier les sites web »).
 
 Après une nouvelle compilation (`npm run safari:app`), relancer `Fripon.app`, puis recharger la page
 Vinted. Si Safari garde l’ancienne version, le redémarrer (et refaire l’étape 4).

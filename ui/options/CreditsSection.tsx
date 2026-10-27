@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
+import type { CloudStatus, CloudUsage } from '../../lib/cloud/types';
 import { CREDIT_POLICY, WARN_RATIO, type Usage } from '../../lib/credits';
 import { formatCount, formatReset } from '../../lib/format';
 import { PROVIDERS, saveSettings, type Provider } from '../../lib/settings';
@@ -23,6 +24,17 @@ const CREDIT_TEXT: Record<
       'un plafond de sécurité (sans facturation, Google refuse sans frais au-delà de sa limite)',
   },
 };
+
+/** "12 / 300 ce mois-ci", "5 analyses offertes restantes": the short figure of the plan or the trial. */
+function cloudCount(usage: CloudUsage): string {
+  if (usage.kind === 'plan' && usage.month.cap !== null) {
+    return `${formatCount(usage.month.used)} / ${formatCount(usage.month.cap)} ce mois-ci`;
+  }
+  if (usage.kind === 'trial') {
+    return `${formatCount(usage.trialLeft)} ${usage.trialLeft > 1 ? 'analyses offertes restantes' : 'analyse offerte restante'}`;
+  }
+  return 'aucun abonnement';
+}
 
 interface CreditRowProps {
   provider: Provider;
@@ -162,30 +174,44 @@ function CreditRow({ provider, usage, now, onSaved }: CreditRowProps) {
 
 export function CreditsSection({
   usage,
+  cloud,
   now,
   onSaved,
 }: {
   usage: Record<Provider, Usage>;
+  /** The Fripon subscription status when signed in: the counters of the keys are not used then. */
+  cloud: CloudStatus | null;
   now: Date;
   onSaved: () => void;
 }) {
   return (
     <section class="card" id="credits" aria-labelledby="credits-title">
       <h2 id="credits-title">Crédits</h2>
-      <p class="muted">
-        Un crédit, c'est un appel payant à Google. Fripon les compte ici et s'arrête au plafond. Les
-        compteurs repartent de zéro à minuit, heure de Californie, comme chez Google. Le compteur
-        est local : il ne voit pas ce que la même clé consomme ailleurs.
-      </p>
-      {PROVIDERS.map((provider) => (
-        <CreditRow
-          key={provider}
-          provider={provider}
-          usage={usage[provider]}
-          now={now}
-          onSaved={onSaved}
-        />
-      ))}
+      {cloud ? (
+        <p class="muted">
+          Tu es connecté à l'abonnement Fripon : tes analyses sont comptées dans la section{' '}
+          <a href="#cloud">Abonnement Fripon</a>
+          {cloud.usage ? ` (${cloudCount(cloud.usage)})` : ''}. Les crédits de tes clés Google ne
+          servent que si tu te déconnectes.
+        </p>
+      ) : (
+        <>
+          <p class="muted">
+            Un crédit, c'est un appel payant à Google. Fripon les compte ici et s'arrête au plafond.
+            Les compteurs repartent de zéro à minuit, heure de Californie, comme chez Google. Le
+            compteur est local : il ne voit pas ce que la même clé consomme ailleurs.
+          </p>
+          {PROVIDERS.map((provider) => (
+            <CreditRow
+              key={provider}
+              provider={provider}
+              usage={usage[provider]}
+              now={now}
+              onSaved={onSaved}
+            />
+          ))}
+        </>
+      )}
     </section>
   );
 }

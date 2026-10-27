@@ -28,6 +28,14 @@ function makeDeps(overrides: Partial<BackgroundDeps> = {}): BackgroundDeps {
     checkKey: vi.fn(() => Promise.resolve({ ok: true as const })),
     openOptions: vi.fn(() => Promise.resolve()),
     setBadge: vi.fn(() => Promise.resolve()),
+    cloud: {
+      status: vi.fn(() => Promise.resolve(null)),
+      requestCode: vi.fn(() => Promise.resolve({ ok: true as const })),
+      verify: vi.fn(() => Promise.resolve({ ok: true as const })),
+      signOut: vi.fn(() => Promise.resolve()),
+      checkout: vi.fn(() => Promise.resolve({ ok: true as const })),
+      portal: vi.fn(() => Promise.resolve({ ok: true as const })),
+    },
     ...overrides,
   };
 }

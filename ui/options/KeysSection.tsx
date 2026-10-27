@@ -222,15 +222,30 @@ function statusText(status: Status): string {
   }
 }
 
-export function KeysSection({ settings, onSaved }: { settings: Settings; onSaved: () => void }) {
+export function KeysSection({
+  settings,
+  signedIn,
+  onSaved,
+}: {
+  settings: Settings;
+  /** Signed in to the Fripon subscription: the keys are not used. */
+  signedIn: boolean;
+  onSaved: () => void;
+}) {
   return (
     <section class="card" id="keys" aria-labelledby="keys-title">
       <h2 id="keys-title">Tes clés Google</h2>
       <p class="muted">
-        Tes clés restent dans ce navigateur et ne servent qu'à appeler Google, jamais un serveur de
-        Fripon. Il en faut une par service ; aucune n'est obligatoire pour les vérifications
-        gratuites.
+        Sans abonnement, tes clés restent dans ce navigateur et ne servent qu'à appeler Google,
+        jamais un serveur de Fripon. Il en faut une par service ; aucune n'est obligatoire pour les
+        vérifications gratuites.
       </p>
+      {signedIn && (
+        <p class="callout callout--info" role="note">
+          Tu es connecté à l'abonnement Fripon : ces clés ne sont pas utilisées tant que tu restes
+          connecté. C'est le serveur de Fripon qui appelle Google (voir « Abonnement Fripon »).
+        </p>
+      )}
       {PROVIDERS.map((provider) => (
         <KeyBlock
           key={provider}

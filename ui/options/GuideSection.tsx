@@ -29,6 +29,11 @@ export function GuideSection({
   return (
     <section class="card" id="guide" aria-labelledby="guide-title">
       <h2 id="guide-title">Guide pas à pas</h2>
+      <p class="muted">
+        Ce guide sert à créer tes propres clés Google, directement dans Google Cloud : tes photos et
+        tes annonces ne passent alors par aucun serveur de Fripon. Avec l'abonnement Fripon, tu n'en
+        as pas besoin.
+      </p>
       <p class="callout callout--warn" role="note">
         <strong>Important :</strong> utilise un projet Google différent pour Gemini et pour Vision.
         Dès qu'un projet a la facturation activée (c'est obligatoire pour Vision), Gemini y passe en
