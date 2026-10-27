@@ -158,6 +158,7 @@ export function createGridController(options: GridControllerOptions): GridContro
     // A batch that is waiting or running keeps its bar, whatever the page scrolled to meanwhile.
     const wanted = batch.state().phase !== 'idle' || (gate !== 'no_key' && count > 0);
     if (!wanted) return hideBar();
+    const wasRemoved = bar !== null && !bar.element.isConnected;
     bar ??= createHost(doc, BAR_HOST_TAG, styles, '0 0 12px');
     drawBar(bar, count);
     const anchor = findResultsAnchor(
@@ -167,6 +168,9 @@ export function createGridController(options: GridControllerOptions): GridContro
         .map((card) => card.element),
     );
     if (anchor && bar.element.nextElementSibling !== anchor) anchor.before(bar.element);
+    // The same host, with the same shadow tree and batch state, goes back where it was.
+    if (wasRemoved && bar.element.isConnected)
+      console.debug('[Fripon] The page dropped the bar, put back.');
   }
 
   function requestBar() {
@@ -174,7 +178,12 @@ export function createGridController(options: GridControllerOptions): GridContro
     barScheduled = true;
     schedule(() => {
       barScheduled = false;
-      refreshBar();
+      try {
+        refreshBar();
+      } catch (error) {
+        // A failure here must neither stop the next refresh nor reach the page.
+        console.warn('[Fripon] Could not update the bar.', error);
+      }
     });
   }
 

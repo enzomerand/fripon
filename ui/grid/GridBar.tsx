@@ -1,4 +1,5 @@
 import type { BatchEnd, BatchState } from '../../lib/grid/batch';
+import { press } from './press';
 
 export interface GridBarProps {
   /** Cards in view that are not analysed yet: what a batch would start with. */
@@ -54,11 +55,11 @@ export function GridBar({ visibleCount, batch, onAsk, onLaunch, onCancel, onStop
             <button
               type="button"
               class="fripon-bar__button fripon-bar__button--primary"
-              onClick={onLaunch}
+              onClick={press(onLaunch)}
             >
               Lancer
             </button>
-            <button type="button" class="fripon-bar__button" onClick={onCancel}>
+            <button type="button" class="fripon-bar__button" onClick={press(onCancel)}>
               Annuler
             </button>
           </div>
@@ -74,7 +75,7 @@ export function GridBar({ visibleCount, batch, onAsk, onLaunch, onCancel, onStop
               type="button"
               class="fripon-bar__button"
               aria-disabled={batch.stopping ? 'true' : undefined}
-              onClick={onStop}
+              onClick={press(onStop)}
             >
               Arrêter
             </button>
@@ -91,7 +92,7 @@ export function GridBar({ visibleCount, batch, onAsk, onLaunch, onCancel, onStop
           <button
             type="button"
             class="fripon-bar__button fripon-bar__button--primary"
-            onClick={onAsk}
+            onClick={press(onAsk)}
           >
             <span aria-hidden="true">🦊</span> {analyzeAllLabel(visibleCount)}
           </button>

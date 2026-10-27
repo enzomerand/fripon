@@ -315,3 +315,107 @@ describe('a batch', () => {
     expect(barText()).not.toContain('reste');
   });
 });
+
+describe('on the shape of the live search page', () => {
+  // Cards in `div.feed-grid` inside `section.content-container` (the real class names carry a
+  // hashed prefix), the bar before the grid, as seen on vinted.fr.
+  const PAGE = `
+    <div id="app"><main>
+      <section class="Ab1c_content-container">
+        <div id="grid" class="Xy9z_feed-grid"></div>
+      </section>
+    </main></div>`;
+
+  const section = () => document.querySelector('section') as HTMLElement;
+  const gridOf = (...ids: number[]) => {
+    const grid = document.createElement('div');
+    grid.id = 'grid';
+    grid.className = 'Xy9z_feed-grid';
+    grid.innerHTML = ids.map(card).join('');
+    return grid;
+  };
+
+  beforeEach(() => {
+    document.body.innerHTML = PAGE;
+  });
+
+  async function openConfirmation() {
+    start();
+    await until(() => bar() !== null);
+    barButton('Analyser').click();
+    await until(() => barText().includes('Lancer'));
+  }
+
+  it('is put in the section, right before the grid', async () => {
+    start();
+    await until(() => bar() !== null);
+    expect(bar()?.parentElement).toBe(section());
+    expect(bar()?.nextElementSibling).toBe(document.getElementById('grid'));
+  });
+
+  it('shows the confirmation on a click, and the page never hears of the click', async () => {
+    // A page whose click handlers re-render the results, as Vinted may on a click it does not know.
+    const pageClick = vi.fn(() => section().replaceChildren(gridOf(...IDS)));
+    document.addEventListener('click', pageClick);
+    try {
+      await openConfirmation();
+      await settle();
+      expect(pageClick).not.toHaveBeenCalled();
+      expect(document.querySelectorAll(BAR_HOST_TAG)).toHaveLength(1);
+      expect(barText()).toContain("Jusqu'à 4 crédits Vision");
+    } finally {
+      document.removeEventListener('click', pageClick);
+    }
+  });
+
+  it('keeps the confirmation when the page redraws the whole results section', async () => {
+    await openConfirmation();
+    const host = bar();
+
+    // What a re-render of the section does: the grid, and the bar with it, are dropped for new ones.
+    section().replaceChildren(gridOf(...IDS));
+    expect(bar()).toBeNull();
+
+    await until(() => bar() !== null);
+    // The same host, shadow tree and batch state: the user is still asked to confirm.
+    expect(bar()).toBe(host);
+    expect(barText()).toContain("Jusqu'à 4 crédits Vision (il t'en reste 40 ce mois-ci).");
+    expect(bar()?.parentElement).toBe(section());
+    expect(bar()?.nextElementSibling).toBe(document.getElementById('grid'));
+    // The new cards have their buttons again, and the old ones are gone.
+    expect(document.querySelectorAll(BUTTON_HOST_TAG)).toHaveLength(4);
+  });
+
+  it('puts the bar back when the page drops it alone, whatever the state', async () => {
+    await openConfirmation();
+    bar()?.remove();
+    await until(() => bar() !== null);
+    expect(barText()).toContain('Lancer');
+
+    barButton('Annuler').click();
+    await until(() => barText().includes('Analyser les 4'));
+    bar()?.remove();
+    await until(() => barText().includes('Analyser les 4'));
+  });
+
+  it('keeps going when the page redraws the section in the middle of a batch', async () => {
+    await openConfirmation();
+    barButton('Lancer').click();
+    await until(() => search.mock.calls.length >= 1);
+
+    section().replaceChildren(gridOf(...IDS));
+    await until(() => bar() !== null);
+    // Cards analysed before the redraw keep their verdict on the new cards.
+    await until(() => cardText(9000101).includes('analyse rapide'));
+  });
+
+  it('does not take a card the page has dropped for a live one', async () => {
+    const running = start();
+    await until(() => bar() !== null);
+    const old = running.cards().map((live) => live.element);
+    section().replaceChildren(gridOf(...IDS));
+    // Before the next pass the controller may still know the old cards: it must not hand them out.
+    expect(running.cards().every((live) => live.element.isConnected)).toBe(true);
+    expect(old.every((element) => !element.isConnected)).toBe(true);
+  });
+});

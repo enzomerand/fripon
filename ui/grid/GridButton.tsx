@@ -1,6 +1,7 @@
 import type { CardView } from '../../lib/grid/store';
 import type { OptionsSection } from '../../lib/messages';
 import { LEVEL_COLOUR } from '../verdict-colour';
+import { keepOffThePage, press } from './press';
 
 export interface GridButtonProps {
   view: CardView;
@@ -17,17 +18,6 @@ export const KEYS_LABEL = 'Vérifier ma clé';
 export const QUOTA_LABEL = 'Plafond atteint';
 export const RETRY_LABEL = 'Réessayer';
 export const OPEN_FULL_ANALYSIS = "Ouvrir l'analyse complète";
-
-/**
- * A click on the block must never reach the card: its link covers the whole card and would open
- * the item. The verdict is the one exception, it is a link to that item and keeps its own click.
- */
-const press = (action: () => void) => (event: Event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  action();
-};
-const keepOffTheCard = (event: Event) => event.stopPropagation();
 
 function analyzeName(title: string): string {
   return title ? `Analyser « ${title} » avec Fripon` : 'Analyser cette annonce avec Fripon';
@@ -76,7 +66,7 @@ function Body({ view, title, onAnalyze, onOpenOptions }: GridButtonProps) {
           href={view.url}
           title={OPEN_FULL_ANALYSIS}
           aria-label={`${verdict.title}. ${verdict.line}. ${OPEN_FULL_ANALYSIS}.`}
-          onClick={keepOffTheCard}
+          onClick={keepOffThePage}
         >
           <span class="fripon-grid__title">
             <span class="fripon-grid__dot" aria-hidden="true" />

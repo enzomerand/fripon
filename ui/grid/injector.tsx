@@ -142,7 +142,12 @@ export function createGridInjector(options: InjectorOptions): GridInjector {
       observer = new MutationObserver(request);
       observer.observe(doc.documentElement, { childList: true, subtree: true });
     },
-    cards: () => [...live].map(({ id, url, element }) => ({ id, url, element })),
+    // Only cards that are in the page: between the page dropping a card and the next pass, an
+    // entry may still be there for a card that is gone.
+    cards: () =>
+      [...live]
+        .filter((entry) => entry.element.isConnected)
+        .map(({ id, url, element }) => ({ id, url, element })),
     dispose() {
       disposed = true;
       observer?.disconnect();
