@@ -9,9 +9,11 @@
 # ---- build: all dependencies, the esbuild bundle, then only the production dependencies ----
 FROM node:22.23.4-bookworm-slim AS build
 
-# No compiler here on purpose: better-sqlite3 13 ships prebuilt binaries inside the package (linux
-# x64 and arm64, glibc 2.34 at most, bookworm has 2.36) and never compiles at install. If a future
-# version does, install python3 make g++ in THIS stage only (the runtime stage never needs them).
+# better-sqlite3 compiles its native module at install when no prebuilt binary matches this Node
+# version (seen with 22.23.4): the toolchain lives in THIS stage only, the runtime stage never needs it.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/server
 COPY server/package.json server/package-lock.json ./
 RUN npm ci
