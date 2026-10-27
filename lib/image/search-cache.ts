@@ -5,9 +5,11 @@ import { createTtlCache } from '../ttl-cache';
 /**
  * `storage.local` key of a search: `fripon:vision:v1:<origin + path of the photo>`.
  *
- * Lot 3b adds the original price to each match: it must bump this to `v2` at the same time.
- * Entries written by `v1` hold `price: null` for 7 days, and would hide the prices of every photo
- * already searched. The old `v1` entries are inert once nothing reads them.
+ * Matches carry no price: the original price cannot be read (Shein and Temu serve their prices
+ * to browsers only, see the design doc, section 10). If prices are ever added to the matches, bump
+ * this to `v2` at the same time: entries written by `v1` hold `price: null` for 7 days, and would
+ * hide the prices of every photo already searched. The old `v1` entries are inert once nothing
+ * reads them.
  */
 export const VISION_CACHE_PREFIX = 'fripon:vision:v1:';
 /** A result is reused for this long: the same listing reloaded costs nothing. */
@@ -39,8 +41,8 @@ function parseMatch(value: unknown): ImageMatch | undefined {
   if (typeof platform !== 'string' || typeof url !== 'string' || typeof exact !== 'boolean') {
     return undefined;
   }
-  // The URL ends up in a link of the card. Prices come with lot 3b (and a new cache key): until
-  // then a stored price is not something this version wrote.
+  // The URL ends up in a link of the card. This version never writes a price: a stored one is not
+  // something it wrote.
   if (!/^https?:\/\//i.test(url) || price !== null) return undefined;
   return { platform, url, exact, price: null };
 }

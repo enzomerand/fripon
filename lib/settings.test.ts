@@ -19,7 +19,7 @@ describe('DEFAULT_SETTINGS', () => {
     expect(DEFAULT_SETTINGS).toEqual({
       mode: 'auto',
       keys: { vision: '', gemini: '' },
-      caps: { vision: 1_000, gemini: 20 },
+      caps: { vision: 1_000, gemini: 100 },
     });
   });
 });
@@ -138,7 +138,7 @@ describe('loadSettings / saveSettings', () => {
       caps: { vision: 0, gemini: 1.5 },
     });
     expect(saved.mode).toBe('click');
-    expect(saved.caps).toEqual({ vision: 300, gemini: 20 });
+    expect(saved.caps).toEqual({ vision: 300, gemini: 100 });
   });
 
   it('never loses a save to a racing one', async () => {
