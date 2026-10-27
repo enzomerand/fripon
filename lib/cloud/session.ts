@@ -5,8 +5,10 @@ import { parseStatus, type CloudStatus } from './types';
 
 /**
  * `storage.local` key of the session: `{ token, email }`. The token is a secret like an API key:
- * only the background reads or writes it. A content script never learns it, and the options page
- * only gets `STATUS_KEY`.
+ * only the background reads it and sends it (in the `Authorization` header, to the Fripon server),
+ * and nothing hands it to a page: the messages carry no token, and the options page follows
+ * `STATUS_KEY` only. `storage.local` itself is readable by every context of the extension, content
+ * scripts included, so this holds by what the code does, not by an access rule of the storage.
  */
 export const SESSION_KEY = 'fripon:cloud:v1';
 /**

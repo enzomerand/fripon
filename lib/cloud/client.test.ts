@@ -342,8 +342,14 @@ describe('timeouts', () => {
       CLOUD_SLOW_TIMEOUT_MS,
       CLOUD_TIMEOUT_MS,
     ]);
-    expect(CLOUD_SLOW_TIMEOUT_MS).toBe(15_000);
+    expect(CLOUD_SLOW_TIMEOUT_MS).toBe(45_000);
     expect(CLOUD_TIMEOUT_MS).toBe(10_000);
+  });
+
+  it('waits longer than the server does in the worst case, so a charged analysis is never an error', () => {
+    // Server: photo download 10 s, then Vision 20 s or Gemini 30 s.
+    const worstCase = 10_000 + 30_000;
+    expect(CLOUD_SLOW_TIMEOUT_MS).toBeGreaterThan(worstCase);
   });
 
   it('reads an aborted request as network', async () => {

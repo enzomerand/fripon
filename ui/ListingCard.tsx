@@ -55,6 +55,12 @@ const OPTIONS_ACTIONS: Record<
   open_keys: { section: 'keys', label: 'Vérifier ma clé' },
 };
 
+/** Where the buttons of the AI block lead: the keys, or the subscription for a subscriber. */
+const AI_ACTIONS: Record<'open_keys' | 'open_cloud', { section: OptionsSection; label: string }> = {
+  open_keys: OPTIONS_ACTIONS.open_keys,
+  open_cloud: { section: 'cloud', label: 'Voir mon abonnement' },
+};
+
 const RUN_IMAGE_SEARCH_LABEL = "Lancer la recherche d'image";
 const RUN_AI_REVIEW_LABEL = "Lancer l'avis IA";
 const AI_BLOCK_TITLE = "L'avis de l'IA";
@@ -109,6 +115,7 @@ interface AiReviewBlockProps {
 
 /** "L'avis de l'IA": the summary, with the reminder that it can be wrong. */
 function AiReviewBlock({ ai, onRun, onOpenOptions }: AiReviewBlockProps) {
+  const failedAction = ai.status === 'failed' && ai.action ? AI_ACTIONS[ai.action] : null;
   return (
     <div class="fripon__ai" role="group" aria-label={AI_BLOCK_TITLE}>
       <div class="fripon__ai-title">{AI_BLOCK_TITLE}</div>
@@ -126,14 +133,14 @@ function AiReviewBlock({ ai, onRun, onOpenOptions }: AiReviewBlockProps) {
       {ai.status === 'failed' && (
         <>
           <p class="fripon__ai-text">{ai.message}</p>
-          {ai.action === 'open_keys' && onOpenOptions && (
+          {failedAction && onOpenOptions && (
             <div class="fripon__actions">
               <button
                 type="button"
                 class="fripon__action"
-                onClick={() => onOpenOptions(OPTIONS_ACTIONS.open_keys.section)}
+                onClick={() => onOpenOptions(failedAction.section)}
               >
-                {OPTIONS_ACTIONS.open_keys.label}
+                {failedAction.label}
               </button>
             </div>
           )}

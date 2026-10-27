@@ -8,10 +8,11 @@ import { isKeyFailure } from '../google/refusal';
 import { VISION_CACHE_PREFIX, visionCacheKey, writeVisionCache } from '../image/search-cache';
 import type { ImageMatch } from '../model';
 import type { CloudClient } from './client';
-import { STATUS_AFTER_REFUSAL_MS } from './config';
+import { STATUS_AFTER_REFUSAL_MS, STATUS_MAX_AGE_MS } from './config';
 import type { StatusKeeper } from './status';
 import { createCloudSteps } from './steps';
-import { PLAN_USAGE, makeClient } from './test-helpers';
+import { PLAN_USAGE, TRIAL_USAGE, makeClient } from './test-helpers';
+import type { CloudStatus, CloudUsage } from './types';
 
 const PHOTO = 'https://images1.vinted.net/t/01_a/f800/main.webp?s=aa';
 const NOW = Date.UTC(2026, 9, 27, 12, 0, 0);
@@ -33,6 +34,7 @@ let clock = NOW;
 function setup(client: CloudClient = makeClient(), token: string | null = 'tok-1') {
   const status: StatusKeeper = {
     current: vi.fn(() => Promise.resolve(null)),
+    peek: vi.fn(() => Promise.resolve(null)),
     record: vi.fn(() => Promise.resolve()),
   };
   const steps = createCloudSteps({
@@ -289,7 +291,8 @@ describe('aiReview', () => {
         search: vi.fn(() => Promise.resolve({ ok: false as const, reason: 'quota' as const })),
       }),
     );
-    expect(await steps.aiReview(INPUT)).toEqual({ status: 'quota' });
+    // The review says it is the subscription that has nothing left: the card words it accordingly.
+    expect(await steps.aiReview(INPUT)).toEqual({ status: 'quota', source: 'cloud' });
     expect(client.review).toHaveBeenCalledTimes(1);
   });
 
@@ -365,5 +368,174 @@ describe('aiReview', () => {
     release();
     await both;
     expect(review).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('an account with nothing left', () => {
+  const PHOTO_2 = 'https://images1.vinted.net/t/02_b/f800/other.webp?s=bb';
+  const MONTH_USED_UP: CloudUsage = { ...PLAN_USAGE, month: { used: 300, cap: 300 } };
+  const DAY_USED_UP: CloudUsage = { ...PLAN_USAGE, day: { used: 40, cap: 40 } };
+  const TRIAL_USED_UP: CloudUsage = { ...TRIAL_USAGE, trialLeft: 0 };
+  const NO_PLAN: CloudUsage = {
+    kind: 'none',
+    month: { used: 0, cap: 0 },
+    day: { used: 0, cap: 0 },
+    trialLeft: 0,
+  };
+
+  const statusOf = (usage: CloudUsage | null): CloudStatus => ({
+    email: 'a@b.fr',
+    usage,
+    subscription: null,
+    checkedAt: NOW,
+  });
+  const refusedSearch = () =>
+    vi.fn<CloudClient['search']>(() => Promise.resolve({ ok: false, reason: 'quota' }));
+  const dryStatus = (usage: CloudUsage | null) => {
+    const made = setup();
+    made.status.peek = vi.fn(() => Promise.resolve(statusOf(usage)));
+    return made;
+  };
+
+  it.each([
+    ['the month is used up', MONTH_USED_UP],
+    ['the day is used up', DAY_USED_UP],
+    ['the trial is used up', TRIAL_USED_UP],
+    ['there is no plan', NO_PLAN],
+  ] as const)(
+    'answers quota without a request when the last status says %s',
+    async (_name, usage) => {
+      const { steps, client, status } = dryStatus(usage);
+      expect(await steps.searchImage(PHOTO)).toEqual({ status: 'quota' });
+      expect(await steps.aiReview(INPUT)).toEqual({ status: 'quota', source: 'cloud' });
+      expect(client.search).not.toHaveBeenCalled();
+      expect(client.review).not.toHaveBeenCalled();
+      // A status younger than a minute, and no request to read it again either.
+      expect(status.peek).toHaveBeenCalledWith(STATUS_MAX_AGE_MS);
+      expect(status.current).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['there is room on a plan', PLAN_USAGE],
+    ['there is room in the trial', TRIAL_USAGE],
+    ['the usage was never read', null],
+  ] as const)('asks the server when the status says %s', async (_name, usage) => {
+    const { steps, client } = dryStatus(usage);
+    expect((await steps.searchImage(PHOTO)).status).toBe('ok');
+    expect(client.search).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks the server when no status is young enough: `peek` gives nothing', async () => {
+    const { steps, client } = setup();
+    expect((await steps.aiReview(INPUT)).status).toBe('ok');
+    expect(client.review).toHaveBeenCalledTimes(1);
+  });
+
+  it('still reviews the photo whose search took the last analysis: that review is free', async () => {
+    const { steps, client } = dryStatus(MONTH_USED_UP);
+    await writeVisionCache(visionCacheKey(PHOTO), MATCHES, NOW);
+    expect(await steps.aiReview(INPUT)).toEqual({ status: 'ok', review: REVIEW });
+    expect(client.review).toHaveBeenCalledTimes(1);
+    expect(client.search).not.toHaveBeenCalled();
+  });
+
+  it('does not have the server serve the photo again for a dry account', async () => {
+    const review = vi.fn<CloudClient['review']>(() =>
+      Promise.resolve({ ok: false, reason: 'not_searched' }),
+    );
+    const { steps, client, status } = setup(makeClient({ review }));
+    status.peek = vi.fn(() => Promise.resolve(statusOf(MONTH_USED_UP)));
+    // Searched in this browser (another account, or before signing in), never served to this one.
+    await writeVisionCache(visionCacheKey(PHOTO), MATCHES, NOW);
+    expect(await steps.aiReview(INPUT)).toEqual({ status: 'quota', source: 'cloud' });
+    expect(review).toHaveBeenCalledTimes(1);
+    expect(client.search).not.toHaveBeenCalled();
+  });
+
+  it('costs one request for a listing, not three, once the server has refused', async () => {
+    const search = refusedSearch();
+    const { steps, client, status } = setup(makeClient({ search }));
+    expect(await steps.searchImage(PHOTO)).toEqual({ status: 'quota' });
+    expect(await steps.aiReview(INPUT)).toEqual({ status: 'quota', source: 'cloud' });
+    // The next listings of the minute: nothing at all.
+    expect(await steps.searchImage(PHOTO_2)).toEqual({ status: 'quota' });
+    expect(await steps.aiReview({ ...INPUT, photoUrl: PHOTO_2 })).toEqual({
+      status: 'quota',
+      source: 'cloud',
+    });
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(client.review).not.toHaveBeenCalled();
+    // The status is read again after the refusal only, so at most once in that minute.
+    expect(status.current).toHaveBeenCalledTimes(1);
+    expect(status.current).toHaveBeenCalledWith(STATUS_AFTER_REFUSAL_MS);
+  });
+
+  it('asks the server again after a minute', async () => {
+    const search = refusedSearch();
+    const { steps } = setup(makeClient({ search }));
+    await steps.searchImage(PHOTO);
+    clock += STATUS_MAX_AGE_MS - 1;
+    await steps.searchImage(PHOTO_2);
+    expect(search).toHaveBeenCalledTimes(1);
+    clock += 1;
+    await steps.searchImage(PHOTO_2);
+    expect(search).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks the server whatever it holds when the user clicks (retry)', async () => {
+    const search = refusedSearch();
+    const { steps } = setup(makeClient({ search }));
+    await steps.searchImage(PHOTO);
+    await steps.searchImage(PHOTO, false, true);
+    expect(search).toHaveBeenCalledTimes(2);
+
+    const { steps: dryOne, client } = dryStatus(MONTH_USED_UP);
+    expect((await dryOne.searchImage(PHOTO, false, true)).status).toBe('ok');
+    expect(client.search).toHaveBeenCalledTimes(1);
+    expect((await dryOne.aiReview(INPUT, false, true)).status).toBe('ok');
+    expect(client.review).toHaveBeenCalledTimes(1);
+  });
+
+  it('forgets the refusal once the server serves an analysis again', async () => {
+    const search = vi
+      .fn<CloudClient['search']>()
+      .mockResolvedValueOnce({ ok: false, reason: 'quota' })
+      .mockResolvedValue({ ok: true, matches: MATCHES, charged: true, usage: PLAN_USAGE });
+    const { steps } = setup(makeClient({ search }));
+    expect(await steps.searchImage(PHOTO)).toEqual({ status: 'quota' });
+    expect((await steps.searchImage(PHOTO, false, true)).status).toBe('ok');
+    expect((await steps.searchImage(PHOTO_2)).status).toBe('ok');
+    expect(search).toHaveBeenCalledTimes(3);
+  });
+
+  it('remembers a refusal of the review itself', async () => {
+    const review = vi.fn<CloudClient['review']>(() =>
+      Promise.resolve({ ok: false, reason: 'quota' }),
+    );
+    const { steps, client } = setup(makeClient({ review }));
+    expect(await steps.aiReview(INPUT)).toEqual({ status: 'quota', source: 'cloud' });
+    expect(await steps.searchImage(PHOTO_2)).toEqual({ status: 'quota' });
+    expect(client.search).not.toHaveBeenCalled();
+  });
+
+  it("does not take another account's refusal for this one's", async () => {
+    let token = 'tok-1';
+    const search = refusedSearch();
+    const client = makeClient({ search });
+    const steps = createCloudSteps({
+      client,
+      status: {
+        current: vi.fn(() => Promise.resolve(null)),
+        peek: vi.fn(() => Promise.resolve(null)),
+        record: vi.fn(() => Promise.resolve()),
+      },
+      token: () => Promise.resolve(token),
+      now: () => clock,
+    });
+    await steps.searchImage(PHOTO);
+    token = 'tok-2';
+    await steps.searchImage(PHOTO_2);
+    expect(search).toHaveBeenCalledTimes(2);
   });
 });

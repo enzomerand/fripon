@@ -13,6 +13,11 @@ export interface StatusKeeper {
    * last snapshot. `maxAgeMs` 0 always asks.
    */
   current(maxAgeMs?: number): Promise<CloudStatus | null>;
+  /**
+   * The stored status when it was read less than `maxAgeMs` ago, null otherwise (or signed out).
+   * Never asks the server: for the steps, which only want to know what the last reading said.
+   */
+  peek(maxAgeMs: number): Promise<CloudStatus | null>;
   /** Takes the usage a search answer carried: the freshest figure there is. */
   record(usage: CloudUsage): Promise<void>;
 }
@@ -64,6 +69,12 @@ export function createStatusKeeper(deps: StatusKeeperDeps): StatusKeeper {
       return snapshot;
     },
 
+    async peek(maxAgeMs) {
+      if ((await loadSession()) === null) return null;
+      const stored = await loadStatus();
+      return stored && now() - stored.checkedAt < maxAgeMs ? stored : null;
+    },
+
     async record(usage) {
       const session = await loadSession();
       if (!session) return;
@@ -94,13 +105,14 @@ export function canAnalyse(usage: CloudUsage): boolean {
 }
 
 /**
- * The gate of both paid steps for a signed-in account, in the order of `gateFor` for keys:
- * nothing known is `no_key` (nothing is asked of the server), no analysis left is `quota`, then
- * "Au clic" is `manual`.
+ * The gate of both paid steps for a signed-in account: no analysis left is `quota`, then "Au
+ * clic" is `manual`, else `ready`. `no_key` is only for no account at all. A usage never read (the
+ * server was out of reach) is not a refusal: the step itself will tell the quota or the network
+ * failure, so the card never sends a subscriber to add a Google key.
  */
 export function cloudGate(status: CloudStatus | null, mode: AnalysisMode): Gate {
-  if (!status?.usage) return 'no_key';
-  if (!canAnalyse(status.usage)) return 'quota';
+  if (!status) return 'no_key';
+  if (status.usage && !canAnalyse(status.usage)) return 'quota';
   return mode === 'click' ? 'manual' : 'ready';
 }
 

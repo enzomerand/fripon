@@ -76,8 +76,11 @@ export type AiReviewResponse =
   | { status: 'ok'; review: AiReview }
   /** No Gemini key saved: nothing was sent. */
   | { status: 'no_key' }
-  /** The Gemini cap is reached for this period: nothing was sent. */
-  | { status: 'quota' }
+  /**
+   * The Gemini cap is reached for this period: nothing was sent. `source: 'cloud'` when it is the
+   * subscription that has nothing left (the month, a daily cap or the trial), not a personal cap.
+   */
+  | { status: 'quota'; source?: 'cloud' }
   /** Only for `cacheOnly`: this listing was not reviewed in the last 7 days. */
   | { status: 'not_cached' }
   /** The review did not complete; the credit was only given back when Google certainly did not bill it. */
