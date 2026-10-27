@@ -390,3 +390,43 @@ describe('keyboard focus', () => {
     expect(focused(hostOf(9000102))).toBe(shadowButton(hostOf(9000102)));
   });
 });
+
+describe('a block that moves keeps its focus', () => {
+  it('when the page puts an element between the price and the block', async () => {
+    start(card(9000101));
+    const block = hostOf(9000101) as HTMLElement;
+    const button = shadowButton(block);
+    button.focus();
+    expect(document.activeElement).toBe(block);
+
+    // What a browser does with a node taken out of the page to be put back: the focus is lost.
+    const original = Element.prototype.after;
+    Element.prototype.after = function (this: Element, ...nodes: Array<Node | string>) {
+      if (nodes.includes(block)) button.blur();
+      return original.apply(this, nodes);
+    };
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    try {
+      const breakdown = rootOf(9000101).querySelector('[data-testid$="--breakdown"]') as Element;
+      breakdown.insertAdjacentHTML('afterend', '<div id="banner"></div>');
+      await until(() => block.previousElementSibling === breakdown);
+      // The page's element went between them, then the block was moved back under the price.
+      expect(document.activeElement).toBe(block);
+      expect(block.shadowRoot?.activeElement).toBe(button);
+      expect(focus).toHaveBeenCalled();
+      expect(focus.mock.calls.every(([options]) => options?.preventScroll === true)).toBe(true);
+    } finally {
+      Element.prototype.after = original;
+      focus.mockRestore();
+    }
+  });
+});
+
+describe('a card that stops being a card', () => {
+  it('loses its block when its root is no longer a card root', async () => {
+    const running = start(card(9000101) + card(9000102));
+    rootOf(9000101).setAttribute('data-testid', 'something-else');
+    await until(() => hosts().length === 1);
+    expect(running.cards().map((live) => live.id)).toEqual(['9000102']);
+  });
+});

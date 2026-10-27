@@ -2,6 +2,7 @@ import { render } from 'preact';
 import {
   BUTTON_HOST_TAG,
   createHost,
+  moveKeepingFocus,
   redrawKeepingFocus,
   type Host,
   type SharedStyles,
@@ -106,7 +107,8 @@ export function createGridInjector(options: InjectorOptions): GridInjector {
 
   /** Right after the card's text, below the title, the size and the price. */
   function place(entry: Entry, anchor: Element) {
-    if (entry.host.element.previousElementSibling !== anchor) anchor.after(entry.host.element);
+    if (entry.host.element.previousElementSibling === anchor) return;
+    moveKeepingFocus(entry.host, () => anchor.after(entry.host.element));
   }
 
   function track(entry: Entry) {
@@ -143,8 +145,12 @@ export function createGridInjector(options: InjectorOptions): GridInjector {
       track(entry);
       place(entry, card.anchor);
     }
+    // A block whose card left the page, or whose element no longer shows the item it was made for
+    // (the first loop only sees the elements that are still card roots).
     for (const entry of live) {
-      if (!entry.element.isConnected) forget(entry, entry.element);
+      if (!entry.element.isConnected || cardIdOf(entry.element) !== entry.id) {
+        forget(entry, entry.element);
+      }
     }
     options.onScan?.();
   }

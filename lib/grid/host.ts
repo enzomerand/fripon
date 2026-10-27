@@ -103,10 +103,20 @@ export function hasFocus(host: Host): boolean {
 }
 
 /**
+ * Gives the focus to `element` without scrolling the page to it. Every focus the grid moves goes
+ * through here: it only ever restores a focus that was already in our own UI, and the page must not
+ * jump (the bar can be far from the card that was just analysed) because we did.
+ */
+export function focusInPlace(element: HTMLElement | null | undefined) {
+  element?.focus({ preventScroll: true });
+}
+
+/**
  * Draws a host again without losing the keyboard focus. Redrawing swaps a control for another one
  * (the button that gives way to the verdict, "Analyser" to "Lancer"): the element that had the focus
  * leaves the page and the focus falls back on the page. When the focus was in the host and is lost
- * that way, `target` says which control of the new drawing takes it.
+ * that way, `target` says which control of the new drawing takes it. A focus that was not in the
+ * host is never touched.
  */
 export function redrawKeepingFocus(
   host: Host,
@@ -116,5 +126,18 @@ export function redrawKeepingFocus(
   const had = hasFocus(host);
   draw();
   const root = host.element.shadowRoot;
-  if (had && root && !hasFocus(host)) target(root)?.focus();
+  if (had && root && !hasFocus(host)) focusInPlace(target(root));
+}
+
+/**
+ * Moves a host in the page (`after`, `before`) without losing the keyboard focus: a browser drops
+ * the focus of an element that is taken out of the document, even to be put back at once. The
+ * control that had it, if the host had it, gets it back. A focus that was not in the host is never
+ * touched.
+ */
+export function moveKeepingFocus(host: Host, move: () => void) {
+  // Only asked of a root that has the focus: this is the control, not some other root's.
+  const control = hasFocus(host) ? host.element.shadowRoot?.activeElement : null;
+  move();
+  if (control && !hasFocus(host)) focusInPlace(control as HTMLElement);
 }

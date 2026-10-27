@@ -34,6 +34,8 @@ let sleep: (ms: number) => Promise<void>;
 let inView: Set<number>;
 let controller: GridController | null;
 let hideDelayMs: number;
+/** The clock of the bar's wait before it leaves; the real one unless a test drives it. */
+let nowFn: () => number;
 
 function start(html = IDS.map((id) => card(id)).join('')) {
   document.getElementById('grid')!.innerHTML = html;
@@ -50,6 +52,7 @@ function start(html = IDS.map((id) => card(id)).join('')) {
     askRemaining: () => askRemaining(),
     // Short, so that a bar with nothing to offer leaves within a test; tests of the delay set their own.
     hideDelayMs,
+    now: () => nowFn(),
     sleep,
     isShown: (element) =>
       inView.has(Number(element.getAttribute('data-testid')?.replace('product-item-id-', ''))),
@@ -85,6 +88,7 @@ beforeEach(() => {
   remaining = 40;
   askRemaining = () => Promise.resolve(remaining);
   hideDelayMs = 30;
+  nowFn = Date.now;
   sleeps = [];
   sleep = (ms) => {
     sleeps.push(ms);
@@ -551,14 +555,49 @@ describe('keyboard focus in the bar', () => {
     await until(() => bar() !== null);
     press('Analyser');
     await until(() => barText().includes('Lancer'));
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
     press('Lancer');
     await until(() => bar() === null);
+    // Every focus the grid moved on the way (to "Arrêter", to the first block) left the page where it was.
+    expect(focus).toHaveBeenCalled();
+    expect(focus.mock.calls.slice(1).every(([options]) => options?.preventScroll === true)).toBe(
+      true,
+    );
+    focus.mockRestore();
 
     const block = document.querySelector(BUTTON_HOST_TAG) as HTMLElement;
     const link = block.shadowRoot?.querySelector('a');
     expect(link).not.toBeNull();
     expect(document.activeElement).toBe(block);
     expect(block.shadowRoot?.activeElement).toBe(link);
+  });
+
+  it('keeps the focus of a bar that is moved to stay above the grid', async () => {
+    start();
+    await until(() => bar() !== null);
+    const host = bar() as HTMLElement;
+    const button = host.shadowRoot?.querySelector('button') as HTMLButtonElement;
+    button.focus();
+    expect(document.activeElement).toBe(host);
+
+    // The browser drops the focus of a node taken out of the page to be put back.
+    const original = Element.prototype.before;
+    Element.prototype.before = function (this: Element, ...nodes: Array<Node | string>) {
+      if (nodes.includes(host)) button.blur();
+      return original.apply(this, nodes);
+    };
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    try {
+      // The page puts an element between the bar and the grid: the bar goes back right above it.
+      document.getElementById('grid')?.insertAdjacentHTML('beforebegin', '<div id="notice"></div>');
+      await until(() => host.nextElementSibling === document.getElementById('grid'));
+      expect(document.activeElement).toBe(host);
+      expect(host.shadowRoot?.activeElement).toBe(button);
+      expect(focus.mock.calls.every(([options]) => options?.preventScroll === true)).toBe(true);
+    } finally {
+      Element.prototype.before = original;
+      focus.mockRestore();
+    }
   });
 
   it('does not take the focus when it was not in the bar', async () => {
@@ -715,20 +754,64 @@ describe('the bar through its confirmation', () => {
     });
 
     it('starts the delay again after a gap that was filled', async () => {
+      // A clock the test drives: no wait of real time, nothing close to a margin.
+      let t = 1_000;
+      nowFn = () => t;
       hideDelayMs = 150;
       start();
       await until(() => bar() !== null);
+
       inView = new Set();
-      window.dispatchEvent(new Event('scroll'));
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      inView = new Set(IDS);
       window.dispatchEvent(new Event('scroll'));
       await settle();
+      t = 1_100; // 100 ms into the first gap: 150 needed
+      window.dispatchEvent(new Event('scroll'));
+      await settle();
+      expect(bar()).not.toBeNull();
+
+      inView = new Set(IDS); // the gap is filled and forgotten
+      window.dispatchEvent(new Event('scroll'));
+      await settle();
+
+      t = 1_120;
       inView = new Set();
       window.dispatchEvent(new Event('scroll'));
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      // 100 ms in the second gap, 150 needed: still there although 200 ms went by in all.
+      await settle();
+      t = 1_220; // 220 ms since the first gap began, but only 100 into the second one
+      window.dispatchEvent(new Event('scroll'));
+      await settle();
       expect(bar()).not.toBeNull();
+
+      t = 1_271; // 151 ms into the second gap
+      window.dispatchEvent(new Event('scroll'));
+      await settle();
+      expect(bar()).toBeNull();
+    });
+
+    it('does not say the page dropped the bar when it was the controller that took it away', async () => {
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      let t = 1_000;
+      nowFn = () => t;
+      hideDelayMs = 50;
+      start();
+      await until(() => bar() !== null);
+
+      inView = new Set();
+      window.dispatchEvent(new Event('scroll'));
+      await settle();
+      t = 1_100;
+      window.dispatchEvent(new Event('scroll'));
+      await until(() => bar() === null);
+      inView = new Set(IDS);
+      window.dispatchEvent(new Event('scroll'));
+      await until(() => bar() !== null);
+      expect(debug).not.toHaveBeenCalled();
+
+      // The page dropping it is still told.
+      bar()?.remove();
+      await until(() => bar() !== null);
+      expect(debug).toHaveBeenCalledOnce();
+      debug.mockRestore();
     });
 
     it('does not wait when there is no key: the bar has no business there', async () => {

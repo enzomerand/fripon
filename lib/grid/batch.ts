@@ -30,7 +30,7 @@ export type StopReason = 'finished' | 'stopped' | 'quota' | 'needsKey' | 'failur
 
 export interface BatchEnd {
   reason: StopReason;
-  /** Cards whose photo was really sent to the search (skipped cards and cards without a photo do not count). */
+  /** Cards whose search really ran (a verdict or a failure): skipped cards, cards without a photo and cards refused for the cap or the key do not count. */
   analysed: number;
 }
 
@@ -106,9 +106,10 @@ export function createBatch(deps: BatchDeps): Batch {
     for (const [index, id] of ids.entries()) {
       if (isStopping()) return { reason: 'stopped', analysed };
       const result = await analyse(id);
-      // Nothing was sent for a card that was skipped or has no photo: no count, no pause, and no
-      // word on whether the search works.
-      const sent = result !== 'skipped' && result !== 'noPhoto';
+      // A search really ran for a card that ended in a verdict or in a failure. Nothing was spent
+      // (nor tried) for one that was skipped, has no photo, or was refused for the cap or the key:
+      // no count, no pause, and no word on whether the search works.
+      const sent = result === 'done' || result === 'error';
       if (sent) analysed++;
       if (result === 'quota') return { reason: 'quota', analysed };
       if (result === 'needsKey') return { reason: 'needsKey', analysed };

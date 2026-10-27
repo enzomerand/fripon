@@ -5,7 +5,9 @@ import {
   BUTTON_HOST_TAG,
   createHost,
   createSharedStyles,
+  focusInPlace,
   hasFocus,
+  moveKeepingFocus,
   redrawKeepingFocus,
   type Host,
 } from '../../lib/grid/host';
@@ -43,6 +45,8 @@ export interface GridControllerOptions {
   isShown?(element: Element): boolean;
   /** How long the bar waits with nothing to offer before it leaves the page. */
   hideDelayMs?: number;
+  /** The clock that measures that wait, in ms. `Date.now` by default. */
+  now?(): number;
 }
 
 export interface GridController {
@@ -95,6 +99,9 @@ export function createGridController(options: GridControllerOptions): GridContro
   let barScheduled = false;
   /** When the bar first had nothing to offer, null while it has something. */
   let emptySince: number | null = null;
+  /** true once WE took the bar out of the page: coming back is not the page's doing. */
+  let hiddenByUs = false;
+  const now = options.now ?? Date.now;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
   /** The cards the bar offered the last time it was drawn: what a click on it takes. */
   let offered: string[] = [];
@@ -197,11 +204,12 @@ export function createGridController(options: GridControllerOptions): GridContro
   function hideBar() {
     if (!bar?.element.isConnected) return;
     const had = hasFocus(bar);
+    hiddenByUs = true;
     bar.element.remove();
     if (!had) return;
     const first = injector.cards().sort(inPageOrder)[0];
     const block = first?.element.querySelector(BUTTON_HOST_TAG);
-    block?.shadowRoot?.querySelector<HTMLElement>('a, button')?.focus();
+    focusInPlace(block?.shadowRoot?.querySelector<HTMLElement>('a, button'));
   }
 
   function refreshBar() {
@@ -218,7 +226,8 @@ export function createGridController(options: GridControllerOptions): GridContro
     emptySince = null;
     clearTimeout(hideTimer);
     if (!busy) offered = ids;
-    const wasRemoved = bar !== null && !bar.element.isConnected;
+    const droppedByPage = bar !== null && !bar.element.isConnected && !hiddenByUs;
+    hiddenByUs = false;
     bar ??= createHost(doc, BAR_HOST_TAG, styles, '0 0 12px');
     drawBar(bar, ids.length);
     const anchor = findResultsAnchor(
@@ -227,17 +236,20 @@ export function createGridController(options: GridControllerOptions): GridContro
         .sort(inPageOrder)
         .map((card) => card.element),
     );
-    if (anchor && bar.element.nextElementSibling !== anchor) anchor.before(bar.element);
+    if (anchor && bar.element.nextElementSibling !== anchor) {
+      const placed = bar;
+      moveKeepingFocus(placed, () => anchor.before(placed.element));
+    }
     // The same host, with the same shadow tree and batch state, goes back where it was.
-    if (wasRemoved && bar.element.isConnected)
+    if (droppedByPage && bar.element.isConnected)
       console.debug('[Fripon] The page dropped the bar, put back.');
   }
 
   function hideBarWhenEmptyLongEnough() {
     if (!bar?.element.isConnected) return;
-    const now = Date.now();
-    emptySince ??= now;
-    const left = hideDelay - (now - emptySince);
+    const at = now();
+    emptySince ??= at;
+    const left = hideDelay - (at - emptySince);
     if (left <= 0) {
       emptySince = null;
       return hideBar();

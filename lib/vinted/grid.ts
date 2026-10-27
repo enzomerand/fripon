@@ -138,10 +138,9 @@ export function findButtonAnchor(root: Element): Element | null {
   while (block.parentElement && block.parentElement !== column) block = block.parentElement;
   if (block.parentElement !== column) return description;
 
-  // A price that sits above the description is not what this is made for.
-  const below =
-    block.contains(description) ||
-    description.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING;
+  // A price that sits above the description is not what this is made for. (`block` is never an
+  // ancestor of the description: the column is the lowest ancestor that holds both.)
+  const below = description.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING;
   return below ? block : description;
 }
 

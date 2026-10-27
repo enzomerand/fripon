@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BUTTON_HOST_TAG,
   createHost,
   createSharedStyles,
+  focusInPlace,
   hasFocus,
+  moveKeepingFocus,
   redrawKeepingFocus,
 } from './host';
 
@@ -152,5 +154,86 @@ describe('redrawKeepingFocus', () => {
     host.container.querySelector('button')?.focus();
     expect(() => redrawKeepingFocus(host, swap(host), () => null)).not.toThrow();
     host.element.remove();
+  });
+});
+
+describe('moving the focus without moving the page', () => {
+  function hostWithButton() {
+    const host = createHost(document, BUTTON_HOST_TAG, { apply: vi.fn() });
+    document.body.append(host.element);
+    host.container.innerHTML = '<button id="old">Analyser</button>';
+    return host;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('focusInPlace never scrolls to the element', () => {
+    const element = document.createElement('button');
+    document.body.append(element);
+    const focus = vi.spyOn(element, 'focus');
+    focusInPlace(element);
+    expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+    expect(() => focusInPlace(null)).not.toThrow();
+    element.remove();
+  });
+
+  it('redrawKeepingFocus gives the focus back without scrolling', () => {
+    const host = hostWithButton();
+    host.container.querySelector('button')?.focus();
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+
+    redrawKeepingFocus(
+      host,
+      () => (host.container.innerHTML = '<a id="new" href="#">Verdict</a>'),
+      (root) => root.querySelector('a'),
+    );
+
+    expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+    host.element.remove();
+  });
+
+  describe('moveKeepingFocus', () => {
+    /** What a browser does when an element is taken out of the document to be put back: it blurs. */
+    const blurringMove = (host: ReturnType<typeof hostWithButton>, to: Element) => () => {
+      (host.element.shadowRoot?.activeElement as HTMLElement | null)?.blur();
+      to.after(host.element);
+    };
+
+    it('gives the control that had the focus back after the move, without scrolling', () => {
+      const host = hostWithButton();
+      const anchor = document.createElement('p');
+      document.body.append(anchor);
+      const button = host.container.querySelector('button') as HTMLButtonElement;
+      button.focus();
+      const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+
+      moveKeepingFocus(host, blurringMove(host, anchor));
+
+      expect(anchor.nextElementSibling).toBe(host.element);
+      expect(document.activeElement).toBe(host.element);
+      expect(host.element.shadowRoot?.activeElement).toBe(button);
+      expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+      host.element.remove();
+      anchor.remove();
+    });
+
+    it('does not touch a focus that was elsewhere', () => {
+      const host = hostWithButton();
+      const anchor = document.createElement('p');
+      const input = document.createElement('input');
+      document.body.append(anchor, input);
+      input.focus();
+      const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+
+      moveKeepingFocus(host, blurringMove(host, anchor));
+
+      expect(focus).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(input);
+      host.element.remove();
+      anchor.remove();
+      input.remove();
+    });
   });
 });

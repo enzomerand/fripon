@@ -197,13 +197,13 @@ describe('running', () => {
     expect(positions).toEqual([0, 1, 2, 3]);
   });
 
-  it('stops at the cap: the cards that remain are not tried', async () => {
+  it('stops at the cap: the cards that remain are not tried, and the refused one is not counted', async () => {
     const { deps, calls } = setup(['done', 'quota']);
     const batch = createBatch(deps);
     await batch.ask(IDS);
     await batch.launch();
     expect(calls).toEqual(['9000101', '9000102']);
-    expect(batch.state()).toEqual({ phase: 'idle', last: { reason: 'quota', analysed: 2 } });
+    expect(batch.state()).toEqual({ phase: 'idle', last: { reason: 'quota', analysed: 1 } });
   });
 
   it('stops when there is no key', async () => {
@@ -212,7 +212,7 @@ describe('running', () => {
     await batch.ask(IDS);
     await batch.launch();
     expect(calls).toEqual(['9000101']);
-    expect(batch.state()).toEqual({ phase: 'idle', last: { reason: 'needsKey', analysed: 1 } });
+    expect(batch.state()).toEqual({ phase: 'idle', last: { reason: 'needsKey', analysed: 0 } });
   });
 
   it('goes on after a failure, and gives up after several in a row', async () => {
