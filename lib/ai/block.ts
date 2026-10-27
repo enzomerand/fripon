@@ -8,13 +8,17 @@ import type { AiReviewResponse } from '../messages';
  * - waiting: "Au clic" mode, the review starts with a click.
  * - running: the review is on its way.
  * - done: the summary the AI wrote.
- * - failed: a short neutral line; `open_keys` adds the button that leads to the keys.
+ * - failed: a short neutral line; `open_keys` adds the button that leads to the keys, `open_cloud`
+ *   the one that leads to the subscription.
  */
 export type AiBlock =
   | { status: 'waiting' }
   | { status: 'running' }
   | { status: 'done'; summary: string }
-  | { status: 'failed'; message: string; action?: 'open_keys' };
+  | { status: 'failed'; message: string; action?: 'open_keys' | 'open_cloud' };
+
+/** The subscription has nothing left: the month, a daily cap or the trial, not only "today". */
+const CLOUD_QUOTA = "Tu n'as plus d'analyses disponibles.";
 
 const KEY_REFUSED = 'Google refuse ta clé Gemini : vérifie-la dans les réglages.';
 
@@ -42,10 +46,12 @@ export function aiBlockFor(response: AiReviewResponse): AiBlock | null {
     case 'not_cached':
       return null;
     case 'quota':
-      return {
-        status: 'failed',
-        message: "Le plafond d'avis de l'IA est atteint pour aujourd'hui.",
-      };
+      return response.source === 'cloud'
+        ? { status: 'failed', message: CLOUD_QUOTA, action: 'open_cloud' }
+        : {
+            status: 'failed',
+            message: "Le plafond d'avis de l'IA est atteint pour aujourd'hui.",
+          };
     case 'error': {
       const message = FAILURE_LINES[response.reason];
       return isKeyFailure(response.reason)

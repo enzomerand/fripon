@@ -143,6 +143,27 @@ describe('the status keeper', () => {
     await k.record(PLAN_USAGE);
     expect(await loadStatus()).toBeNull();
   });
+
+  describe('peek', () => {
+    it('answers the stored status while it is younger than the age asked, and never asks the server', async () => {
+      const { keeper: k, client } = keeper();
+      await saveStatusFor('tok-1', status(PLAN_USAGE));
+      expect(await k.peek(STATUS_MAX_AGE_MS)).toEqual(status(PLAN_USAGE));
+      clock += STATUS_MAX_AGE_MS - 1;
+      expect(await k.peek(STATUS_MAX_AGE_MS)).toEqual(status(PLAN_USAGE));
+      clock += 1;
+      expect(await k.peek(STATUS_MAX_AGE_MS)).toBeNull();
+      expect(client.me).not.toHaveBeenCalled();
+    });
+
+    it('is null for a status never read, and when signed out', async () => {
+      const { keeper: k } = keeper();
+      expect(await k.peek(STATUS_MAX_AGE_MS)).toBeNull();
+      await saveStatusFor('tok-1', status(PLAN_USAGE));
+      await fakeBrowser.storage.local.clear();
+      expect(await k.peek(STATUS_MAX_AGE_MS)).toBeNull();
+    });
+  });
 });
 
 describe('canAnalyse', () => {
@@ -182,9 +203,14 @@ describe('cloudGate', () => {
     }
   });
 
-  it('is no_key when nothing is known: nothing is asked of the server', () => {
+  it('is no_key without an account, whatever the mode', () => {
     expect(cloudGate(null, 'auto')).toBe('no_key');
-    expect(cloudGate(status(null, 0), 'auto')).toBe('no_key');
+    expect(cloudGate(null, 'click')).toBe('no_key');
+  });
+
+  it('is ready (manual in "Au clic" mode) when the usage was never read: the step will tell', () => {
+    expect(cloudGate(status(null, 0), 'auto')).toBe('ready');
+    expect(cloudGate(status(null, 0), 'click')).toBe('manual');
   });
 });
 
@@ -245,7 +271,7 @@ describe('the gates of a signed-in account', () => {
     expect(await createCloudGates(k).loadVisionRemaining()).toBe(288);
   });
 
-  it('keep the last snapshot when the server is out of reach, and say no_key with none', async () => {
+  it('keep the last snapshot when the server is out of reach, and say ready with none', async () => {
     const down = makeClient({
       me: vi.fn(() => Promise.resolve({ ok: false as const, reason: 'network' as const })),
     });
@@ -255,7 +281,11 @@ describe('the gates of a signed-in account', () => {
 
     await fakeBrowser.storage.local.remove('fripon:cloud:status:v1');
     const fresh = createCloudGates(keeper(down).keeper);
-    expect(await fresh.loadGates()).toEqual({ image: 'no_key', ai: 'no_key' });
+    // Never "no key": the subscriber has none to add, the step reveals the quota or the network.
+    expect(await fresh.loadGates()).toEqual({ image: 'ready', ai: 'ready' });
     expect(await fresh.loadVisionRemaining()).toBeNull();
+
+    await saveSettings({ mode: 'click' });
+    expect(await fresh.loadGates()).toEqual({ image: 'manual', ai: 'manual' });
   });
 });

@@ -59,6 +59,55 @@ describe('signing in', () => {
     });
   });
 
+  it('ends the session it replaces at the server, then stores the new one', async () => {
+    await saveSession({ token: 'old-token', email: 'old@b.fr' });
+    const { account, client } = setup();
+    expect(await account.verify('a@b.fr', '123456')).toEqual({ ok: true });
+    expect(client.logout).toHaveBeenCalledTimes(1);
+    expect(client.logout).toHaveBeenCalledWith('old-token');
+    expect(await loadSession()).toEqual({ token: 'tok-1', email: 'a@b.fr' });
+  });
+
+  it('is signed in even when ending the old session fails or never answers', async () => {
+    await saveSession({ token: 'old-token', email: 'old@b.fr' });
+    for (const logout of [
+      vi.fn(() => Promise.reject(new Error('offline'))),
+      vi.fn(() => new Promise<void>(() => undefined)),
+    ]) {
+      const { account } = setup(makeClient({ logout }));
+      expect(await account.verify('a@b.fr', '123456')).toEqual({ ok: true });
+      expect(await loadSession()).toEqual({ token: 'tok-1', email: 'a@b.fr' });
+      await saveSession({ token: 'old-token', email: 'old@b.fr' });
+    }
+  });
+
+  it('ends nothing without a previous session, for a wrong code, or for the same token', async () => {
+    const first = setup();
+    await first.account.verify('a@b.fr', '123456');
+    expect(first.client.logout).not.toHaveBeenCalled();
+
+    await saveSession({ token: 'old-token', email: 'old@b.fr' });
+    const wrong = setup(
+      makeClient({
+        verify: vi.fn(() =>
+          Promise.resolve({ ok: false as const, reason: 'invalid_code' as const }),
+        ),
+      }),
+    );
+    await wrong.account.verify('a@b.fr', '000000');
+    expect(wrong.client.logout).not.toHaveBeenCalled();
+    expect(await loadSession()).toEqual({ token: 'old-token', email: 'old@b.fr' });
+
+    // A server that answers with the token already held must not revoke the session it just gave.
+    const same = setup(
+      makeClient({
+        verify: vi.fn(() => Promise.resolve({ ok: true as const, token: 'old-token' })),
+      }),
+    );
+    await same.account.verify('a@b.fr', '123456');
+    expect(same.client.logout).not.toHaveBeenCalled();
+  });
+
   it('stores nothing for a wrong code', async () => {
     const { account } = setup(
       makeClient({

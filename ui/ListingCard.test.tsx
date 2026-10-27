@@ -530,6 +530,24 @@ describe('ListingCard', () => {
       expect(open).toHaveBeenCalledWith('keys');
     });
 
+    it('adds the "Voir mon abonnement" button when the subscription has nothing left, and opens it', async () => {
+      const open = vi.fn();
+      await show(
+        withAi({
+          status: 'failed',
+          message: "Tu n'as plus d'analyses disponibles.",
+          action: 'open_cloud',
+        }),
+        undefined,
+        open,
+      );
+      await expand();
+      expect(block()?.textContent).toContain("Tu n'as plus d'analyses disponibles.");
+      expect(aiButtons().map((b) => b.textContent)).toEqual(['Voir mon abonnement']);
+      await act(() => aiButtons()[0]?.click());
+      expect(open).toHaveBeenCalledWith('cloud');
+    });
+
     it('has no key button when nobody handles the click', async () => {
       await show(withAi({ status: 'failed', message: 'Refusée.', action: 'open_keys' }));
       await expand();

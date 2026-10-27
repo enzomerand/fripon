@@ -22,6 +22,17 @@ describe('aiBlockFor', () => {
     });
   });
 
+  it('says the subscription has nothing left, whatever the period, and leads to it', () => {
+    expect(aiBlockFor({ status: 'quota', source: 'cloud' })).toEqual({
+      status: 'failed',
+      message: "Tu n'as plus d'analyses disponibles.",
+      action: 'open_cloud',
+    });
+    expect(JSON.stringify(aiBlockFor({ status: 'quota', source: 'cloud' }))).not.toContain(
+      "aujourd'hui",
+    );
+  });
+
   it.each(['invalid', 'restricted', 'disabled', 'billing'] as const)(
     'sends a "%s" key to the keys',
     (reason) => {

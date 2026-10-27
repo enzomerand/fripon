@@ -5,8 +5,8 @@ import { isAllowedImageUrl } from '../image/analyzer';
 import { readVisionCache, visionCacheKey, writeVisionCache } from '../image/search-cache';
 import type { AiReviewResponse, SearchImageResponse } from '../messages';
 import type { CloudClient, SearchResult } from './client';
-import { STATUS_AFTER_REFUSAL_MS } from './config';
-import type { StatusKeeper } from './status';
+import { STATUS_AFTER_REFUSAL_MS, STATUS_MAX_AGE_MS } from './config';
+import { canAnalyse, type StatusKeeper } from './status';
 
 export interface CloudStepsDeps {
   client: CloudClient;
@@ -23,6 +23,15 @@ export interface CloudSteps {
 
 /** The failures that pass by themselves: remembered for a moment, like those of a Google key. */
 type Transient = 'network' | 'unavailable';
+
+/**
+ * After the server refused for want of analyses, and while a status read is that young, the account
+ * is not asked again: the same minute as `STATUS_MAX_AGE_MS`, which is how stale a status may be.
+ */
+const DRY_MEMO_MS = STATUS_MAX_AGE_MS;
+
+/** The subscription has nothing left: the card says it is that one, not a personal key's cap. */
+const reviewQuota = (): AiReviewResponse => ({ status: 'quota', source: 'cloud' });
 
 /** What a failure of the server is called to the page, and whether it may pass by itself. */
 type Described = { word: 'photo'; transient: false } | { word: Transient; transient: true };
@@ -57,8 +66,11 @@ function describe(
  *    hit is answered for free, and `cacheOnly` ("Au clic") never goes further than this.
  * 2. A failure the server gave less than 90 seconds ago (`createFailureMemo`, a click's `retry`
  *    skips it): the same failure, without a request.
- * 3. The server decides what the account may do: the cap, the trial, the shared cache. This code
- *    does not second-guess it from the stored status, which may be a minute old.
+ * 3. An account known to be dry, for a minute (the server refused it, or the last status says so):
+ *    `quota`, without a request. A click's `retry` skips it too.
+ * 4. The server decides what the account may do: the cap, the trial, the shared cache. Short of
+ *    a refusal it gave or a status that says there is nothing left, this code does not
+ *    second-guess it: the stored status may be a minute old.
  *
  * The same photo asked twice at once is asked once. Failures are never cached. Neither function
  * rejects.
@@ -69,7 +81,23 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
   const reviews = new Map<string, Promise<AiReviewResponse>>();
   const searchMemo = createFailureMemo<Transient>(now);
   const reviewMemo = createFailureMemo<Transient>(now);
+  /** The account the server last refused for want of analyses, in memory only. */
+  let dry: { token: string; until: number } | null = null;
 
+  /**
+   * Whether asking the server would only get a refusal: it said "no analysis left" less than a
+   * minute ago, or the last status read (never older than a minute) says the month, a day or the
+   * trial is used up. Without this, every listing of a dry account costs a search refused, a review
+   * refused and a second search refused. A click (`retry`) always asks.
+   */
+  async function isDry(token: string, retry: boolean): Promise<boolean> {
+    if (retry) return false;
+    if (dry?.token === token && now() < dry.until) return true;
+    const stored = await deps.status.peek(STATUS_MAX_AGE_MS).catch(() => null);
+    return stored?.usage ? !canAnalyse(stored.usage) : false;
+  }
+
+  // Shared by every account of this browser (and the personal mode): kept, a hit saves a request.
   /** A cache that cannot be read is a cache that is empty. */
   const cachedMatches = (cacheKey: string) => readVisionCache(cacheKey, now()).catch(() => null);
   const cachedReview = (cacheKey: string) => readAiCache(cacheKey, now()).catch(() => null);
@@ -85,11 +113,18 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
   }
 
   /** One search at the server; a result is kept in the local cache, which was paid for. */
-  async function serverSearch(photoUrl: string, cacheKey: string): Promise<SearchResult> {
+  async function serverSearch(
+    token: string,
+    photoUrl: string,
+    cacheKey: string,
+  ): Promise<SearchResult> {
     const result = await deps.client.search(photoUrl);
     afterSearch(result);
     if (result.ok) {
+      dry = null;
       await writeVisionCache(cacheKey, result.matches, now()).catch(() => undefined);
+    } else if (result.reason === 'quota') {
+      dry = { token, until: now() + DRY_MEMO_MS };
     }
     return result;
   }
@@ -107,8 +142,9 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
     if (token === null) return { status: 'no_key' };
     const remembered = searchMemo.recall(token, retry);
     if (remembered) return { status: 'error', reason: remembered };
+    if (await isDry(token, retry)) return { status: 'quota' };
 
-    const result = await serverSearch(photoUrl, cacheKey);
+    const result = await serverSearch(token, photoUrl, cacheKey);
     if (result.ok) {
       searchMemo.forget();
       return { status: 'ok', matches: result.matches };
@@ -134,16 +170,24 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
     const remembered = reviewMemo.recall(token, retry);
     if (remembered) return { status: 'error', reason: remembered };
 
+    // A dry account can still have a photo reviewed that the server served it a moment ago (the
+    // search that took its last analysis): the review is free then. Only a photo this browser
+    // never searched is answered here, as the server would refuse it, or serve it for an analysis
+    // the account no longer has.
+    const searchKey = visionCacheKey(input.photoUrl);
+    if ((await isDry(token, retry)) && !(await cachedMatches(searchKey))) return reviewQuota();
+
     let result = await deps.client.review(input);
     if (!result.ok && result.reason === 'not_searched') {
       // The server only reviews a photo it served to this account lately. A photo searched before
       // signing in, or in another account, only has its search in this browser's cache: have the
       // server serve it (one analysis, which this account would have paid the first time), then
       // ask again, once.
-      const served = await serverSearch(input.photoUrl, visionCacheKey(input.photoUrl));
+      if (await isDry(token, retry)) return reviewQuota();
+      const served = await serverSearch(token, input.photoUrl, searchKey);
       if (!served.ok) {
         if (served.reason === 'signed_out') return { status: 'no_key' };
-        if (served.reason === 'quota') return { status: 'quota' };
+        if (served.reason === 'quota') return reviewQuota();
         return { status: 'error', reason: describe(served.reason).word };
       }
       result = await deps.client.review(input);
@@ -156,7 +200,10 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
       return { status: 'ok', review: result.review };
     }
     if (result.reason === 'signed_out') return { status: 'no_key' };
-    if (result.reason === 'quota') return { status: 'quota' };
+    if (result.reason === 'quota') {
+      dry = { token, until: now() + DRY_MEMO_MS };
+      return reviewQuota();
+    }
     if (result.reason === 'invalid_answer') return { status: 'error', reason: 'invalid_answer' };
     const failure = describe(result.reason);
     if (failure.transient) reviewMemo.remember(token, failure.word, generation);

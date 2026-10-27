@@ -5,8 +5,12 @@
  */
 export const CLOUD_ORIGIN = 'https://fripon.endurance.tools';
 
-/** The image search and the AI review take Google's time on top of the server's. */
-export const CLOUD_SLOW_TIMEOUT_MS = 15_000;
+/**
+ * The image search and the AI review wait for what the server waits for: its photo download (10 s)
+ * plus Vision (20 s) or Gemini (30 s). A shorter timeout here would show a network error for an
+ * analysis the account is charged for.
+ */
+export const CLOUD_SLOW_TIMEOUT_MS = 45_000;
 /** Everything else (sign-in, status, billing links). */
 export const CLOUD_TIMEOUT_MS = 10_000;
 
