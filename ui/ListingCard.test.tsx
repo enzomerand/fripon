@@ -74,7 +74,7 @@ describe('ListingCard', () => {
   it('shows the loading state', async () => {
     await show({ status: 'loading' });
     expect(root.querySelector('[role="status"]')?.textContent).toBe("Fripon analyse l'annonce…");
-    expect(root.querySelector('[role="status"] .fripon-logo svg')).not.toBeNull();
+    expect(root.querySelector('[role="status"] svg')).not.toBeNull();
     expect(root.querySelector('button')).toBeNull();
   });
 

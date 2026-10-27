@@ -7,12 +7,17 @@ const logoSvg = logoSource.replace(/>\s+</g, '><').trim();
  * The Fripon fox. Inlined rather than linked so it shows inside Vinted's pages without exposing a
  * web-accessible resource. The SVG is our own static asset, never page content.
  */
-export function Logo({ size = '1.25em' }: { size?: string }) {
+export function Logo() {
   return (
     <span
-      class="fripon-logo"
       aria-hidden="true"
-      style={{ display: 'inline-block', flex: 'none', width: size, height: size, lineHeight: 0 }}
+      style={{
+        display: 'inline-block',
+        flex: 'none',
+        width: '1.25em',
+        height: '1.25em',
+        lineHeight: 0,
+      }}
       dangerouslySetInnerHTML={{ __html: logoSvg }}
     />
   );
