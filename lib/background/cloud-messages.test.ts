@@ -14,6 +14,7 @@ const CLOUD_MESSAGES: RuntimeMessage[] = [
   { type: 'cloudSignOut' },
   { type: 'cloudCheckout', price: 'essentiel_monthly' },
   { type: 'cloudPortal' },
+  { type: 'cloudDeleteAccount' },
 ];
 
 describe('the cloud messages, as the background reads them', () => {
@@ -109,6 +110,7 @@ function makeDeps(cloud: Partial<BackgroundDeps['cloud']> = {}): BackgroundDeps 
       signOut: vi.fn(() => Promise.resolve()),
       checkout: vi.fn(() => Promise.resolve({ ok: true as const })),
       portal: vi.fn(() => Promise.resolve({ ok: true as const })),
+      deleteAccount: vi.fn(() => Promise.resolve({ ok: true as const })),
       ...cloud,
     },
   };
@@ -123,12 +125,14 @@ describe('handling the cloud messages', () => {
     await handleMessage({ type: 'cloudSignOut' }, deps);
     await handleMessage({ type: 'cloudCheckout', price: 'essentiel_yearly' }, deps);
     await handleMessage({ type: 'cloudPortal' }, deps);
+    await handleMessage({ type: 'cloudDeleteAccount' }, deps);
     expect(deps.cloud.status).toHaveBeenCalledOnce();
     expect(deps.cloud.requestCode).toHaveBeenCalledWith('a@b.fr');
     expect(deps.cloud.verify).toHaveBeenCalledWith('a@b.fr', '123456');
     expect(deps.cloud.signOut).toHaveBeenCalledOnce();
     expect(deps.cloud.checkout).toHaveBeenCalledWith('essentiel_yearly');
     expect(deps.cloud.portal).toHaveBeenCalledOnce();
+    expect(deps.cloud.deleteAccount).toHaveBeenCalledOnce();
   });
 
   it('answers what the account answers', async () => {
@@ -155,6 +159,7 @@ describe('handling the cloud messages', () => {
       signOut: vi.fn(boom),
       checkout: vi.fn(boom),
       portal: vi.fn(boom),
+      deleteAccount: vi.fn(boom),
     });
     expect(await handleMessage({ type: 'cloudStatus' }, deps)).toBeNull();
     expect(await handleMessage({ type: 'cloudRequestCode', email: 'a@b.fr' }, deps)).toEqual({
@@ -171,6 +176,22 @@ describe('handling the cloud messages', () => {
     expect(await handleMessage({ type: 'cloudPortal' }, deps)).toEqual({
       ok: false,
       reason: 'network',
+    });
+    expect(await handleMessage({ type: 'cloudDeleteAccount' }, deps)).toEqual({
+      ok: false,
+      reason: 'network',
+    });
+  });
+
+  it('passes on the answer of a refused deletion', async () => {
+    const deps = makeDeps({
+      deleteAccount: vi.fn(() =>
+        Promise.resolve({ ok: false as const, reason: 'active_subscription' as const }),
+      ),
+    });
+    expect(await handleMessage({ type: 'cloudDeleteAccount' }, deps)).toEqual({
+      ok: false,
+      reason: 'active_subscription',
     });
   });
 });

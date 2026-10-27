@@ -3,7 +3,14 @@ import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import background from '../entrypoints/background';
 import { CLOUD_ORIGIN } from '../lib/cloud/config';
-import { SESSION_KEY, STATUS_KEY, loadSession, saveSession } from '../lib/cloud/session';
+import {
+  SESSION_KEY,
+  STATUS_KEY,
+  loadExpired,
+  loadSession,
+  loadStatus,
+  saveSession,
+} from '../lib/cloud/session';
 import { PLAN_USAGE } from '../lib/cloud/test-helpers';
 import { getUsage } from '../lib/credits';
 import { PENDING_SECTION_KEY } from '../lib/options-nav';
@@ -49,7 +56,12 @@ const json = (status: number, body?: unknown) =>
 
 /** The Fripon server, the Vinted CDN and Google: only the first should be called when signed in. */
 function stubWorld(
-  options: { search?: () => Response; me?: () => Response; review?: () => Response } = {},
+  options: {
+    search?: () => Response;
+    me?: () => Response;
+    review?: () => Response;
+    deleteAccount?: () => Response;
+  } = {},
 ) {
   const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>((url) => {
     const target = String(url);
@@ -73,6 +85,9 @@ function stubWorld(
         options.review?.() ??
           json(200, { review: { catalogPhoto: true, summary: 'Photo de catalogue.' } }),
       );
+    }
+    if (target === `${CLOUD_ORIGIN}/v1/account`) {
+      return Promise.resolve(options.deleteAccount?.() ?? new Response(null, { status: 204 }));
     }
     if (target === `${CLOUD_ORIGIN}/v1/billing/checkout`) {
       return Promise.resolve(json(200, { url: 'https://checkout.stripe.com/c/pay/x' }));
@@ -184,6 +199,7 @@ describe('signing in from the options page', () => {
       { type: 'cloudSignOut' },
       { type: 'cloudCheckout', price: 'essentiel_monthly' },
       { type: 'cloudPortal' },
+      { type: 'cloudDeleteAccount' },
     ];
     for (const message of messages) {
       expect(await send(message, fromPage)).toBe('no answer');
@@ -293,12 +309,133 @@ describe('the background, signed in', () => {
     });
   });
 
-  it('is signed out when the server refuses the token', async () => {
+  it('keeps an expired marker, and no token, when the server refuses the token', async () => {
     stubWorld({ search: () => json(401, { error: 'unauthorized' }) });
     const send = start();
     expect(await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage)).toEqual({
-      status: 'no_key',
+      status: 'expired',
     });
     expect(await loadSession()).toBeNull();
+    expect(await loadStatus()).toBeNull();
+    expect(await loadExpired()).toEqual({ email: 'a@b.fr' });
+    expect(JSON.stringify(await browser.storage.local.get(null))).not.toContain('SECRET');
+  });
+});
+
+describe('the background, once the session expired', () => {
+  beforeEach(async () => {
+    await saveSession({ token: TOKEN, email: 'a@b.fr' });
+  });
+
+  async function expire(send: ReturnType<typeof start>) {
+    await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage);
+    expect(await loadExpired()).toEqual({ email: 'a@b.fr' });
+  }
+
+  it('tells the card to sign in again, never to add a Google key, and asks nothing more', async () => {
+    const fetchMock = stubWorld({ search: () => json(401, { error: 'unauthorized' }) });
+    const send = start();
+    await expire(send);
+
+    expect(await send({ type: 'getGates' }, fromPage)).toEqual({ image: 'expired', ai: 'expired' });
+    expect(await send({ type: 'searchImage', photoUrl: PHOTO }, fromPage)).toEqual({
+      status: 'expired',
+    });
+    expect(await send({ type: 'aiReview', input: REVIEW_INPUT }, fromPage)).toEqual({
+      status: 'expired',
+    });
+    expect(callsTo(fetchMock, '/v1/search')).toHaveLength(1);
+    expect(callsTo(fetchMock, '/v1/review')).toHaveLength(0);
+  });
+
+  it('leads the card buttons to the subscription, where the sign-in is', async () => {
+    stubWorld({ search: () => json(401, { error: 'unauthorized' }) });
+    vi.spyOn(browser.runtime, 'openOptionsPage').mockResolvedValue(undefined as never);
+    const send = start();
+    await expire(send);
+    for (const section of ['credits', 'keys', 'guide', 'cloud']) {
+      await send({ type: 'openOptions', section }, fromPage);
+      expect((await browser.storage.session.get(PENDING_SECTION_KEY))[PENDING_SECTION_KEY]).toBe(
+        'cloud',
+      );
+    }
+  });
+
+  it('is signed in again by a new sign-in, which clears the marker', async () => {
+    stubWorld({ search: () => json(401, { error: 'unauthorized' }) });
+    const send = start();
+    await expire(send);
+    expect(
+      await send({ type: 'cloudVerify', email: 'a@b.fr', code: '123456' }, fromOptions),
+    ).toEqual({ ok: true });
+    expect(await loadExpired()).toBeNull();
+    expect((await loadSession())?.token).toBe(TOKEN);
+    expect(await send({ type: 'getGates' }, fromPage)).toEqual({ image: 'ready', ai: 'ready' });
+  });
+
+  it('is forgotten when the user signs out', async () => {
+    stubWorld({ search: () => json(401, { error: 'unauthorized' }) });
+    const send = start();
+    await expire(send);
+    await send({ type: 'cloudSignOut' }, fromOptions);
+    expect(await loadExpired()).toBeNull();
+    expect(await send({ type: 'getGates' }, fromPage)).toEqual({ image: 'no_key', ai: 'no_key' });
+  });
+
+  it('is forgotten when the user saves a Google key: the personal keys are theirs now', async () => {
+    stubWorld({ search: () => json(401, { error: 'unauthorized' }) });
+    const send = start();
+    await expire(send);
+    // Another setting does not count.
+    await saveSettings({ mode: 'click' });
+    expect(await loadExpired()).toEqual({ email: 'a@b.fr' });
+    await saveSettings({ keys: { vision: 'AIzaVision', gemini: '' } });
+    await vi.waitFor(async () => expect(await loadExpired()).toBeNull());
+  });
+
+  it('keeps the keys the user had working, and only renames the missing ones', async () => {
+    await saveSettings({ keys: { vision: 'AIzaVision', gemini: '' } });
+    stubWorld({ search: () => json(401, { error: 'unauthorized' }) });
+    const send = start();
+    await expire(send);
+    expect(await send({ type: 'getGates' }, fromPage)).toEqual({ image: 'ready', ai: 'expired' });
+  });
+});
+
+describe('deleting the account from the options page', () => {
+  beforeEach(async () => {
+    await saveSession({ token: TOKEN, email: 'a@b.fr' });
+  });
+
+  it('asks the server with the token and signs out here on a 204', async () => {
+    const fetchMock = stubWorld();
+    const send = start();
+    expect(await send({ type: 'cloudDeleteAccount' }, fromOptions)).toEqual({ ok: true });
+    const [call] = callsTo(fetchMock, '/v1/account');
+    expect(call?.[1].method).toBe('DELETE');
+    expect((call?.[1].headers as Record<string, string>).authorization).toBe(`Bearer ${TOKEN}`);
+    expect(await loadSession()).toBeNull();
+    expect(await loadStatus()).toBeNull();
+    expect(await loadExpired()).toBeNull();
+  });
+
+  it('keeps the session on a 409: the subscription has to end first', async () => {
+    stubWorld({ deleteAccount: () => json(409, { error: 'active_subscription' }) });
+    const send = start();
+    expect(await send({ type: 'cloudDeleteAccount' }, fromOptions)).toEqual({
+      ok: false,
+      reason: 'active_subscription',
+    });
+    expect((await loadSession())?.token).toBe(TOKEN);
+  });
+
+  it('leaves an expired marker, not a signed-in account, on a 401', async () => {
+    stubWorld({ deleteAccount: () => json(401, { error: 'unauthorized' }) });
+    const send = start();
+    expect(await send({ type: 'cloudDeleteAccount' }, fromOptions)).toEqual({
+      ok: false,
+      reason: 'signed_out',
+    });
+    expect(await loadExpired()).toEqual({ email: 'a@b.fr' });
   });
 });

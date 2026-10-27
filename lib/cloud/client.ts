@@ -4,12 +4,13 @@ import { parseReview } from '../google/gemini';
 import { isRecord } from '../json';
 import type { AiReview, ImageMatch } from '../model';
 import { CLOUD_ORIGIN, CLOUD_SLOW_TIMEOUT_MS, CLOUD_TIMEOUT_MS } from './config';
-import { clearSession, loadSession } from './session';
+import { expireSession, loadSession } from './session';
 import {
   parseMe,
   parseUsage,
   type CloudSubscription,
   type CloudUsage,
+  type DeleteAccountResult,
   type PriceKey,
   type RequestCodeResult,
 } from './types';
@@ -17,14 +18,14 @@ import {
 /** Where the client finds the token of the session, and how it ends it. Injected for tests. */
 export interface SessionAccess {
   token(): Promise<string | null>;
-  /** Signs out, but only if `token` is still the stored one. */
-  clear(token: string): Promise<void>;
+  /** The server refused `token`: the session is over, but only if `token` is still the stored one. */
+  expire(token: string): Promise<void>;
 }
 
 /** The session of `storage.local`. */
 export const storedSession: SessionAccess = {
   token: async () => (await loadSession())?.token ?? null,
-  clear: (token) => clearSession(token),
+  expire: (token) => expireSession(token),
 };
 
 export interface CloudClientDeps {
@@ -56,8 +57,11 @@ export type SearchResult =
   | { ok: true; matches: ImageMatch[]; charged: boolean; usage: CloudUsage | null }
   | { ok: false; reason: SearchFailure };
 
-/** Why a review was not served. `not_searched`: the server never served this photo to the account. */
-export type ReviewFailure = SearchFailure | 'not_searched' | 'invalid_answer';
+/**
+ * Why a review was not served. `not_searched`: the server never served this photo to the account.
+ * No `quota`: the review is never refused for want of analyses (the search is what costs one).
+ */
+export type ReviewFailure = Exclude<SearchFailure, 'quota'> | 'not_searched' | 'invalid_answer';
 
 export type ReviewResult = { ok: true; review: AiReview } | { ok: false; reason: ReviewFailure };
 
@@ -84,6 +88,8 @@ export interface CloudClient {
   review(input: AiReviewInput): Promise<ReviewResult>;
   checkout(price: PriceKey): Promise<LinkCallResult>;
   portal(): Promise<LinkCallResult>;
+  /** Deletes the account and its history at the server. */
+  deleteAccount(): Promise<DeleteAccountResult>;
 }
 
 /** What came back: the status and the JSON body (undefined when it was not JSON), or null. */
@@ -121,15 +127,20 @@ function parseLink(body: unknown): string | null {
 
 /**
  * Typed calls to the Fripon Cloud API. Every call has a timeout (the body included) and never
- * rejects: what went wrong is a word of the result. A `401` on a call made with the session signs
- * it out. The token is only ever put in the `Authorization` header.
+ * rejects: what went wrong is a word of the result. A `401` on a call made with the session ends
+ * it (`expire`: the address stays, to sign in again). The token is only ever put in the `Authorization` header.
  */
 export function createCloudClient(deps: CloudClientDeps): CloudClient {
   const origin = deps.origin ?? CLOUD_ORIGIN;
 
   async function send(
     path: string,
-    options: { body?: unknown; token?: string; timeoutMs?: number; method?: 'GET' | 'POST' },
+    options: {
+      body?: unknown;
+      token?: string;
+      timeoutMs?: number;
+      method?: 'GET' | 'POST' | 'DELETE';
+    },
   ): Promise<Reply> {
     const { body, token, timeoutMs = CLOUD_TIMEOUT_MS, method = 'POST' } = options;
     try {
@@ -155,13 +166,13 @@ export function createCloudClient(deps: CloudClientDeps): CloudClient {
   /** A call that needs the session: no session, or a 401, is `signed_out`. */
   async function authed(
     path: string,
-    options: { body?: unknown; timeoutMs?: number; method?: 'GET' | 'POST' } = {},
+    options: { body?: unknown; timeoutMs?: number; method?: 'GET' | 'POST' | 'DELETE' } = {},
   ): Promise<Reply | 'signed_out'> {
     const token = await deps.session.token().catch(() => null);
     if (token === null) return 'signed_out';
     const reply = await send(path, { ...options, token });
     if (reply?.status === 401) {
-      await deps.session.clear(token).catch(() => undefined);
+      await deps.session.expire(token).catch(() => undefined);
       return 'signed_out';
     }
     return reply;
@@ -266,12 +277,28 @@ export function createCloudClient(deps: CloudClientDeps): CloudClient {
       });
       if (reply === 'signed_out') return { ok: false, reason: 'signed_out' };
       if (reply === null) return { ok: false, reason: 'network' };
-      if (reply.status !== 200) return { ok: false, reason: refused(reply) };
+      if (reply.status !== 200) {
+        const reason = refused(reply);
+        // The server never refuses a review for want of analyses: a 402 is not its contract.
+        return { ok: false, reason: reason === 'quota' ? 'unavailable' : reason };
+      }
       const review = isRecord(reply.body) ? parseReview(reply.body.review) : null;
       return review ? { ok: true, review } : { ok: false, reason: 'invalid_answer' };
     },
 
     checkout: (price) => billingLink('/v1/billing/checkout', { price }),
     portal: () => billingLink('/v1/billing/portal', {}),
+
+    async deleteAccount() {
+      const reply = await authed('/v1/account', { method: 'DELETE' });
+      if (reply === 'signed_out') return { ok: false, reason: 'signed_out' };
+      if (reply === null) return { ok: false, reason: 'network' };
+      if (reply.status === 204) return { ok: true };
+      if (reply.status === 409 && errorWord(reply.body) === 'active_subscription') {
+        return { ok: false, reason: 'active_subscription' };
+      }
+      if (reply.status === 429) return { ok: false, reason: 'rate_limited' };
+      return { ok: false, reason: 'unavailable' };
+    },
   };
 }

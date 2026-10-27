@@ -152,6 +152,16 @@ describe('GridButton', () => {
     expect(onOpenOptions).toHaveBeenCalledWith('keys');
   });
 
+  it('asks to sign in again, and opens the subscription, when the session expired', async () => {
+    const onOpenOptions = vi.fn();
+    await show({ status: 'expired' }, { onOpenOptions });
+    expect(text()).toBe('Me reconnecter');
+    expect(text()).not.toContain('clé');
+    const event = click(button());
+    expect(onOpenOptions).toHaveBeenCalledWith('cloud');
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it('sends to the credits when the cap is reached', async () => {
     const onOpenOptions = vi.fn();
     await show({ status: 'quota' }, { onOpenOptions });

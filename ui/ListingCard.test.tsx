@@ -170,6 +170,17 @@ describe('ListingCard', () => {
       expect(open).toHaveBeenCalledWith('guide');
     });
 
+    it('shows "Me reconnecter" on the cloud action, and opens the subscription', async () => {
+      const open = vi.fn();
+      await show(withImage({ action: 'open_cloud', tag: 'Session expirée' }), undefined, open);
+      await expand();
+
+      const button = actionButton() as HTMLButtonElement;
+      expect(button.textContent).toBe('Me reconnecter');
+      await act(() => button.click());
+      expect(open).toHaveBeenCalledWith('cloud');
+    });
+
     it('shows "Voir mes réglages" on the settings action, and opens the credits', async () => {
       const open = vi.fn();
       await show(withImage({ action: 'open_settings', tag: 'Plafond atteint' }), undefined, open);

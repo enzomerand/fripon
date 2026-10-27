@@ -130,3 +130,14 @@ export type LinkResult =
       ok: false;
       reason: 'signed_out' | 'no_customer' | 'rate_limited' | 'unavailable' | 'network';
     };
+
+/**
+ * The result of deleting the account (`DELETE /v1/account`). On success the session is gone here
+ * too. `active_subscription` (409): the subscription must end first.
+ */
+export type DeleteAccountResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: 'signed_out' | 'active_subscription' | 'rate_limited' | 'unavailable' | 'network';
+    };

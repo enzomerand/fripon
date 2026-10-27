@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type {
   CloudStatus,
   CloudUsage,
+  DeleteAccountResult,
   LinkResult,
   PriceKey,
   RequestCodeResult,
@@ -12,10 +13,15 @@ import { sendMessage } from '../../lib/messages';
 
 /**
  * What the Fripon server does with an analysis, said once for the section and the guide: what is
- * sent, to whom, and what Google does with it.
+ * sent, to whom, what Google does with it, what is kept and for how long, who else is involved, and
+ * that the account can be deleted. One paragraph each; keep the README in step.
  */
-export const CLOUD_PRIVACY =
-  "Avec l'abonnement, l'adresse de la photo, le titre, la description, le prix et les indices calculés par Fripon sont envoyés au serveur de Fripon, qui appelle Google avec sa propre clé payante (Google ne les utilise pas pour améliorer ses produits). Ton adresse e-mail sert à te connecter.";
+export const CLOUD_PRIVACY: readonly string[] = [
+  "Avec l'abonnement, l'adresse de la photo, le titre, la description, le prix et les indices calculés par Fripon sont envoyés au serveur de Fripon, qui appelle Google avec sa propre clé payante (Google ne les utilise pas pour améliorer ses produits).",
+  "Le serveur garde ton adresse e-mail, l'état de ton abonnement et la liste des photos analysées (2 mois au plus). Les résultats d'une recherche de photo sont gardés 35 jours, ceux d'un avis de l'IA 7 jours. Les adresses IP ne sont gardées que sous forme d'empreinte (hash), pour limiter les abus.",
+  "Fripon s'appuie sur Google (l'analyse), Stripe (le paiement), un service d'envoi d'e-mails (les codes de connexion) et un hébergeur.",
+  'Tu peux supprimer ton compte et son historique depuis cette page.',
+];
 
 const OFFERS: { price: PriceKey; label: string }[] = [
   { price: 'essentiel_monthly', label: 'Essentiel — 2,99 €/mois' },
@@ -46,6 +52,20 @@ const VERIFY_TEXT: Record<Extract<VerifyResult, { ok: false }>['reason'], string
   network: NETWORK_TEXT,
 };
 
+const EXPIRED_TEXT = 'Ta session a expiré. Reconnecte-toi pour continuer.';
+const DELETED_TEXT = "Ton compte Fripon et l'historique de tes analyses ont été supprimés.";
+const DELETE_CONFIRM_TEXT =
+  "Supprimer définitivement ton compte Fripon et ton historique d'analyses ? Tes factures restent chez Stripe.";
+
+const DELETE_TEXT: Record<Extract<DeleteAccountResult, { ok: false }>['reason'], string> = {
+  signed_out: 'Ta session a expiré : reconnecte-toi.',
+  active_subscription:
+    "Résilie d'abord ton abonnement (Gérer mon abonnement). Tu pourras supprimer ton compte une fois la période payée terminée.",
+  rate_limited: TOO_MANY_TEXT,
+  unavailable: 'Impossible de supprimer ton compte pour le moment. Réessaie dans un instant.',
+  network: NETWORK_TEXT,
+};
+
 const LINK_TEXT: Record<Extract<LinkResult, { ok: false }>['reason'], string> = {
   signed_out: 'Ta session a expiré : reconnecte-toi.',
   no_customer: 'Aucun abonnement à gérer pour ce compte.',
@@ -71,13 +91,25 @@ function NoticeLine({ notice }: { notice: Notice }) {
   );
 }
 
-function SignedOut({ onChanged }: { onChanged: () => void }) {
-  const [email, setEmail] = useState('');
+function SignedOut({
+  expiredEmail,
+  deleted,
+  onChanged,
+}: {
+  /** The address of a session that expired: the form starts from it. */
+  expiredEmail: string | null;
+  /** The account was just deleted from this page. */
+  deleted: boolean;
+  onChanged: () => void;
+}) {
+  const [email, setEmail] = useState(expiredEmail ?? '');
   const [code, setCode] = useState('');
   // The address the code was sent to: the form moves on to the code once it is set.
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<Notice>(null);
+  const [notice, setNotice] = useState<Notice>(
+    deleted ? { kind: 'info', text: DELETED_TEXT } : null,
+  );
 
   async function requestCode() {
     const typed = email.trim();
@@ -130,6 +162,11 @@ function SignedOut({ onChanged }: { onChanged: () => void }) {
 
   return (
     <>
+      {expiredEmail !== null && (
+        <p class="status status--warn" role="status">
+          {EXPIRED_TEXT}
+        </p>
+      )}
       <p class="muted">
         Pas envie de créer des clés Google ? Abonne-toi : Fripon s'occupe de la recherche d'image et
         de l'avis IA. 15 analyses offertes pour essayer.
@@ -250,7 +287,15 @@ function Meter({ label, used, cap }: { label: string; used: number; cap: number 
   );
 }
 
-function SignedIn({ status, onChanged }: { status: CloudStatus; onChanged: () => void }) {
+function SignedIn({
+  status,
+  onChanged,
+  onDeleted,
+}: {
+  status: CloudStatus;
+  onChanged: () => void;
+  onDeleted: () => void;
+}) {
   const { usage, subscription } = status;
   const hasPlan = usage?.kind === 'plan';
   const [busy, setBusy] = useState(false);
@@ -258,6 +303,19 @@ function SignedIn({ status, onChanged }: { status: CloudStatus; onChanged: () =>
   // After a Stripe page was opened: the account is read again every few seconds for a while, as
   // the plan only shows once Stripe has told the server.
   const [watching, setWatching] = useState(false);
+  // "Supprimer mon compte" asks once more before it does anything.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const cancelDelete = useRef<HTMLButtonElement>(null);
+  const askDelete = useRef<HTMLButtonElement>(null);
+  const wasConfirming = useRef(false);
+
+  // The control that replaces the one the keyboard was on takes the focus: the safe answer of the
+  // confirmation, and the button again after a cancel.
+  useEffect(() => {
+    if (confirmingDelete) cancelDelete.current?.focus();
+    else if (wasConfirming.current) askDelete.current?.focus();
+    wasConfirming.current = confirmingDelete;
+  }, [confirmingDelete]);
 
   // The latest callback, so that `refresh` (and the effects that use it) never changes.
   const changed = useRef(onChanged);
@@ -321,6 +379,21 @@ function SignedIn({ status, onChanged }: { status: CloudStatus; onChanged: () =>
     await sendMessage({ type: 'cloudSignOut' }).catch(() => undefined);
     setBusy(false);
     onChanged();
+  }
+
+  async function deleteAccount() {
+    setBusy(true);
+    setNotice({ kind: 'info', text: 'Suppression du compte…' });
+    const result = await sendMessage({ type: 'cloudDeleteAccount' }).catch(() => undefined);
+    setBusy(false);
+    if (result?.ok) {
+      // The background has cleared the session: the section follows the status it removed.
+      onDeleted();
+      onChanged();
+      return;
+    }
+    setConfirmingDelete(false);
+    setNotice({ kind: 'error', text: result ? DELETE_TEXT[result.reason] : LOST_TEXT });
   }
 
   async function update() {
@@ -404,26 +477,74 @@ function SignedIn({ status, onChanged }: { status: CloudStatus; onChanged: () =>
         )}
       </div>
       <NoticeLine notice={notice} />
+
+      <div class="cloud__delete">
+        {confirmingDelete ? (
+          <div class="callout" role="group" aria-label="Supprimer mon compte">
+            <p>{DELETE_CONFIRM_TEXT}</p>
+            <div class="cloud__actions">
+              <button
+                type="button"
+                class="button button--danger"
+                disabled={busy}
+                onClick={() => void deleteAccount()}
+              >
+                Oui, supprimer
+              </button>
+              <button
+                ref={cancelDelete}
+                type="button"
+                class="button"
+                disabled={busy}
+                onClick={() => setConfirmingDelete(false)}
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            ref={askDelete}
+            type="button"
+            class="button button--ghost button--danger"
+            disabled={busy}
+            onClick={() => setConfirmingDelete(true)}
+          >
+            Supprimer mon compte
+          </button>
+        )}
+      </div>
     </>
   );
 }
 
 export function CloudSection({
   status,
+  expired,
   onChanged,
 }: {
   status: CloudStatus | null;
+  /** The address of a subscription whose session expired, null when it did not. */
+  expired: { email: string } | null;
   onChanged: () => void;
 }) {
+  // Only for this visit: a deleted account leaves nothing to remember it by.
+  const [deleted, setDeleted] = useState(false);
   return (
     <section class="card" id="cloud" aria-labelledby="cloud-title">
       <h2 id="cloud-title">Abonnement Fripon</h2>
       {status ? (
-        <SignedIn status={status} onChanged={onChanged} />
+        <SignedIn status={status} onChanged={onChanged} onDeleted={() => setDeleted(true)} />
       ) : (
-        <SignedOut onChanged={onChanged} />
+        <SignedOut expiredEmail={expired?.email ?? null} deleted={deleted} onChanged={onChanged} />
       )}
-      <p class="muted cloud__privacy">{CLOUD_PRIVACY}</p>
+      <div class="cloud__privacy">
+        {CLOUD_PRIVACY.map((paragraph) => (
+          <p class="muted" key={paragraph}>
+            {paragraph}
+          </p>
+        ))}
+      </div>
     </section>
   );
 }

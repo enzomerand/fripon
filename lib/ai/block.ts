@@ -36,13 +36,15 @@ const FAILURE_LINES: Record<GeminiFailure, string> = {
 
 /**
  * The block for what the background answered. `null` when the answer shows nothing: no Gemini key
- * (the card then says nothing of the AI at all), or a look in the cache that found nothing.
+ * (the card then says nothing of the AI at all), an expired subscription session (the image row
+ * above already says so, with its button) or a look in the cache that found nothing.
  */
 export function aiBlockFor(response: AiReviewResponse): AiBlock | null {
   switch (response.status) {
     case 'ok':
       return { status: 'done', summary: response.review.summary };
     case 'no_key':
+    case 'expired':
     case 'not_cached':
       return null;
     case 'quota':

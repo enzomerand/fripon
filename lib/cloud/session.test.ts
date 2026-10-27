@@ -4,11 +4,15 @@ import { fakeBrowser } from 'wxt/testing/fake-browser';
 import {
   SESSION_KEY,
   STATUS_KEY,
+  clearExpired,
   clearSession,
+  expireSession,
+  loadExpired,
   loadSession,
   loadStatus,
   saveSession,
   saveStatusFor,
+  sessionState,
 } from './session';
 import type { CloudStatus } from './types';
 
@@ -84,5 +88,90 @@ describe('session storage', () => {
     await saveSession({ token: 'tok-2', email: 'a@b.fr' });
     await saveStatusFor('tok-1', STATUS);
     expect((await loadStatus())?.checkedAt).toBe(0);
+  });
+});
+
+describe('an expired session', () => {
+  it('keeps the address and no token, and drops the status', async () => {
+    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+    await saveStatusFor('tok-1', STATUS);
+    expect(await sessionState()).toBe('signed_in');
+
+    await expireSession('tok-1');
+    expect(await sessionState()).toBe('expired');
+    expect(await loadSession()).toBeNull();
+    expect(await loadStatus()).toBeNull();
+    expect(await loadExpired()).toEqual({ email: 'a@b.fr' });
+    const raw = (await browser.storage.local.get(SESSION_KEY))[SESSION_KEY];
+    expect(raw).toEqual({ expired: true, email: 'a@b.fr' });
+    expect(JSON.stringify(raw)).not.toContain('tok-1');
+  });
+
+  it('only ends the session whose token it is, never a newer one', async () => {
+    await saveSession({ token: 'new', email: 'a@b.fr' });
+    await expireSession('old');
+    expect(await sessionState()).toBe('signed_in');
+    expect((await loadSession())?.token).toBe('new');
+  });
+
+  it('does nothing without a session, and twice the same as once', async () => {
+    await expireSession('tok-1');
+    expect(await sessionState()).toBe('signed_out');
+    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+    await expireSession('tok-1');
+    await expireSession('tok-1');
+    expect(await loadExpired()).toEqual({ email: 'a@b.fr' });
+  });
+
+  it('takes no status after it, for the token that was refused', async () => {
+    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+    await expireSession('tok-1');
+    await saveStatusFor('tok-1', STATUS);
+    expect(await loadStatus()).toBeNull();
+  });
+
+  it('is cleared by a sign-in, a sign-out and clearExpired, and only by those', async () => {
+    const expired = async () => {
+      await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+      await expireSession('tok-1');
+    };
+    await expired();
+    await saveSession({ token: 'tok-2', email: 'a@b.fr' });
+    expect(await sessionState()).toBe('signed_in');
+
+    await expired();
+    await clearSession();
+    expect(await sessionState()).toBe('signed_out');
+
+    await expired();
+    await clearExpired();
+    expect(await sessionState()).toBe('signed_out');
+  });
+
+  it('is not what clearSession(token) ends: there is no token to match', async () => {
+    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+    await expireSession('tok-1');
+    await clearSession('tok-1');
+    expect(await sessionState()).toBe('expired');
+  });
+
+  it('clearExpired never touches a live session', async () => {
+    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+    await saveStatusFor('tok-1', STATUS);
+    await clearExpired();
+    expect(await sessionState()).toBe('signed_in');
+    expect(await loadStatus()).toEqual(STATUS);
+  });
+
+  it('reads a damaged marker as signed out', async () => {
+    for (const raw of [
+      { expired: true },
+      { expired: 'yes', email: 'a@b.fr' },
+      { email: 'a@b.fr' },
+    ]) {
+      await browser.storage.local.set({ [SESSION_KEY]: raw });
+      expect(await sessionState()).toBe('signed_out');
+      expect(await loadExpired()).toBeNull();
+    }
   });
 });

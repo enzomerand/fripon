@@ -1,6 +1,12 @@
 import type { AiReviewInput } from '../ai/input';
 import type { CloudAccount } from '../cloud/account';
-import type { CloudStatus, LinkResult, RequestCodeResult, VerifyResult } from '../cloud/types';
+import type {
+  CloudStatus,
+  DeleteAccountResult,
+  LinkResult,
+  RequestCodeResult,
+  VerifyResult,
+} from '../cloud/types';
 import { isVintedPageUrl } from '../vinted/domains';
 import type { BadgeVerdict } from './badge';
 import type { Gates } from '../gate';
@@ -144,5 +150,9 @@ async function respond(message: RuntimeMessage, deps: BackgroundDeps, context: M
         .catch((): LinkResult => ({ ok: false, reason: 'network' }));
     case 'cloudPortal':
       return deps.cloud.portal().catch((): LinkResult => ({ ok: false, reason: 'network' }));
+    case 'cloudDeleteAccount':
+      return deps.cloud
+        .deleteAccount()
+        .catch((): DeleteAccountResult => ({ ok: false, reason: 'network' }));
   }
 }

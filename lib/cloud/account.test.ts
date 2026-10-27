@@ -2,7 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { createCloudAccount } from './account';
 import type { CloudClient } from './client';
-import { loadSession, loadStatus, saveSession, SESSION_KEY, STATUS_KEY } from './session';
+import {
+  expireSession,
+  loadExpired,
+  loadSession,
+  loadStatus,
+  saveSession,
+  SESSION_KEY,
+  STATUS_KEY,
+} from './session';
 import { createStatusKeeper } from './status';
 import { PLAN_USAGE, makeClient } from './test-helpers';
 
@@ -158,6 +166,66 @@ describe('signing out', () => {
     const { account, client } = setup();
     await account.signOut();
     expect(client.logout).not.toHaveBeenCalled();
+  });
+
+  it('forgets an expired session too, without telling the server (it has no token)', async () => {
+    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+    await expireSession('tok-1');
+    const { account, client } = setup();
+    await account.signOut();
+    expect(await loadExpired()).toBeNull();
+    expect(client.logout).not.toHaveBeenCalled();
+  });
+});
+
+describe('signing in again after the session expired', () => {
+  it('replaces the marker with the new session', async () => {
+    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+    await expireSession('tok-1');
+    expect(await loadExpired()).toEqual({ email: 'a@b.fr' });
+    const { account, client } = setup();
+    expect(await account.verify('a@b.fr', '123456')).toEqual({ ok: true });
+    expect(await loadExpired()).toBeNull();
+    expect((await loadSession())?.token).toBe('tok-1');
+    // There was no token to end at the server.
+    expect(client.logout).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleting the account', () => {
+  it('clears the session here once the server has deleted the account', async () => {
+    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+    const { account, client } = setup();
+    expect(await account.deleteAccount()).toEqual({ ok: true });
+    expect(client.deleteAccount).toHaveBeenCalledOnce();
+    expect(await fakeBrowser.storage.local.get([SESSION_KEY, STATUS_KEY])).toEqual({});
+  });
+
+  it('keeps the session when the server refuses (an active subscription), and says why', async () => {
+    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+    const { account } = setup(
+      makeClient({
+        deleteAccount: vi.fn(() =>
+          Promise.resolve({ ok: false as const, reason: 'active_subscription' as const }),
+        ),
+      }),
+    );
+    expect(await account.deleteAccount()).toEqual({ ok: false, reason: 'active_subscription' });
+    expect((await loadSession())?.token).toBe('tok-1');
+    expect(await loadStatus()).not.toBeNull();
+  });
+
+  it('keeps the session when the server cannot be reached', async () => {
+    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
+    const { account } = setup(
+      makeClient({
+        deleteAccount: vi.fn(() =>
+          Promise.resolve({ ok: false as const, reason: 'network' as const }),
+        ),
+      }),
+    );
+    expect(await account.deleteAccount()).toEqual({ ok: false, reason: 'network' });
+    expect((await loadSession())?.token).toBe('tok-1');
   });
 });
 

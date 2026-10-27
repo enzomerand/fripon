@@ -1,7 +1,14 @@
 import type { CloudClient } from './client';
 import { clearSession, loadSession, saveSession } from './session';
 import type { StatusKeeper } from './status';
-import type { CloudStatus, LinkResult, PriceKey, RequestCodeResult, VerifyResult } from './types';
+import type {
+  CloudStatus,
+  DeleteAccountResult,
+  LinkResult,
+  PriceKey,
+  RequestCodeResult,
+  VerifyResult,
+} from './types';
 
 /** What the options page can ask of the account (the background messages `cloud*`). */
 export interface CloudAccount {
@@ -17,6 +24,11 @@ export interface CloudAccount {
   signOut(): Promise<void>;
   checkout(price: PriceKey): Promise<LinkResult>;
   portal(): Promise<LinkResult>;
+  /**
+   * Deletes the account and its history at the server. Only when the server says so (204) is the
+   * session cleared here; an active subscription (409) must end first.
+   */
+  deleteAccount(): Promise<DeleteAccountResult>;
 }
 
 export interface CloudAccountDeps {
@@ -74,5 +86,12 @@ export function createCloudAccount(deps: CloudAccountDeps): CloudAccount {
 
     checkout: (price) => open(deps.client.checkout(price)),
     portal: () => open(deps.client.portal()),
+
+    async deleteAccount() {
+      const result = await deps.client.deleteAccount();
+      // The account is gone: there is nothing left to be signed in to.
+      if (result.ok) await clearSession();
+      return result;
+    },
   };
 }

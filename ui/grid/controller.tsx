@@ -58,7 +58,8 @@ export interface GridController {
 }
 
 const RUNNING: CardView = { status: 'running' };
-const IS_BLOCKED = (view: CardView) => view.status === 'needsKey' || view.status === 'quota';
+const IS_BLOCKED = (view: CardView) =>
+  view.status === 'needsKey' || view.status === 'quota' || view.status === 'expired';
 /**
  * A card a batch may take: not analysed yet, or whose last attempt failed. A card without a photo
  * waits for a click (its thumbnail may load later), a batch would only go through it again.
@@ -149,8 +150,9 @@ export function createGridController(options: GridControllerOptions): GridContro
     if (disposed) return 'skipped';
     // The search itself is the freshest word on the key and the cap.
     if (outcome.status === 'needsKey') gate = 'no_key';
+    else if (outcome.status === 'expired') gate = 'expired';
     else if (outcome.status === 'quota') gate = 'quota';
-    else if (outcome.status === 'done' && gate === 'no_key') gate = 'ready';
+    else if (outcome.status === 'done' && (gate === 'no_key' || gate === 'expired')) gate = 'ready';
     store.set(id, viewOf(outcome, read?.url ?? card.url));
     return outcome.status;
   }
@@ -215,10 +217,12 @@ export function createGridController(options: GridControllerOptions): GridContro
     const ids = pendingInView();
     // A batch that is asking, waiting or running keeps its bar, whatever the page scrolled to meanwhile.
     const busy = batch.state().phase !== 'idle';
-    const offer = gate !== 'no_key' && ids.length > 0;
+    const unusable = gate === 'no_key' || gate === 'expired';
+    const offer = !unusable && ids.length > 0;
     if (!busy && !offer) {
-      // Without a key the bar has no business here. With a key and nothing in view it waits a little.
-      if (gate === 'no_key') return hideBar();
+      // Without a key (or a session) the bar has no business here. With one and nothing in view it
+      // waits a little.
+      if (unusable) return hideBar();
       return hideBarWhenEmptyLongEnough();
     }
     emptySince = null;

@@ -12,6 +12,8 @@ describe('aiBlockFor', () => {
 
   it('shows nothing at all without a key, and nothing for a look in the cache that found none', () => {
     expect(aiBlockFor({ status: 'no_key' })).toBeNull();
+    // The image row above already asks to sign in again: one line, one button.
+    expect(aiBlockFor({ status: 'expired' })).toBeNull();
     expect(aiBlockFor({ status: 'not_cached' })).toBeNull();
   });
 

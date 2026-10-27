@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { saveSettings } from '../settings';
 import { STATUS_MAX_AGE_MS } from './config';
-import { loadSession, loadStatus, saveSession, saveStatusFor } from './session';
+import { expireSession, loadSession, loadStatus, saveSession, saveStatusFor } from './session';
 import {
   canAnalyse,
   cloudGate,
@@ -143,27 +143,6 @@ describe('the status keeper', () => {
     await k.record(PLAN_USAGE);
     expect(await loadStatus()).toBeNull();
   });
-
-  describe('peek', () => {
-    it('answers the stored status while it is younger than the age asked, and never asks the server', async () => {
-      const { keeper: k, client } = keeper();
-      await saveStatusFor('tok-1', status(PLAN_USAGE));
-      expect(await k.peek(STATUS_MAX_AGE_MS)).toEqual(status(PLAN_USAGE));
-      clock += STATUS_MAX_AGE_MS - 1;
-      expect(await k.peek(STATUS_MAX_AGE_MS)).toEqual(status(PLAN_USAGE));
-      clock += 1;
-      expect(await k.peek(STATUS_MAX_AGE_MS)).toBeNull();
-      expect(client.me).not.toHaveBeenCalled();
-    });
-
-    it('is null for a status never read, and when signed out', async () => {
-      const { keeper: k } = keeper();
-      expect(await k.peek(STATUS_MAX_AGE_MS)).toBeNull();
-      await saveStatusFor('tok-1', status(PLAN_USAGE));
-      await fakeBrowser.storage.local.clear();
-      expect(await k.peek(STATUS_MAX_AGE_MS)).toBeNull();
-    });
-  });
 });
 
 describe('canAnalyse', () => {
@@ -287,5 +266,24 @@ describe('the gates of a signed-in account', () => {
 
     await saveSettings({ mode: 'click' });
     expect(await fresh.loadGates()).toEqual({ image: 'manual', ai: 'manual' });
+  });
+
+  it('say expired, not no_key, when reading the account gets the session refused', async () => {
+    const refused = makeClient({
+      me: vi.fn(async () => {
+        // What the client does on a 401: the token goes, a marker stays.
+        await expireSession('tok-1');
+        return { ok: false as const, reason: 'signed_out' as const };
+      }),
+    });
+    const { keeper: k } = keeper(refused);
+    await fakeBrowser.storage.local.remove('fripon:cloud:status:v1');
+    expect(await createCloudGates(k).loadGates()).toEqual({ image: 'expired', ai: 'expired' });
+  });
+
+  it('still say no_key when the session is simply gone', async () => {
+    const { keeper: k } = keeper();
+    await fakeBrowser.storage.local.clear();
+    expect(await createCloudGates(k).loadGates()).toEqual({ image: 'no_key', ai: 'no_key' });
   });
 });

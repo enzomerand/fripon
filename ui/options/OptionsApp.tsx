@@ -112,6 +112,7 @@ export function OptionsApp() {
     (welcomeAsked ||
       // A subscriber needs no Google key: the banner would send them to a guide they do not need.
       (stored.cloud === null &&
+        stored.cloudExpired === null &&
         !PROVIDERS.some((provider) => stored.settings.keys[provider] !== '') &&
         !stored.ui.welcomeDismissed));
 
@@ -137,7 +138,7 @@ export function OptionsApp() {
               <WelcomeBanner onFollowGuide={followGuide} onDismiss={dismissWelcome} />
             )}
             <ModeSection settings={stored.settings} onSaved={onSaved} />
-            <CloudSection status={stored.cloud} onChanged={onSaved} />
+            <CloudSection status={stored.cloud} expired={stored.cloudExpired} onChanged={onSaved} />
             <KeysSection
               settings={stored.settings}
               signedIn={stored.cloud !== null}

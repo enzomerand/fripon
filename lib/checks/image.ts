@@ -4,7 +4,7 @@ import type { SearchImageResponse } from '../messages';
 import type { CheckAction, CheckResult, ImageMatch } from '../model';
 
 /** Why the reverse image search did not run. */
-export type ImageCheckOffReason = 'no_key' | 'quota' | 'manual';
+export type ImageCheckOffReason = 'no_key' | 'quota' | 'manual' | 'expired';
 
 /** Free fallback: opens Google Lens on the listing photo, to search by hand. */
 export function googleLensUrl(photoUrl: string): string {
@@ -15,12 +15,14 @@ const OFF_DETAILS: Record<ImageCheckOffReason, string> = {
   no_key: 'Ajoute une clé Google pour retrouver la photo sur Shein, Temu…',
   quota: 'Plafond de recherches atteint, réessaie plus tard ou cherche toi-même avec Google Lens.',
   manual: "Tu as choisi l'analyse au clic : lance la recherche d'image quand tu veux.",
+  expired: 'Ta session Fripon a expiré : reconnecte-toi.',
 };
 
 const OFF_TAGS: Record<ImageCheckOffReason, string> = {
   no_key: 'Désactivée',
   quota: 'Plafond atteint',
   manual: 'Au clic',
+  expired: 'Session expirée',
 };
 
 /** What the user can do about it. "manual" gets the button that runs the search. */
@@ -28,6 +30,7 @@ const OFF_ACTIONS: Record<ImageCheckOffReason, CheckAction> = {
   no_key: 'open_guide',
   quota: 'open_settings',
   manual: 'run_image_search',
+  expired: 'open_cloud',
 };
 
 /** The image row when the search did not run. */
@@ -137,6 +140,8 @@ export function imageCheckForSearch(response: SearchImageResponse): CheckResult 
       return imageCheckForMatches(response.matches);
     case 'no_key':
       return imageCheckOff('no_key');
+    case 'expired':
+      return imageCheckOff('expired');
     case 'quota':
       return imageCheckOff('quota');
     case 'not_cached':
