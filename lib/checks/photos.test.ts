@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_CATALOG_SENTENCE,
   AI_CATALOG_TAG,
+  AI_SEEN_SENTENCE,
+  AI_SEEN_TAG,
+  AI_SEEN_UNREAD_SENTENCE,
   CATALOG_THRESHOLD,
   checkPhotos,
   confirmCatalogPhoto,
@@ -141,53 +144,112 @@ describe('confirmCatalogPhoto', () => {
     { itemId: 'a', hash: HASH },
     { itemId: 'b', hash: HASH },
   ];
-  const confirmed = (catalogScore: number, others: typeof REUSED = []) =>
-    confirmCatalogPhoto(checkPhotos({ main: { hash: HASH, catalogScore }, others }));
+  const local = (catalogScore: number, others: typeof REUSED = []) =>
+    checkPhotos({ main: { hash: HASH, catalogScore }, others });
 
-  it('makes the row a strong catalogue hint, whatever the local score said', () => {
-    for (const score of [0.0, 0.2, CATALOG_THRESHOLD, 0.95]) {
-      const row = confirmed(score);
-      expect(row).toEqual({
+  describe('backed by an exact image match', () => {
+    const confirmed = (catalogScore: number, others: typeof REUSED = []) =>
+      confirmCatalogPhoto(local(catalogScore, others), true);
+
+    it('makes the row a strong catalogue hint, whatever the local score said', () => {
+      for (const score of [0.0, 0.2, CATALOG_THRESHOLD, 0.95]) {
+        expect(confirmed(score)).toEqual({
+          id: 'photos',
+          status: 'bad',
+          tag: 'Photo catalogue',
+          detail: "L'IA confirme une photo de catalogue ou de studio.",
+          signals: [{ id: 'catalog_photo', strength: 'strong' }],
+        });
+      }
+      expect(AI_CATALOG_TAG).toBe('Photo catalogue');
+      expect(AI_CATALOG_SENTENCE).toBe("L'IA confirme une photo de catalogue ou de studio.");
+    });
+
+    it('replaces the weak local catalogue hint instead of listing the signal twice', () => {
+      const row = confirmed(0.95);
+      expect(row.signals).toEqual([{ id: 'catalog_photo', strength: 'strong' }]);
+      expect(row.detail).not.toContain('Ressemble à');
+    });
+
+    it('keeps what the row says about a photo reused on other listings', () => {
+      const row = confirmed(0.1, REUSED);
+      expect(row.signals).toEqual([
+        { id: 'catalog_photo', strength: 'strong' },
+        { id: 'photo_reused', strength: 'weak' },
+      ]);
+      expect(row.detail).toBe(
+        "L'IA confirme une photo de catalogue ou de studio. La même photo sert sur 2 autres annonces du vendeur.",
+      );
+      expect(confirmed(0.95, REUSED).detail).toBe(row.detail);
+    });
+  });
+
+  describe('with nothing else to back it', () => {
+    const seen = (catalogScore: number, others: typeof REUSED = []) =>
+      confirmCatalogPhoto(local(catalogScore, others), false);
+
+    it('is only a weak hint on an orange row, whatever the local score said', () => {
+      for (const score of [0.0, 0.2, CATALOG_THRESHOLD, 0.95]) {
+        expect(seen(score)).toEqual({
+          id: 'photos',
+          status: 'warn',
+          tag: 'Photo type catalogue',
+          detail: "L'IA voit une photo de catalogue ou de studio.",
+          signals: [{ id: 'catalog_photo', strength: 'weak' }],
+        });
+      }
+      expect(AI_SEEN_TAG).toBe('Photo type catalogue');
+      expect(AI_SEEN_SENTENCE).toBe("L'IA voit une photo de catalogue ou de studio.");
+    });
+
+    it('never gives a strong signal, reuse or not', () => {
+      for (const row of [seen(0.1), seen(0.95), seen(0.1, REUSED)]) {
+        expect(row.signals.every((signal) => signal.strength === 'weak')).toBe(true);
+        expect(row.status).toBe('warn');
+      }
+    });
+
+    it('keeps what the row says about a photo reused on other listings', () => {
+      const row = seen(0.1, REUSED);
+      expect(row.signals.map((signal) => signal.id)).toEqual(['catalog_photo', 'photo_reused']);
+      expect(row.detail).toBe(
+        "L'IA voit une photo de catalogue ou de studio. La même photo sert sur 2 autres annonces du vendeur.",
+      );
+    });
+  });
+
+  describe('when the local analysis could not read the photo', () => {
+    const unread = checkPhotos({ main: null, others: [] });
+
+    it('says so, with a strong signal when an exact match backs it', () => {
+      expect(confirmCatalogPhoto(unread, true)).toEqual({
         id: 'photos',
         status: 'bad',
         tag: 'Photo catalogue',
-        detail: "L'IA confirme une photo de catalogue ou de studio.",
+        detail: "L'IA voit une photo de catalogue (analyse locale impossible).",
         signals: [{ id: 'catalog_photo', strength: 'strong' }],
       });
-    }
-    expect(AI_CATALOG_TAG).toBe('Photo catalogue');
-    expect(AI_CATALOG_SENTENCE).toBe("L'IA confirme une photo de catalogue ou de studio.");
-  });
+      expect(AI_SEEN_UNREAD_SENTENCE).toBe(
+        "L'IA voit une photo de catalogue (analyse locale impossible).",
+      );
+    });
 
-  it('replaces the weak local catalogue hint instead of listing the signal twice', () => {
-    const row = confirmed(0.95);
-    expect(row.signals).toEqual([{ id: 'catalog_photo', strength: 'strong' }]);
-    expect(row.detail).not.toContain('Ressemble à');
-  });
-
-  it('keeps what the row says about a photo reused on other listings', () => {
-    const row = confirmed(0.1, REUSED);
-    expect(row.signals).toEqual([
-      { id: 'catalog_photo', strength: 'strong' },
-      { id: 'photo_reused', strength: 'weak' },
-    ]);
-    expect(row.detail).toBe(
-      "L'IA confirme une photo de catalogue ou de studio. La même photo sert sur 2 autres annonces du vendeur.",
-    );
-    expect(confirmed(0.95, REUSED).detail).toBe(row.detail);
-  });
-
-  it('confirms a photo the local analysis could not read', () => {
-    const row = confirmCatalogPhoto(checkPhotos({ main: null, others: [] }));
-    expect(row).toMatchObject({ status: 'bad', tag: 'Photo catalogue' });
-    expect(row.detail).toBe("L'IA confirme une photo de catalogue ou de studio.");
-    expect(row.signals).toEqual([{ id: 'catalog_photo', strength: 'strong' }]);
+    it('says so, with a weak signal otherwise', () => {
+      expect(confirmCatalogPhoto(unread, false)).toEqual({
+        id: 'photos',
+        status: 'warn',
+        tag: 'Photo type catalogue',
+        detail: "L'IA voit une photo de catalogue (analyse locale impossible).",
+        signals: [{ id: 'catalog_photo', strength: 'weak' }],
+      });
+    });
   });
 
   it('does not change the row it is given', () => {
-    const row = checkPhotos({ main: { hash: HASH, catalogScore: 0.95 }, others: [] });
+    const row = local(0.95);
     const snapshot = structuredClone(row);
-    confirmCatalogPhoto(row);
+    confirmCatalogPhoto(row, true);
+    confirmCatalogPhoto(row, false);
     expect(row).toEqual(snapshot);
   });
 });

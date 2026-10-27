@@ -153,14 +153,19 @@ export async function askAiReview(
  * with the old row and a null ratio.
  *
  * The AI only ever confirms a signal: a `catalogPhoto: true` makes the catalogue signal of the
- * photos row strong, and the verdict rules do the rest. It never decides the verdict itself.
+ * photos row strong when an exact image match backs it and weak otherwise, and the verdict rules
+ * do the rest. It never decides the verdict itself, and never moves it through a strong signal
+ * on its own.
  */
 function assemble(rows: CheckResult[], aiReview: AiReview | null): AnalysisResult {
   const imageMatches = rows.find((check) => check.id === 'image')?.matches ?? [];
   // The price row only depends on the image matches (see `priceCheck`).
   const rawChecks = rows.map((check) => (check.id === 'price' ? priceCheck(imageMatches) : check));
+  const exactMatch = imageMatches.some((match) => match.exact);
   const reviewed = aiReview?.catalogPhoto
-    ? rawChecks.map((check) => (check.id === 'photos' ? confirmCatalogPhoto(check) : check))
+    ? rawChecks.map((check) =>
+        check.id === 'photos' ? confirmCatalogPhoto(check, exactMatch) : check,
+      )
     : rawChecks;
   const checks = capLocalHeuristics(reviewed, imageMatches);
   return {

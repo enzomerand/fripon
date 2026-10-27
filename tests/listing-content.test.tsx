@@ -815,6 +815,23 @@ describe('listing content script', () => {
       expect(aiText()).toContain('Photo de studio, vue sur Shein.');
     }, 15_000);
 
+    it('only sees a catalogue photo, and leaves the green verdict, when the image search found nothing', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      aiAnswer = () =>
+        Promise.resolve({
+          status: 'ok',
+          review: { catalogPhoto: true, summary: 'Photo de studio.' },
+        });
+      await openCard();
+      await until(() => shadowText().includes("L'IA voit une photo de catalogue ou de studio."));
+
+      expect(shadowText()).toContain('Photo type catalogue');
+      expect(shadowText()).not.toContain("L'IA confirme");
+      expect(shadowText()).toContain('Rien de suspect');
+      expect(shadowText()).not.toContain('À vérifier');
+    }, 15_000);
+
     it('leaves the Photos row alone when the AI sees no catalogue photo', async () => {
       imageGate = 'ready';
       aiGate = 'ready';

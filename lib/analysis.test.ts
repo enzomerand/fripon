@@ -558,7 +558,7 @@ describe('withAiReview', () => {
     expect((await analysed()).aiReview).toBeNull();
   });
 
-  it('makes the photos row a strong catalogue hint when the AI confirms it, whatever the local score', async () => {
+  it('makes the photos row only a weak catalogue hint when nothing else backs the AI, whatever the local score', async () => {
     const before = await analysed();
     expect(photosOf(before)).toMatchObject({ status: 'ok', tag: 'Rien de notable' });
 
@@ -566,28 +566,48 @@ describe('withAiReview', () => {
     expect(photosOf(after)).toEqual({
       id: 'photos',
       status: 'warn',
-      tag: 'Photo catalogue',
-      detail: "L'IA confirme une photo de catalogue ou de studio.",
-      signals: [{ id: 'catalog_photo', strength: 'strong' }],
+      tag: 'Photo type catalogue',
+      detail: "L'IA voit une photo de catalogue ou de studio.",
+      signals: [{ id: 'catalog_photo', strength: 'weak' }],
     });
     expect(after.aiReview).toEqual({ catalogPhoto: true, summary: 'Un résumé.' });
   });
 
-  it('lets the verdict rules turn the strong hint into "to verify", never into dropshipping alone', async () => {
+  it('never moves a green verdict to orange through the AI alone', async () => {
     const before = await analysed();
     expect(before.verdict.level).toBe('clean');
-    const after = withAiReview(before, review(true));
-    expect(after.verdict).toMatchObject({ level: 'review', title: 'À vérifier' });
-    expect(after.verdict.lines).toContain('Photo type catalogue');
+    // Nothing found by the image search, a lookalike only, a search not run: the hint stays weak.
+    for (const base of [
+      before,
+      withImageSearch(before, found()),
+      withImageSearch(before, found(similarMatch)),
+    ]) {
+      const after = withAiReview(base, review(true));
+      expect(photosOf(after)?.signals).toEqual([{ id: 'catalog_photo', strength: 'weak' }]);
+      expect(after.verdict.level).toBe(base.verdict.level);
+    }
+    expect(withAiReview(withImageSearch(before, found()), review(true)).verdict.level).toBe(
+      'clean',
+    );
   });
 
-  it('keeps the photos row orange without an exact match, and gives it its red back with one', async () => {
+  it('is strong, and red, only when an exact image match backs it', async () => {
     const reviewed = withAiReview(await analysed(), review(true));
     expect(photosOf(reviewed)?.status).toBe('warn');
     const backed = withImageSearch(reviewed, found(exactMatch));
-    expect(photosOf(backed)).toMatchObject({ status: 'bad', tag: 'Photo catalogue' });
+    expect(photosOf(backed)).toEqual({
+      id: 'photos',
+      status: 'bad',
+      tag: 'Photo catalogue',
+      detail: "L'IA confirme une photo de catalogue ou de studio.",
+      signals: [{ id: 'catalog_photo', strength: 'strong' }],
+    });
     // An exact match and a strong signal is what the design calls dropshipping.
     expect(backed.verdict.level).toBe('dropshipping');
+    // The match is gone (a new search found nothing): the hint is weak again.
+    expect(photosOf(withImageSearch(backed, found()))?.signals).toEqual([
+      { id: 'catalog_photo', strength: 'weak' },
+    ]);
   });
 
   it('composes in either order: image then AI, or AI then image', async () => {
@@ -597,6 +617,12 @@ describe('withAiReview', () => {
     expect(aiThenImage).toEqual(imageThenAi);
     expect(imageThenAi.verdict.level).toBe('dropshipping');
     expect(photosOf(imageThenAi)).toMatchObject({ status: 'bad', tag: 'Photo catalogue' });
+    const noMatch = [found(), found(similarMatch)];
+    for (const response of noMatch) {
+      expect(withAiReview(withImageSearch(before, response), review(true))).toEqual(
+        withImageSearch(withAiReview(before, review(true)), response),
+      );
+    }
   });
 
   it('leaves the local row and the verdict as they are when the AI says the photo is not a catalogue shot', async () => {
@@ -634,19 +660,30 @@ describe('withAiReview', () => {
     const d = deps({ fetchSeller: () => Promise.resolve(seller([item(1), reused])) });
     const after = withAiReview(await analyzeListing(listing, d), review(true));
     expect(photosOf(after)?.detail).toBe(
-      "L'IA confirme une photo de catalogue ou de studio. La même photo sert sur 1 autre annonce du vendeur.",
+      "L'IA voit une photo de catalogue ou de studio. La même photo sert sur 1 autre annonce du vendeur.",
     );
     expect(photosOf(after)?.signals.map((s) => s.id)).toEqual(['catalog_photo', 'photo_reused']);
   });
 
-  it('confirms the photo even when the local analysis could not read it', async () => {
+  it('takes the photo into account even when the local analysis could not read it, and says so', async () => {
     const d = deps({
       analyzeImage: vi.fn(() => Promise.resolve({ ok: false as const, error: 'x' })),
     });
     const before = await analyzeListing(listing, d);
     expect(photosOf(before)).toMatchObject({ status: 'off', tag: 'Non analysée' });
+    const unread = "L'IA voit une photo de catalogue (analyse locale impossible).";
     expect(photosOf(withAiReview(before, review(true)))).toMatchObject({
+      status: 'warn',
+      tag: 'Photo type catalogue',
+      detail: unread,
+      signals: [{ id: 'catalog_photo', strength: 'weak' }],
+    });
+    expect(
+      photosOf(withAiReview(withImageSearch(before, found(exactMatch)), review(true))),
+    ).toMatchObject({
+      status: 'bad',
       tag: 'Photo catalogue',
+      detail: unread,
       signals: [{ id: 'catalog_photo', strength: 'strong' }],
     });
   });
@@ -667,7 +704,7 @@ describe('withAiReview', () => {
     expect(reviewed.rawChecks.find((c) => c.id === 'photos')?.tag).toBe('Rien de notable');
     const searched = withImageSearch(reviewed, found());
     expect(searched.aiReview).toEqual(reviewed.aiReview);
-    expect(photosOf(searched)).toMatchObject({ tag: 'Photo catalogue' });
+    expect(photosOf(searched)).toMatchObject({ tag: 'Photo type catalogue' });
   });
 
   it('can be run again from the same result, the last review winning', async () => {
