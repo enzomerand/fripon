@@ -1,10 +1,11 @@
 import { browser } from 'wxt/browser';
 import { isAiReviewInput, type AiReviewInput } from './ai/input';
+import type { BadgeVerdict } from './background/badge';
 import type { Gates } from './gate';
 import type { GeminiFailure } from './google/gemini';
 import type { KeyCheckResult } from './google/key-check';
 import type { VisionFailure } from './google/vision';
-import type { AiReview, ImageMatch } from './model';
+import type { AiReview, ImageMatch, VerdictLevel } from './model';
 import type { Provider } from './settings';
 
 /** Ask the background to fetch a photo and compute its pixel heuristics. */
@@ -106,6 +107,19 @@ export interface OpenOptionsRequest {
   section?: OptionsSection;
 }
 
+/** Longest verdict title the background puts in the tooltip of the toolbar button. */
+export const BADGE_TITLE_MAX = 120;
+
+/**
+ * Show the verdict of the open listing on the toolbar button of the sender's tab, or clear it with
+ * `null`. Only the level and the title travel. Only accepted from a content script on a Vinted
+ * page (it needs a tab), never from an extension page.
+ */
+export interface SetVerdictBadgeRequest {
+  type: 'setVerdictBadge';
+  verdict: BadgeVerdict | null;
+}
+
 /**
  * Check the key `key` for `provider`, for free: a candidate the user typed, not saved yet. Only
  * accepted from the extension's own pages, never from a content script: a key must not travel
@@ -125,6 +139,7 @@ export type RuntimeMessage =
   | GetGatesRequest
   | GetVisionUsageRequest
   | OpenOptionsRequest
+  | SetVerdictBadgeRequest
   | TestKeyRequest;
 
 /** Response type of each message, keyed by `type`. */
@@ -135,10 +150,31 @@ export interface RuntimeResponses {
   getGates: Gates;
   getVisionUsage: VisionUsage;
   openOptions: void;
+  setVerdictBadge: void;
   testKey: KeyCheckResult;
 }
 
 export type ResponseFor<M extends RuntimeMessage> = RuntimeResponses[M['type']];
+
+const VERDICT_LEVELS = Object.keys({
+  dropshipping: true,
+  resold: true,
+  review: true,
+  clean: true,
+} satisfies Record<VerdictLevel, true>);
+
+/** A verdict as the badge takes it: a known level and a short, non-empty title. */
+function isBadgeVerdict(value: unknown): value is BadgeVerdict {
+  if (typeof value !== 'object' || value === null) return false;
+  const { level, title } = value as { level?: unknown; title?: unknown };
+  return (
+    typeof level === 'string' &&
+    VERDICT_LEVELS.includes(level) &&
+    typeof title === 'string' &&
+    title.length > 0 &&
+    title.length <= BADGE_TITLE_MAX
+  );
+}
 
 /** Narrowing guard for the background's `onMessage` listener. */
 export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
@@ -151,6 +187,7 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
     retry?: unknown;
     input?: unknown;
     section?: unknown;
+    verdict?: unknown;
     provider?: unknown;
     key?: unknown;
   };
@@ -177,6 +214,8 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
         message.section === undefined ||
         OPTIONS_SECTIONS.includes(message.section as OptionsSection)
       );
+    case 'setVerdictBadge':
+      return message.verdict === null || isBadgeVerdict(message.verdict);
     case 'testKey':
       return (
         (message.provider === 'vision' || message.provider === 'gemini') &&

@@ -156,6 +156,51 @@ describe('isRuntimeMessage', () => {
     expect(isRuntimeMessage({ type: 'openOptions', section: 3 })).toBe(false);
   });
 
+  it('accepts setVerdictBadge with a known level and a short title, or with null to clear', () => {
+    const verdict = { level: 'dropshipping', title: 'Dropshipping probable' };
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict })).toBe(true);
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: null })).toBe(true);
+    for (const level of ['dropshipping', 'resold', 'review', 'clean']) {
+      expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: { level, title: 'x' } })).toBe(
+        true,
+      );
+    }
+    expect(
+      isRuntimeMessage({
+        type: 'setVerdictBadge',
+        verdict: { ...verdict, title: 'x'.repeat(120) },
+      }),
+    ).toBe(true);
+  });
+
+  it('refuses a setVerdictBadge without a verdict, or with a malformed one', () => {
+    const verdict = { level: 'clean', title: 'Rien de suspect' };
+    expect(isRuntimeMessage({ type: 'setVerdictBadge' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: 'clean' })).toBe(false);
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: [] })).toBe(false);
+    expect(
+      isRuntimeMessage({ type: 'setVerdictBadge', verdict: { ...verdict, level: 'red' } }),
+    ).toBe(false);
+    // Properties of Object.prototype are not levels.
+    expect(
+      isRuntimeMessage({ type: 'setVerdictBadge', verdict: { ...verdict, level: 'constructor' } }),
+    ).toBe(false);
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: { title: 'Rien' } })).toBe(false);
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: { ...verdict, title: '' } })).toBe(
+      false,
+    );
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: { ...verdict, title: 4 } })).toBe(
+      false,
+    );
+    expect(
+      isRuntimeMessage({
+        type: 'setVerdictBadge',
+        verdict: { ...verdict, title: 'x'.repeat(121) },
+      }),
+    ).toBe(false);
+    expect(isRuntimeMessage({ type: 'setVerdictBadge', verdict: { level: 'clean' } })).toBe(false);
+  });
+
   it('accepts testKey for a known provider only', () => {
     expect(isRuntimeMessage({ type: 'testKey', provider: 'vision', key: 'AIzaX' })).toBe(true);
     expect(isRuntimeMessage({ type: 'testKey', provider: 'gemini', key: 'AIzaX' })).toBe(true);

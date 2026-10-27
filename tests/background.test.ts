@@ -6,7 +6,7 @@ import { getUsage } from '../lib/credits';
 import { PENDING_SECTION_KEY } from '../lib/options-nav';
 import { loadSettings, saveSettings } from '../lib/settings';
 
-type Sender = { id?: string; url?: string };
+type Sender = { id?: string; url?: string; tab?: { id?: number } };
 type Listener = (
   message: unknown,
   sender: Sender,
@@ -35,6 +35,11 @@ function start() {
 
 const fromPage = { id: browser.runtime.id, url: 'https://www.vinted.fr/items/1-robe' };
 const fromOptions = { id: browser.runtime.id, url: `${ORIGIN}options.html` };
+const fromTab = (tabId: number, url = fromPage.url) => ({
+  id: browser.runtime.id,
+  url,
+  tab: { id: tabId },
+});
 
 beforeEach(() => {
   fakeBrowser.reset();
@@ -458,6 +463,82 @@ describe('background', () => {
       await send({ type: 'aiReview', input: { ...INPUT, price: '2 €' } }, fromPage);
       expect(geminiCalls(fetchMock)).toHaveLength(1);
       vi.unstubAllGlobals();
+    });
+  });
+
+  describe('verdict badge', () => {
+    const dropshipping = { level: 'dropshipping', title: 'Dropshipping probable' };
+    const text = (tabId: number) => browser.action.getBadgeText({ tabId });
+    const title = (tabId: number) => browser.action.getTitle({ tabId });
+
+    it('shows the verdict of a Vinted page on the badge of its tab only', async () => {
+      const send = start();
+      await send({ type: 'setVerdictBadge', verdict: dropshipping }, fromTab(11));
+      expect(await text(11)).toBe('!');
+      expect(await title(11)).toBe('Fripon — Dropshipping probable');
+      expect(await browser.action.getBadgeBackgroundColor({ tabId: 11 })).toEqual([
+        217, 48, 37, 255,
+      ]);
+      expect(await text(12)).toBe('');
+
+      await send(
+        { type: 'setVerdictBadge', verdict: { level: 'clean', title: 'Rien de suspect' } },
+        fromTab(12),
+      );
+      expect(await text(12)).toBe('✓');
+      // The first tab keeps its own.
+      expect(await text(11)).toBe('!');
+    });
+
+    it('answers the sender, and clears the badge for null', async () => {
+      const send = start();
+      expect(await send({ type: 'setVerdictBadge', verdict: dropshipping }, fromTab(11))).toBe(
+        undefined,
+      );
+      await send({ type: 'setVerdictBadge', verdict: null }, fromTab(11));
+      expect(await text(11)).toBe('');
+      expect(await title(11)).toBe('Fripon');
+    });
+
+    it('refuses an extension page, a page that is not Vinted, a message without a tab and a bad verdict', async () => {
+      const send = start();
+      const message = { type: 'setVerdictBadge', verdict: dropshipping };
+      expect(await send(message, { ...fromOptions, tab: { id: 11 } })).toBe('no answer');
+      expect(await send(message, fromOptions)).toBe('no answer');
+      expect(await send(message, fromPage)).toBe('no answer');
+      expect(await send(message, fromTab(11, 'https://evil.test/items/1'))).toBe('no answer');
+      expect(await send(message, { ...fromTab(11), id: 'other' })).toBe('no answer');
+      expect(
+        await send({ type: 'setVerdictBadge', verdict: { level: 'red', title: 'x' } }, fromTab(11)),
+      ).toBe('no answer');
+      expect(await send({ type: 'setVerdictBadge' }, fromTab(11))).toBe('no answer');
+      expect(await text(11)).toBe('');
+    });
+
+    it('clears the badge of a tab that starts loading, and only that tab', async () => {
+      const send = start();
+      await send({ type: 'setVerdictBadge', verdict: dropshipping }, fromTab(11));
+      await send({ type: 'setVerdictBadge', verdict: dropshipping }, fromTab(12));
+
+      await fakeBrowser.tabs.onUpdated.trigger(11, { status: 'loading' }, { id: 11 } as never);
+      await vi.waitFor(async () => expect(await text(11)).toBe(''));
+      expect(await title(11)).toBe('Fripon');
+      expect(await text(12)).toBe('!');
+    });
+
+    it('keeps the badge for any other update of the tab', async () => {
+      const send = start();
+      await send({ type: 'setVerdictBadge', verdict: dropshipping }, fromTab(11));
+
+      await fakeBrowser.tabs.onUpdated.trigger(11, { status: 'complete' }, { id: 11 } as never);
+      await fakeBrowser.tabs.onUpdated.trigger(11, { title: 'Robe' }, { id: 11 } as never);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(await text(11)).toBe('!');
+    });
+
+    it('still starts when the browser has no tabs API', () => {
+      vi.spyOn(browser, 'tabs', 'get').mockReturnValue(undefined as never);
+      expect(() => start()).not.toThrow();
     });
   });
 

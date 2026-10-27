@@ -2,6 +2,7 @@ import { createAiReviewer } from '../lib/ai/review';
 import { createImageAnalyzer, fetchGuardedImage, type PixelResult } from '../lib/image/analyzer';
 import { createImageSearcher } from '../lib/image/search';
 import { dHash, catalogScore, hashToHex } from '../lib/image/pixels';
+import { setToolbarBadge } from '../lib/background/badge';
 import { handleMessage, isAllowedSender, type BackgroundDeps } from '../lib/background/handlers';
 import { loadGates, loadVisionRemaining } from '../lib/gate';
 import { reviewListing } from '../lib/google/gemini';
@@ -59,6 +60,9 @@ const deps: BackgroundDeps = {
     return result;
   },
   openOptions: openOptionsAt,
+  // Chrome calls the toolbar button `action`, Firefox MV2 `browserAction`.
+  setBadge: (tabId, verdict) =>
+    setToolbarBadge(browser.action ?? browser.browserAction, tabId, verdict),
 };
 
 export default defineBackground(() => {
@@ -66,7 +70,7 @@ export default defineBackground(() => {
     if (!isRuntimeMessage(message)) return false;
     const own = { id: browser.runtime.id, origin: browser.runtime.getURL('/') };
     if (!isAllowedSender(message, sender, own)) return false;
-    void handleMessage(message, deps).then(sendResponse);
+    void handleMessage(message, deps, { tabId: sender.tab?.id }).then(sendResponse);
     return true;
   });
 
@@ -74,6 +78,13 @@ export default defineBackground(() => {
   const toolbarButton = browser.action ?? browser.browserAction;
   toolbarButton?.onClicked.addListener(() => {
     void openOptionsAt().catch(() => undefined);
+  });
+
+  // A page that starts loading starts without a badge (grid and search pages never keep a stale
+  // one). The card of an item page sends its verdict again once it has one. The event needs no
+  // `tabs` permission to say that a tab is loading.
+  browser.tabs?.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === 'loading') void deps.setBadge(tabId, null);
   });
 
   // A refused key is only remembered for as long as it is the stored one: a changed key (even one
