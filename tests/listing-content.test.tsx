@@ -127,6 +127,7 @@ type SentMessage = {
   cacheOnly?: boolean;
   retry?: boolean;
   section?: string;
+  verdict?: { level: string; title: string } | null;
   input?: {
     photoUrl: string;
     title: string;
@@ -164,6 +165,9 @@ function sentMessages(type: string): SentMessage[] {
     .mock.calls.map(([message]) => message as unknown as SentMessage)
     .filter((message) => message.type === type);
 }
+
+/** The verdicts the card put on the toolbar badge, in order; null is a clearing. */
+const badgeVerdicts = () => sentMessages('setVerdictBadge').map((message) => message.verdict);
 
 async function expandChecks() {
   const toggle = hostCard()?.shadowRoot?.querySelector('.fripon__toggle') as HTMLButtonElement;
@@ -249,6 +253,7 @@ beforeEach(() => {
         : Promise.resolve({ image: imageGate, ai: aiGate });
     }
     if (message.type === 'openOptions') return Promise.resolve(undefined);
+    if (message.type === 'setVerdictBadge') return Promise.resolve(undefined);
     if (message.type === 'searchImage') return searchAnswer(message);
     if (message.type === 'aiReview') return aiAnswer(message);
     return Promise.resolve({
@@ -1418,6 +1423,68 @@ describe('listing content script', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('[Fripon]'));
   });
 
+  describe('toolbar badge', () => {
+    it('sends the verdict of the card once it is shown', async () => {
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+
+      expect(sentMessages('setVerdictBadge')).toEqual([
+        {
+          type: 'setVerdictBadge',
+          verdict: { level: 'clean', title: "Rien de suspect (sans recherche d'image)" },
+        },
+      ]);
+    }, 15_000);
+
+    it('sends the new verdict when the image search changes it', async () => {
+      imageGate = 'ready';
+      const answer = holdSearch();
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      expect(badgeVerdicts()).toEqual([
+        { level: 'clean', title: "Rien de suspect (sans recherche d'image)" },
+      ]);
+
+      answer({ status: 'ok', matches: [SHEIN_EXACT] });
+      await until(() => shadowText().includes('Article Shein revendu'));
+
+      expect(badgeVerdicts()).toEqual([
+        { level: 'clean', title: "Rien de suspect (sans recherche d'image)" },
+        { level: 'resold', title: 'Article Shein revendu' },
+      ]);
+    }, 15_000);
+
+    it('sends nothing more while the verdict does not change, however often the card redraws', async () => {
+      aiGate = 'ready';
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      // The review redraws the card twice (it reads, then it has read) with the same verdict.
+      await until(() => sentMessages('aiReview').length === 1);
+      await expandChecks();
+      await until(() => aiText().includes('Résumé de test.'));
+
+      expect(sentMessages('setVerdictBadge')).toHaveLength(1);
+    }, 15_000);
+
+    it('clears the badge and sends the verdict again on a bfcache restore', async () => {
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+
+      window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+      await until(() => badgeVerdicts().length === 3);
+
+      expect(badgeVerdicts().map((verdict) => verdict?.level ?? null)).toEqual([
+        'clean',
+        null,
+        'clean',
+      ]);
+    }, 15_000);
+  });
+
   it('runs again on a bfcache restore without duplicating the card', async () => {
     const calls = stubFetch();
     await script.main(ctx);
@@ -1572,6 +1639,61 @@ describe('listing content script', () => {
 
       expect(hostCard()).toBeNull();
       expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(0);
+    }, 15_000);
+
+    it('clears the badge when leaving the item page', async () => {
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      expect(badgeVerdicts()).toHaveLength(1);
+
+      navigate('https://www.vinted.fr/catalog?search_text=robe');
+
+      expect(badgeVerdicts().map((verdict) => verdict?.level ?? null)).toEqual(['clean', null]);
+    }, 15_000);
+
+    it('has nothing to clear when leaving before any verdict was sent', async () => {
+      stubFetch();
+      await script.main(ctx);
+      navigate('https://www.vinted.fr/catalog?search_text=robe');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(badgeVerdicts()).toEqual([]);
+    }, 15_000);
+
+    it('clears the badge of the old item before showing the verdict of the new one', async () => {
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+
+      navigate('https://www.vinted.fr/items/9000002-autre-robe');
+      await until(() => badgeVerdicts().length === 3);
+
+      expect(badgeVerdicts().map((verdict) => verdict?.level ?? null)).toEqual([
+        'clean',
+        null,
+        'clean',
+      ]);
+    }, 15_000);
+
+    it('sends the verdict again when the page changes without changing item', async () => {
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      expect(badgeVerdicts()).toHaveLength(1);
+
+      navigate('https://www.vinted.fr/items/9000001-robe-test?referrer=catalog');
+
+      expect(badgeVerdicts()).toHaveLength(2);
+      expect(badgeVerdicts()[1]).toEqual(badgeVerdicts()[0]);
+    }, 15_000);
+
+    it('has nothing to send again while the first analysis is still running', async () => {
+      stubFetch();
+      await script.main(ctx);
+      navigate('https://www.vinted.fr/items/9000001-robe-test?referrer=catalog');
+
+      expect(badgeVerdicts()).toEqual([]);
     }, 15_000);
 
     it('removes a finished card when leaving, and brings it back on a new item', async () => {

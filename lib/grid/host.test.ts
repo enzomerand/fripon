@@ -1,0 +1,239 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  BUTTON_HOST_TAG,
+  createHost,
+  createSharedStyles,
+  focusInPlace,
+  hasFocus,
+  moveKeepingFocus,
+  redrawKeepingFocus,
+} from './host';
+
+const CSS = '.a { color: red; }';
+
+/** A shadow root that records what it was given; happy-dom has no constructed stylesheets. */
+function fakeShadow() {
+  const appended: Element[] = [];
+  const shadow = {
+    ownerDocument: document,
+    adoptedStyleSheets: [] as CSSStyleSheet[],
+    append: (node: Element) => void appended.push(node),
+  };
+  return { shadow: shadow as unknown as ShadowRoot, appended, raw: shadow };
+}
+
+const sheetOf = (replaceSync = vi.fn()) => ({ replaceSync }) as unknown as CSSStyleSheet;
+
+describe('createSharedStyles', () => {
+  it('adopts one constructed sheet in every root, built once', () => {
+    const replaceSync = vi.fn();
+    const makeSheet = vi.fn(() => sheetOf(replaceSync));
+    const styles = createSharedStyles(CSS, makeSheet);
+    const first = fakeShadow();
+    const second = fakeShadow();
+
+    styles.apply(first.shadow);
+    styles.apply(second.shadow);
+
+    expect(makeSheet).toHaveBeenCalledOnce();
+    expect(replaceSync).toHaveBeenCalledWith(CSS);
+    expect(first.raw.adoptedStyleSheets).toHaveLength(1);
+    expect(first.raw.adoptedStyleSheets[0]).toBe(second.raw.adoptedStyleSheets[0]);
+    expect(first.appended).toEqual([]);
+  });
+
+  it('falls back on a style element when constructed sheets do not exist', () => {
+    const styles = createSharedStyles(CSS, () => {
+      throw new TypeError('Illegal constructor');
+    });
+    const { shadow, appended, raw } = fakeShadow();
+    styles.apply(shadow);
+    expect(raw.adoptedStyleSheets).toEqual([]);
+    expect(appended).toHaveLength(1);
+    expect(appended[0]?.tagName).toBe('STYLE');
+    expect(appended[0]?.textContent).toBe(CSS);
+  });
+
+  it('falls back on a style element when a root refuses the sheet', () => {
+    const styles = createSharedStyles(CSS, () => sheetOf());
+    const { shadow, appended, raw } = fakeShadow();
+    Object.defineProperty(raw, 'adoptedStyleSheets', {
+      set() {
+        throw new DOMException('Not allowed', 'NotAllowedError');
+      },
+    });
+    styles.apply(shadow);
+    expect(appended[0]?.textContent).toBe(CSS);
+  });
+
+  it('does not try to build the sheet again after a failure', () => {
+    const makeSheet = vi.fn(() => {
+      throw new TypeError('Illegal constructor');
+    });
+    const styles = createSharedStyles(CSS, makeSheet);
+    styles.apply(fakeShadow().shadow);
+    styles.apply(fakeShadow().shadow);
+    expect(makeSheet).toHaveBeenCalledOnce();
+  });
+});
+
+describe('createHost', () => {
+  it('makes an element with an open shadow root that holds a container', () => {
+    const apply = vi.fn();
+    const { element, container } = createHost(document, BUTTON_HOST_TAG, { apply });
+    expect(element.localName).toBe(BUTTON_HOST_TAG);
+    expect(element.shadowRoot?.contains(container)).toBe(true);
+    expect(apply).toHaveBeenCalledWith(element.shadowRoot);
+  });
+
+  it('puts the host above the covering link of the card, shielded from the page CSS', () => {
+    const { element } = createHost(document, BUTTON_HOST_TAG, { apply: vi.fn() });
+    const style = element.style;
+    expect(style.getPropertyValue('position')).toBe('relative');
+    expect(style.getPropertyPriority('position')).toBe('important');
+    expect(Number(style.getPropertyValue('z-index'))).toBeGreaterThan(1);
+    expect(style.getPropertyValue('display')).toBe('block');
+    expect(style.getPropertyValue('pointer-events')).toBe('auto');
+  });
+});
+
+describe('redrawKeepingFocus', () => {
+  /** A host in the page with a button in its shadow tree. */
+  function hostWithButton() {
+    const host = createHost(document, BUTTON_HOST_TAG, { apply: vi.fn() });
+    document.body.append(host.element);
+    host.container.innerHTML = '<button id="old">Analyser</button>';
+    return host;
+  }
+  const swap = (host: ReturnType<typeof hostWithButton>) => () => {
+    host.container.innerHTML = '<a id="new" href="#">Verdict</a>';
+  };
+
+  it('gives the focus to the new control when the one that had it is gone', () => {
+    const host = hostWithButton();
+    host.container.querySelector('button')?.focus();
+    expect(hasFocus(host)).toBe(true);
+
+    redrawKeepingFocus(host, swap(host), (root) => root.querySelector('a'));
+
+    expect(document.activeElement).toBe(host.element);
+    expect(host.element.shadowRoot?.activeElement?.id).toBe('new');
+    host.element.remove();
+  });
+
+  it('leaves the focus alone when the host did not have it', () => {
+    const host = hostWithButton();
+    const elsewhere = document.createElement('input');
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    const target = vi.fn(() => host.container.querySelector('a'));
+
+    redrawKeepingFocus(host, swap(host), target);
+
+    expect(target).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(elsewhere);
+    host.element.remove();
+    elsewhere.remove();
+  });
+
+  it('does not move a focus that survived the redraw', () => {
+    const host = hostWithButton();
+    const button = host.container.querySelector('button') as HTMLButtonElement;
+    button.focus();
+    const target = vi.fn(() => null);
+
+    redrawKeepingFocus(host, () => (button.textContent = 'Analyse…'), target);
+
+    expect(target).not.toHaveBeenCalled();
+    expect(host.element.shadowRoot?.activeElement).toBe(button);
+    host.element.remove();
+  });
+
+  it('does nothing when there is nothing to focus', () => {
+    const host = hostWithButton();
+    host.container.querySelector('button')?.focus();
+    expect(() => redrawKeepingFocus(host, swap(host), () => null)).not.toThrow();
+    host.element.remove();
+  });
+});
+
+describe('moving the focus without moving the page', () => {
+  function hostWithButton() {
+    const host = createHost(document, BUTTON_HOST_TAG, { apply: vi.fn() });
+    document.body.append(host.element);
+    host.container.innerHTML = '<button id="old">Analyser</button>';
+    return host;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('focusInPlace never scrolls to the element', () => {
+    const element = document.createElement('button');
+    document.body.append(element);
+    const focus = vi.spyOn(element, 'focus');
+    focusInPlace(element);
+    expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+    expect(() => focusInPlace(null)).not.toThrow();
+    element.remove();
+  });
+
+  it('redrawKeepingFocus gives the focus back without scrolling', () => {
+    const host = hostWithButton();
+    host.container.querySelector('button')?.focus();
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+
+    redrawKeepingFocus(
+      host,
+      () => (host.container.innerHTML = '<a id="new" href="#">Verdict</a>'),
+      (root) => root.querySelector('a'),
+    );
+
+    expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+    host.element.remove();
+  });
+
+  describe('moveKeepingFocus', () => {
+    /** What a browser does when an element is taken out of the document to be put back: it blurs. */
+    const blurringMove = (host: ReturnType<typeof hostWithButton>, to: Element) => () => {
+      (host.element.shadowRoot?.activeElement as HTMLElement | null)?.blur();
+      to.after(host.element);
+    };
+
+    it('gives the control that had the focus back after the move, without scrolling', () => {
+      const host = hostWithButton();
+      const anchor = document.createElement('p');
+      document.body.append(anchor);
+      const button = host.container.querySelector('button') as HTMLButtonElement;
+      button.focus();
+      const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+
+      moveKeepingFocus(host, blurringMove(host, anchor));
+
+      expect(anchor.nextElementSibling).toBe(host.element);
+      expect(document.activeElement).toBe(host.element);
+      expect(host.element.shadowRoot?.activeElement).toBe(button);
+      expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+      host.element.remove();
+      anchor.remove();
+    });
+
+    it('does not touch a focus that was elsewhere', () => {
+      const host = hostWithButton();
+      const anchor = document.createElement('p');
+      const input = document.createElement('input');
+      document.body.append(anchor, input);
+      input.focus();
+      const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+
+      moveKeepingFocus(host, blurringMove(host, anchor));
+
+      expect(focus).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(input);
+      host.element.remove();
+      anchor.remove();
+      input.remove();
+    });
+  });
+});
