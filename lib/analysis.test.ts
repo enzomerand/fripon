@@ -1,18 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   AnalysisCancelledError,
+  askAiReview,
   capLocalHeuristics,
   IMAGE_CONCURRENCY,
   MAX_OTHER_PHOTOS,
   analyzeListing,
   searchPhoto,
+  withAiReview,
   withImageSearch,
+  type AiDeps,
   type AnalysisDeps,
   type SearchDeps,
 } from './analysis';
 import { imageCheckOff, imageCheckSearching } from './checks/image';
 import { hashToHex } from './image/pixels';
-import type { SearchImageResponse } from './messages';
+import type { AiReviewResponse, SearchImageResponse } from './messages';
 import type { CheckResult, ImageMatch, Listing, Seller, SellerItem } from './model';
 
 const listing: Listing = {
@@ -301,12 +304,14 @@ describe('searchPhoto', () => {
     expect(await searchPhoto('https://images1.vinted.net/a.webp', d)).toEqual(found(exactMatch));
   });
 
-  it('asks for the search, or for the cache alone', async () => {
+  it('asks for the search, for the cache alone, or for another attempt', async () => {
     const searchImage = vi.fn(() => Promise.resolve<SearchImageResponse>({ status: 'not_cached' }));
     await searchPhoto('https://images1.vinted.net/a.webp', searching(searchImage));
-    expect(searchImage).toHaveBeenLastCalledWith('https://images1.vinted.net/a.webp', false);
+    expect(searchImage).toHaveBeenLastCalledWith('https://images1.vinted.net/a.webp', false, false);
     await searchPhoto('https://images1.vinted.net/a.webp', searching(searchImage), true);
-    expect(searchImage).toHaveBeenLastCalledWith('https://images1.vinted.net/a.webp', true);
+    expect(searchImage).toHaveBeenLastCalledWith('https://images1.vinted.net/a.webp', true, false);
+    await searchPhoto('https://images1.vinted.net/a.webp', searching(searchImage), false, true);
+    expect(searchImage).toHaveBeenLastCalledWith('https://images1.vinted.net/a.webp', false, true);
   });
 
   it('turns a missing photo and a rejection into failures, never into an exception', async () => {
@@ -331,13 +336,131 @@ describe('searchPhoto', () => {
   });
 });
 
+describe('the price row', () => {
+  const priceOf = (result: { checks: CheckResult[] }) =>
+    result.checks.find((c) => c.id === 'price');
+  const analysed = () => analyzeListing(listing, deps(), { imageGate: 'manual' });
+
+  it('starts as "not compared" with nothing to compare to', async () => {
+    expect(priceOf(await analysed())).toEqual({
+      id: 'price',
+      status: 'off',
+      tag: 'Non comparé',
+      detail: "Pas de prix d'origine à comparer.",
+      signals: [],
+    });
+  });
+
+  it('sends the buyer to the image links once the search found the photo, whichever step ran last', async () => {
+    const before = await analysed();
+    const detail =
+      'Shein et Temu cachent leurs prix aux robots : compare toi-même avec les liens ci-dessus.';
+    const searched = withImageSearch(before, found(exactMatch));
+    expect(priceOf(searched)).toMatchObject({ status: 'off', tag: 'Non comparé', detail });
+    expect(searched.rawChecks.find((c) => c.id === 'price')).toEqual(priceOf(searched));
+    // A review on top of it, or a lookalike only, changes nothing of that.
+    expect(priceOf(withAiReview(searched, { status: 'no_key' }))).toMatchObject({ detail });
+    expect(priceOf(withImageSearch(before, found(similarMatch)))).toMatchObject({ detail });
+  });
+
+  it('goes back to "nothing to compare" when a new search finds nothing or fails', async () => {
+    const searched = withImageSearch(await analysed(), found(exactMatch));
+    const nothing = withImageSearch(searched, found());
+    expect(priceOf(nothing)?.detail).toBe("Pas de prix d'origine à comparer.");
+    const failed = withImageSearch(searched, { status: 'error', reason: 'network' });
+    expect(priceOf(failed)?.detail).toBe("Pas de prix d'origine à comparer.");
+  });
+
+  it('never gives a signal, so it cannot move the verdict', async () => {
+    const searched = withImageSearch(await analysed(), found(exactMatch));
+    expect(priceOf(searched)?.signals).toEqual([]);
+  });
+});
+
+describe('askAiReview', () => {
+  const okReview: AiReviewResponse = {
+    status: 'ok',
+    review: { catalogPhoto: false, summary: 'Ok.' },
+  };
+  const analysed = () => analyzeListing(listing, deps(), { imageGate: 'manual' });
+
+  it('sends the listing and the signals of the result, and passes the answer through', async () => {
+    const aiReview = vi.fn<AiDeps['aiReview']>(() => Promise.resolve(okReview));
+    const result = withImageSearch(await analysed(), found(exactMatch));
+    expect(await askAiReview(listing, result, { aiReview })).toEqual(okReview);
+
+    expect(aiReview).toHaveBeenCalledOnce();
+    const [input, cacheOnly] = aiReview.mock.calls[0] ?? [];
+    expect(cacheOnly).toBe(false);
+    expect(input).toMatchObject({
+      photoUrl: listing.photoUrls[0],
+      title: 'Robe fleurie',
+      description: listing.description,
+    });
+    expect(input?.signals[0]).toBe("Recherche d'image : la même photo est en vente sur Shein.");
+    // The fingerprint starts with the same image line, then the tags of the rows that ran.
+    expect(input?.fingerprint[0]).toBe(input?.signals[0]);
+    expect(input?.fingerprint.slice(1)).toEqual([
+      expect.stringMatching(/^seller:/),
+      expect.stringMatching(/^photos:/),
+      expect.stringMatching(/^description:/),
+    ]);
+  });
+
+  it('builds the signals from the raw rows, so a review never feeds on its own conclusion', async () => {
+    const aiReview = vi.fn<AiDeps['aiReview']>(() => Promise.resolve(okReview));
+    const before = await analysed();
+    const reviewed = withAiReview(before, {
+      status: 'ok',
+      review: { catalogPhoto: true, summary: 'Photo de studio.' },
+    });
+    await askAiReview(listing, before, { aiReview });
+    await askAiReview(listing, reviewed, { aiReview });
+    expect(aiReview.mock.calls[1]?.[0]).toEqual(aiReview.mock.calls[0]?.[0]);
+    expect(JSON.stringify(aiReview.mock.calls[1]?.[0])).not.toContain("L'IA confirme");
+  });
+
+  it('asks for the cache alone when told to', async () => {
+    const aiReview = vi.fn<AiDeps['aiReview']>(() => Promise.resolve({ status: 'not_cached' }));
+    expect(await askAiReview(listing, await analysed(), { aiReview }, true)).toEqual({
+      status: 'not_cached',
+    });
+    expect(aiReview.mock.calls[0]?.[1]).toBe(true);
+    await askAiReview(listing, await analysed(), { aiReview }, false, true);
+    expect(aiReview.mock.calls[1]?.slice(1)).toEqual([false, true]);
+  });
+
+  it('turns a missing photo, a rejection and no answer at all into failures, never into an exception', async () => {
+    const result = await analysed();
+    const aiReview = vi.fn<AiDeps['aiReview']>(() => Promise.resolve(okReview));
+    expect(await askAiReview({ ...listing, photoUrls: [] }, result, { aiReview })).toEqual({
+      status: 'error',
+      reason: 'photo',
+    });
+    expect(aiReview).not.toHaveBeenCalled();
+
+    const rejecting = {
+      aiReview: () => Promise.reject(new Error('Extension context invalidated')),
+    };
+    expect(await askAiReview(listing, result, rejecting)).toEqual({
+      status: 'error',
+      reason: 'network',
+    });
+    const silent = { aiReview: () => Promise.resolve(undefined as never) };
+    expect(await askAiReview(listing, result, silent)).toEqual({
+      status: 'error',
+      reason: 'network',
+    });
+  });
+});
+
 describe('withImageSearch', () => {
   const copies = Array.from({ length: 12 }, (_, i) => item(i + 1, { condition: 'new_with_tags' }));
   const withCopies = () => deps({ fetchSeller: () => Promise.resolve(seller(copies)) });
   const analysed = (imageGate: 'ready' | 'manual', d = withCopies()) =>
     analyzeListing(listing, d, { imageGate });
 
-  it('replaces the image row and redoes the verdict, nothing else', async () => {
+  it('replaces the image row (and the price row that follows it) and redoes the verdict, nothing else', async () => {
     const before = await analysed('manual');
     expect(before.verdict.level).toBe('review');
     expect(before.checks[0]).toMatchObject({ action: 'run_image_search' });
@@ -352,7 +475,9 @@ describe('withImageSearch', () => {
       'photos',
       'description',
     ]);
-    expect(after.checks[1]).toEqual(before.checks[1]);
+    // The price row follows the image matches (see the price row tests).
+    expect(after.checks[1]).toMatchObject({ id: 'price', tag: 'Non comparé' });
+    expect(after.checks[1]?.detail).not.toBe(before.checks[1]?.detail);
     expect(after.checks[4]).toEqual(before.checks[4]);
   });
 
@@ -426,6 +551,184 @@ describe('withImageSearch', () => {
     const before = await analysed('manual');
     const snapshot = structuredClone(before);
     withImageSearch(before, found(exactMatch));
+    expect(before).toEqual(snapshot);
+  });
+});
+
+describe('withAiReview', () => {
+  const review = (catalogPhoto: boolean): AiReviewResponse => ({
+    status: 'ok',
+    review: { catalogPhoto, summary: 'Un résumé.' },
+  });
+  const analysed = (imageGate: 'ready' | 'manual' = 'manual') =>
+    analyzeListing(listing, deps(), { imageGate });
+  const photosOf = (result: { checks: CheckResult[] }) =>
+    result.checks.find((c) => c.id === 'photos');
+
+  it('starts without a review', async () => {
+    expect((await analysed()).aiReview).toBeNull();
+  });
+
+  it('makes the photos row only a weak catalogue hint when nothing else backs the AI, whatever the local score', async () => {
+    const before = await analysed();
+    expect(photosOf(before)).toMatchObject({ status: 'ok', tag: 'Rien de notable' });
+
+    const after = withAiReview(before, review(true));
+    expect(photosOf(after)).toEqual({
+      id: 'photos',
+      status: 'warn',
+      tag: 'Photo type catalogue',
+      detail: "L'IA voit une photo de catalogue ou de studio.",
+      signals: [{ id: 'catalog_photo', strength: 'weak' }],
+    });
+    expect(after.aiReview).toEqual({ catalogPhoto: true, summary: 'Un résumé.' });
+  });
+
+  it('never moves a green verdict to orange through the AI alone', async () => {
+    const before = await analysed();
+    expect(before.verdict.level).toBe('clean');
+    // Nothing found by the image search, a lookalike only, a search not run: the hint stays weak.
+    for (const base of [
+      before,
+      withImageSearch(before, found()),
+      withImageSearch(before, found(similarMatch)),
+    ]) {
+      const after = withAiReview(base, review(true));
+      expect(photosOf(after)?.signals).toEqual([{ id: 'catalog_photo', strength: 'weak' }]);
+      expect(after.verdict.level).toBe(base.verdict.level);
+    }
+    expect(withAiReview(withImageSearch(before, found()), review(true)).verdict.level).toBe(
+      'clean',
+    );
+  });
+
+  it('is strong, and red, only when an exact image match backs it', async () => {
+    const reviewed = withAiReview(await analysed(), review(true));
+    expect(photosOf(reviewed)?.status).toBe('warn');
+    const backed = withImageSearch(reviewed, found(exactMatch));
+    expect(photosOf(backed)).toEqual({
+      id: 'photos',
+      status: 'bad',
+      tag: 'Photo catalogue',
+      detail: "L'IA confirme une photo de catalogue ou de studio.",
+      signals: [{ id: 'catalog_photo', strength: 'strong' }],
+    });
+    // An exact match and a strong signal is what the design calls dropshipping.
+    expect(backed.verdict.level).toBe('dropshipping');
+    // The match is gone (a new search found nothing): the hint is weak again.
+    expect(photosOf(withImageSearch(backed, found()))?.signals).toEqual([
+      { id: 'catalog_photo', strength: 'weak' },
+    ]);
+  });
+
+  it('composes in either order: image then AI, or AI then image', async () => {
+    const before = await analysed();
+    const imageThenAi = withAiReview(withImageSearch(before, found(exactMatch)), review(true));
+    const aiThenImage = withImageSearch(withAiReview(before, review(true)), found(exactMatch));
+    expect(aiThenImage).toEqual(imageThenAi);
+    expect(imageThenAi.verdict.level).toBe('dropshipping');
+    expect(photosOf(imageThenAi)).toMatchObject({ status: 'bad', tag: 'Photo catalogue' });
+    const noMatch = [found(), found(similarMatch)];
+    for (const response of noMatch) {
+      expect(withAiReview(withImageSearch(before, response), review(true))).toEqual(
+        withImageSearch(withAiReview(before, review(true)), response),
+      );
+    }
+  });
+
+  it('leaves the local row and the verdict as they are when the AI says the photo is not a catalogue shot', async () => {
+    const before = await analysed();
+    const after = withAiReview(before, review(false));
+    expect(after.checks).toEqual(before.checks);
+    expect(after.verdict).toEqual(before.verdict);
+    // The review is kept for the card's summary.
+    expect(after.aiReview).toEqual({ catalogPhoto: false, summary: 'Un résumé.' });
+  });
+
+  it('does not downgrade a local catalogue hint when the AI says no', async () => {
+    const reused = item(2, { photoUrl: 'https://images1.vinted.net/t/main/f800/copy.webp?s=2' });
+    const d = deps({
+      fetchSeller: () => Promise.resolve(seller([item(1), reused])),
+      analyzeImage: vi.fn((url: string) =>
+        Promise.resolve({
+          ok: true as const,
+          hash: url.includes('/main/') ? fastHash : distinctHash(url.length),
+          catalogScore: url === listing.photoUrls[0] ? 0.9 : 0.1,
+        }),
+      ),
+    });
+    const before = await analyzeListing(listing, d, { imageGate: 'manual' });
+    const after = withAiReview(before, review(false));
+    expect(photosOf(after)).toEqual(photosOf(before));
+    expect(photosOf(after)?.signals.map((s) => [s.id, s.strength])).toEqual([
+      ['catalog_photo', 'weak'],
+      ['photo_reused', 'weak'],
+    ]);
+  });
+
+  it('keeps what the row says about a reused photo next to the AI sentence', async () => {
+    const reused = item(2, { photoUrl: 'https://images1.vinted.net/t/main/f800/copy.webp?s=2' });
+    const d = deps({ fetchSeller: () => Promise.resolve(seller([item(1), reused])) });
+    const after = withAiReview(await analyzeListing(listing, d), review(true));
+    expect(photosOf(after)?.detail).toBe(
+      "L'IA voit une photo de catalogue ou de studio. La même photo sert sur 1 autre annonce du vendeur.",
+    );
+    expect(photosOf(after)?.signals.map((s) => s.id)).toEqual(['catalog_photo', 'photo_reused']);
+  });
+
+  it('takes the photo into account even when the local analysis could not read it, and says so', async () => {
+    const d = deps({
+      analyzeImage: vi.fn(() => Promise.resolve({ ok: false as const, error: 'x' })),
+    });
+    const before = await analyzeListing(listing, d);
+    expect(photosOf(before)).toMatchObject({ status: 'off', tag: 'Non analysée' });
+    const unread = "L'IA voit une photo de catalogue (analyse locale impossible).";
+    expect(photosOf(withAiReview(before, review(true)))).toMatchObject({
+      status: 'warn',
+      tag: 'Photo type catalogue',
+      detail: unread,
+      signals: [{ id: 'catalog_photo', strength: 'weak' }],
+    });
+    expect(
+      photosOf(withAiReview(withImageSearch(before, found(exactMatch)), review(true))),
+    ).toMatchObject({
+      status: 'bad',
+      tag: 'Photo catalogue',
+      detail: "L'IA confirme une photo de catalogue ou de studio (analyse locale impossible).",
+      signals: [{ id: 'catalog_photo', strength: 'strong' }],
+    });
+  });
+
+  it.each([
+    { status: 'no_key' },
+    { status: 'quota' },
+    { status: 'not_cached' },
+    { status: 'error', reason: 'network' },
+    { status: 'error', reason: 'invalid_answer' },
+  ] as const)('leaves the result alone when the background says %j', async (response) => {
+    const before = await analysed();
+    expect(withAiReview(before, response)).toBe(before);
+  });
+
+  it('keeps the review through a later image search, and the raw rows free of it', async () => {
+    const reviewed = withAiReview(await analysed(), review(true));
+    expect(reviewed.rawChecks.find((c) => c.id === 'photos')?.tag).toBe('Rien de notable');
+    const searched = withImageSearch(reviewed, found());
+    expect(searched.aiReview).toEqual(reviewed.aiReview);
+    expect(photosOf(searched)).toMatchObject({ tag: 'Photo type catalogue' });
+  });
+
+  it('can be run again from the same result, the last review winning', async () => {
+    const first = withAiReview(await analysed(), review(true));
+    const second = withAiReview(first, review(false));
+    expect(photosOf(second)).toMatchObject({ tag: 'Rien de notable' });
+    expect(second.aiReview?.catalogPhoto).toBe(false);
+  });
+
+  it('does not change the result it is given', async () => {
+    const before = await analysed();
+    const snapshot = structuredClone(before);
+    withAiReview(before, review(true));
     expect(before).toEqual(snapshot);
   });
 });

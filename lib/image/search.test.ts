@@ -4,7 +4,8 @@ import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { getUsage, reserve } from '../credits';
 import type { WebDetectResult } from '../google/vision';
 import { saveSettings } from '../settings';
-import { KEY_FAILURE_MEMO_MS, bytesToBase64, createImageSearcher } from './search';
+import { KEY_FAILURE_MEMO_MS, TRANSIENT_FAILURE_MEMO_MS } from '../google/failure-memo';
+import { createImageSearcher } from './search';
 import { VISION_CACHE_PREFIX, VISION_CACHE_TTL_MS } from './search-cache';
 
 const KEY = 'AIzaSyFakeKeyForTestsOnly_0123456789abcd';
@@ -60,15 +61,6 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-});
-
-describe('bytesToBase64', () => {
-  it('encodes small and large inputs like the standard base64', () => {
-    expect(bytesToBase64(new Uint8Array([]))).toBe('');
-    expect(bytesToBase64(new Uint8Array([1, 2, 3]))).toBe('AQID');
-    const big = Uint8Array.from({ length: 100_003 }, (_, i) => (i * 31) % 256);
-    expect(bytesToBase64(big)).toBe(Buffer.from(big).toString('base64'));
-  });
 });
 
 describe('createImageSearcher search', () => {
@@ -280,7 +272,8 @@ describe('createImageSearcher failures', () => {
       now: () => clock,
     });
     expect((await search(PHOTO)).status).toBe('error');
-    expect((await search(PHOTO)).status).toBe('ok');
+    // The quota is remembered for a moment: it is the click that tries again.
+    expect((await search(PHOTO, false, true)).status).toBe('ok');
     expect(await used()).toBe(1);
   });
 
@@ -335,13 +328,68 @@ describe('createImageSearcher key failures', () => {
     expect(detect).toHaveBeenCalledOnce();
   });
 
-  it('does not remember failures that say nothing about the key', async () => {
-    for (const reason of ['network', 'photo', 'quota'] as const) {
-      const { search, detect } = setup({ ok: false, reason, refundable: true });
+  it('does not remember a failure of the photo itself', async () => {
+    const { search, detect } = setup({ ok: false, reason: 'photo', refundable: false });
+    await search(PHOTO);
+    await search(OTHER);
+    expect(detect).toHaveBeenCalledTimes(2);
+  });
+
+  describe('a failure that passes by itself', () => {
+    it.each(['quota', 'network', 'unavailable'] as const)(
+      'is remembered for 90 seconds when it is "%s": no download, no call, no credit for the next listings',
+      async (reason) => {
+        const { search, photo, detect } = setup({ ok: false, reason, refundable: false });
+        expect(await search(PHOTO)).toEqual({ status: 'error', reason });
+        expect(await used()).toBe(1);
+
+        clock = NOW + TRANSIENT_FAILURE_MEMO_MS - 1;
+        expect(await search(OTHER)).toEqual({ status: 'error', reason });
+        expect(await search('https://images1.vinted.net/t/3/f800/c.webp')).toEqual({
+          status: 'error',
+          reason,
+        });
+        expect(photo).toHaveBeenCalledOnce();
+        expect(detect).toHaveBeenCalledOnce();
+        // Not a credit more than the first call's.
+        expect(await used()).toBe(1);
+      },
+    );
+
+    it('is tried again at once when the user clicked', async () => {
+      const { search, detect } = setup({ ok: false, reason: 'network', refundable: false });
       await search(PHOTO);
-      await search(OTHER);
+      await search(OTHER, false, true);
       expect(detect).toHaveBeenCalledTimes(2);
-    }
+    });
+
+    it('is not remembered when it comes in after the user fixed the key, or after a success', async () => {
+      let fail: (value: WebDetectResult) => void = () => undefined;
+      const detect = vi
+        .fn<(base64: string, key: string) => Promise<WebDetectResult>>()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              fail = resolve;
+            }),
+        )
+        .mockResolvedValue(FOUND);
+      const search = createImageSearcher({
+        fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
+        webDetect: detect,
+        now: () => clock,
+      });
+      const slow = search(PHOTO);
+      await vi.waitFor(() => expect(detect).toHaveBeenCalledOnce());
+      // Meanwhile the key tested fine (or another listing succeeded): the memory is forgotten.
+      search.forgetKeyFailure();
+      fail({ ok: false, reason: 'network', refundable: false });
+      expect(await slow).toEqual({ status: 'error', reason: 'network' });
+
+      // The late failure did not arm the memory: the next listing goes to Google.
+      expect((await search(OTHER)).status).toBe('ok');
+      expect(detect).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('forgets the failure as soon as another key is saved', async () => {
@@ -497,7 +545,9 @@ describe('createImageSearcher in flight', () => {
   it('forgets an in-flight search once it is over', async () => {
     const { search, detect } = setup({ ok: false, reason: 'network', refundable: false });
     await search(PHOTO);
-    await search(PHOTO);
+    // Not answered from the in-flight search that is over; the memory of the failure is bypassed
+    // by the click.
+    await search(PHOTO, false, true);
     expect(detect).toHaveBeenCalledTimes(2);
     expect(await used()).toBe(2);
   });

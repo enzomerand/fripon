@@ -1,13 +1,15 @@
+import { createAiReviewer } from '../lib/ai/review';
 import { createImageAnalyzer, fetchGuardedImage, type PixelResult } from '../lib/image/analyzer';
 import { createImageSearcher } from '../lib/image/search';
 import { dHash, catalogScore, hashToHex } from '../lib/image/pixels';
 import { handleMessage, isAllowedSender, type BackgroundDeps } from '../lib/background/handlers';
-import { loadImageGate } from '../lib/gate';
+import { loadGates } from '../lib/gate';
+import { reviewListing } from '../lib/google/gemini';
 import { checkKey } from '../lib/google/key-check';
 import { webDetect } from '../lib/google/vision';
 import { isRuntimeMessage } from '../lib/messages';
 import { openOptionsAt } from '../lib/options-nav';
-import { SETTINGS_KEY, parseSettings } from '../lib/settings';
+import { PROVIDERS, SETTINGS_KEY, parseSettings, type Provider } from '../lib/settings';
 
 /** Photos are shrunk to this many pixels on their longest side before analysis. */
 const MAX_ANALYSIS_SIDE = 256;
@@ -33,19 +35,26 @@ const analyzeImage = createImageAnalyzer({
   computePixels,
 });
 
-const searchImage = createImageSearcher({
-  fetchPhoto: (url) => fetchGuardedImage((input, init) => fetch(input, init), url),
-  webDetect,
-});
+const fetchPhoto = (url: string) => fetchGuardedImage((input, init) => fetch(input, init), url);
+
+const searchImage = createImageSearcher({ fetchPhoto, webDetect });
+
+const aiReview = createAiReviewer({ fetchPhoto, reviewListing });
+
+function forgetKeyFailure(provider: Provider) {
+  if (provider === 'vision') searchImage.forgetKeyFailure();
+  else aiReview.forgetKeyFailure();
+}
 
 const deps: BackgroundDeps = {
   analyzeImage,
   searchImage,
-  loadImageGate,
+  aiReview,
+  loadGates,
   checkKey: async (provider, key) => {
     const result = await checkKey(provider, key);
-    // A Vision key that tests fine: whatever was wrong is fixed, so stop remembering the refusal.
-    if (provider === 'vision' && result.ok) searchImage.forgetKeyFailure();
+    // A key that tests fine: whatever was wrong is fixed, so stop remembering the refusal.
+    if (result.ok) forgetKeyFailure(provider);
     return result;
   },
   openOptions: openOptionsAt,
@@ -71,8 +80,11 @@ export default defineBackground(() => {
   browser.storage.onChanged.addListener((changes, area) => {
     const change = area === 'local' ? changes[SETTINGS_KEY] : undefined;
     if (!change) return;
-    const before = parseSettings(change.oldValue).keys.vision;
-    if (before !== parseSettings(change.newValue).keys.vision) searchImage.forgetKeyFailure();
+    const before = parseSettings(change.oldValue).keys;
+    const after = parseSettings(change.newValue).keys;
+    for (const provider of PROVIDERS) {
+      if (before[provider] !== after[provider]) forgetKeyFailure(provider);
+    }
   });
 
   browser.runtime.onInstalled.addListener(({ reason }) => {

@@ -29,10 +29,10 @@ afterEach(() => {
 });
 
 describe('CREDIT_POLICY', () => {
-  it('stops at the free tier by default', () => {
+  it('sets a default cap for each provider', () => {
     expect(CREDIT_POLICY).toEqual({
       vision: { period: 'month', defaultCap: 1_000 },
-      gemini: { period: 'day', defaultCap: 20 },
+      gemini: { period: 'day', defaultCap: 100 },
     });
     expect(WARN_RATIO).toBe(0.8);
   });

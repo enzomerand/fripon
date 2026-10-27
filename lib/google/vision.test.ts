@@ -143,6 +143,7 @@ describe('webDetect HTTP refusals Google names', () => {
     [400, googleError(400, 'INVALID_ARGUMENT', 'API_KEY_INVALID'), 'invalid'],
     [403, googleError(403, 'PERMISSION_DENIED', 'SERVICE_DISABLED'), 'disabled'],
     [429, googleError(429, 'RESOURCE_EXHAUSTED', 'RATE_LIMIT_EXCEEDED'), 'quota'],
+    [404, googleError(404, 'NOT_FOUND', 'OTHER'), 'unavailable'],
   ])('maps a %s to its reason and allows the refund', async (status, body, reason) => {
     expect(await webDetect(IMAGE, KEY, fakeFetch(json(status, body)))).toEqual({
       ok: false,
@@ -161,6 +162,8 @@ describe('webDetect refusals that may have been billed', () => {
       'photo',
     ],
     ['a payload too large', 413, googleError(413, 'OUT_OF_RANGE', 'OTHER'), 'photo'],
+    // The endpoint is gone: not a bad key, so no key memory and no button to the settings.
+    ['a 404 that Google does not name', 404, 'not here', 'unavailable'],
     [
       'a 403 with no reason Google names',
       403,

@@ -19,7 +19,8 @@ const CREDIT_TEXT: Record<
     unit: "aujourd'hui",
     paidWarning:
       "Si ton projet Gemini a la facturation activée, Google te facture au-delà de l'offre gratuite.",
-    freeTier: "la limite la plus basse de l'offre gratuite",
+    freeTier:
+      'un plafond de sécurité (sans facturation, Google refuse sans frais au-delà de sa limite)',
   },
 };
 

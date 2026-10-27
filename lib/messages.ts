@@ -1,8 +1,10 @@
 import { browser } from 'wxt/browser';
-import type { ImageGate } from './gate';
+import { isAiReviewInput, type AiReviewInput } from './ai/input';
+import type { Gates } from './gate';
+import type { GeminiFailure } from './google/gemini';
 import type { KeyCheckResult } from './google/key-check';
 import type { VisionFailure } from './google/vision';
-import type { ImageMatch } from './model';
+import type { AiReview, ImageMatch } from './model';
 import type { Provider } from './settings';
 
 /** Ask the background to fetch a photo and compute its pixel heuristics. */
@@ -25,12 +27,15 @@ export type AnalyzeImageResponse =
  * Ask the background to run the reverse image search (Google Vision) on a listing photo. Costs one
  * Vision credit unless the same photo was searched in the last 7 days. The key and the raw
  * answer stay in the background: the page only gets the matches. With `cacheOnly` (the "Au clic"
- * mode) nothing is ever spent: the answer is the cached result, or `not_cached`.
+ * mode) nothing is ever spent: the answer is the cached result, or `not_cached`. With `retry` (the
+ * user clicked a button) a quota or a network failure that the background remembers for a moment
+ * is tried again instead of being answered again.
  */
 export interface SearchImageRequest {
   type: 'searchImage';
   photoUrl: string;
   cacheOnly?: boolean;
+  retry?: boolean;
 }
 
 export type SearchImageResponse =
@@ -45,11 +50,36 @@ export type SearchImageResponse =
   | { status: 'error'; reason: VisionFailure };
 
 /**
- * Ask whether the reverse image search may run. The keys stay in the background: a content script
- * only ever learns this one word.
+ * Ask the background to have Gemini review a listing: a summary of the signals Fripon computed, and
+ * whether the photo looks like a catalogue shot. Costs one Gemini credit unless the same review
+ * was made in the last 7 days. The key and the raw answer stay in the background: the page only
+ * gets the review. With `cacheOnly` (the "Au clic" mode) nothing is ever spent: the answer is the
+ * cached review, or `not_cached`. `retry` is the same as for `searchImage`.
  */
-export interface GetImageGateRequest {
-  type: 'getImageGate';
+export interface AiReviewRequest {
+  type: 'aiReview';
+  input: AiReviewInput;
+  cacheOnly?: boolean;
+  retry?: boolean;
+}
+
+export type AiReviewResponse =
+  | { status: 'ok'; review: AiReview }
+  /** No Gemini key saved: nothing was sent. */
+  | { status: 'no_key' }
+  /** The Gemini cap is reached for this period: nothing was sent. */
+  | { status: 'quota' }
+  /** Only for `cacheOnly`: this listing was not reviewed in the last 7 days. */
+  | { status: 'not_cached' }
+  /** The review did not complete; the credit was only given back when Google certainly did not bill it. */
+  | { status: 'error'; reason: GeminiFailure };
+
+/**
+ * Ask whether the paid steps may run. The keys stay in the background: a content script only ever
+ * learns these two words.
+ */
+export interface GetGatesRequest {
+  type: 'getGates';
 }
 
 /** Parts of the options page a message can point at (the page scrolls to the matching id). */
@@ -77,7 +107,8 @@ export interface TestKeyRequest {
 export type RuntimeMessage =
   | AnalyzeImageRequest
   | SearchImageRequest
-  | GetImageGateRequest
+  | AiReviewRequest
+  | GetGatesRequest
   | OpenOptionsRequest
   | TestKeyRequest;
 
@@ -85,7 +116,8 @@ export type RuntimeMessage =
 export interface RuntimeResponses {
   analyzeImage: AnalyzeImageResponse;
   searchImage: SearchImageResponse;
-  getImageGate: ImageGate;
+  aiReview: AiReviewResponse;
+  getGates: Gates;
   openOptions: void;
   testKey: KeyCheckResult;
 }
@@ -100,6 +132,8 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
     url?: unknown;
     photoUrl?: unknown;
     cacheOnly?: unknown;
+    retry?: unknown;
+    input?: unknown;
     section?: unknown;
     provider?: unknown;
     key?: unknown;
@@ -110,9 +144,16 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
     case 'searchImage':
       return (
         typeof message.photoUrl === 'string' &&
-        (message.cacheOnly === undefined || typeof message.cacheOnly === 'boolean')
+        (message.cacheOnly === undefined || typeof message.cacheOnly === 'boolean') &&
+        (message.retry === undefined || typeof message.retry === 'boolean')
       );
-    case 'getImageGate':
+    case 'aiReview':
+      return (
+        isAiReviewInput(message.input) &&
+        (message.cacheOnly === undefined || typeof message.cacheOnly === 'boolean') &&
+        (message.retry === undefined || typeof message.retry === 'boolean')
+      );
+    case 'getGates':
       return true;
     case 'openOptions':
       return (

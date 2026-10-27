@@ -115,15 +115,26 @@ async function until(predicate: () => boolean, timeoutMs = 8_000) {
   }
 }
 
-/** What the background answers to `getImageGate`; an Error makes the message fail. */
+/** What the background answers to `getGates` for the image search; an Error makes the message fail. */
 let imageGate: string | Error;
+/** ... and for the AI review. */
+let aiGate: string;
 
 type SentMessage = {
   type: string;
   url?: string;
   photoUrl?: string;
   cacheOnly?: boolean;
+  retry?: boolean;
   section?: string;
+  input?: {
+    photoUrl: string;
+    title: string;
+    description: string;
+    price: string;
+    signals: string[];
+    fingerprint: string[];
+  };
 };
 
 /**
@@ -132,10 +143,20 @@ type SentMessage = {
  */
 let searchAnswer: (message: SentMessage) => Promise<unknown>;
 
+/**
+ * What the background answers to `aiReview`; a promise lets a test hold the answer back. By
+ * default it answers as the real one would for the gate: no key, quota, the cache only, or a review.
+ */
+let aiAnswer: (message: SentMessage) => Promise<unknown>;
+
+const REVIEW = { catalogPhoto: false, summary: 'Résumé de test.' };
+
 const PHOTO_URL = 'https://images1.vinted.net/t/01_a/f800/main.webp?s=aa';
 
 /** The searches that can spend: not the look in the cache that "Au clic" mode makes by itself. */
 const paidSearches = () => sentMessages('searchImage').filter((message) => !message.cacheOnly);
+/** The reviews that can spend: not the look in the cache that "Au clic" mode makes by itself. */
+const paidReviews = () => sentMessages('aiReview').filter((message) => !message.cacheOnly);
 
 function sentMessages(type: string): SentMessage[] {
   return vi
@@ -152,6 +173,32 @@ async function expandChecks() {
 
 function actionButton(): HTMLButtonElement | null {
   return hostCard()?.shadowRoot?.querySelector('.fripon__action') ?? null;
+}
+
+/** Holds the answer of the real review until the test releases it; the look in the cache answers at once. */
+function holdReview() {
+  let release: (value: unknown) => void = () => undefined;
+  aiAnswer = (message) =>
+    message.cacheOnly
+      ? Promise.resolve({ status: 'not_cached' })
+      : new Promise((resolve) => {
+          release = resolve;
+        });
+  return (value: unknown) => release(value);
+}
+
+/** The text of the AI block of the expanded card, '' when the card has none. */
+function aiText(): string {
+  return hostCard()?.shadowRoot?.querySelector('.fripon__ai')?.textContent ?? '';
+}
+
+/** The order in which the paid requests were sent. */
+function paidOrder(): string[] {
+  return vi
+    .mocked(browser.runtime.sendMessage)
+    .mock.calls.map(([message]) => message as unknown as SentMessage)
+    .filter((message) => ['searchImage', 'aiReview'].includes(message.type))
+    .map((message) => `${message.type}${message.cacheOnly ? ':cache' : ''}`);
 }
 
 /** Holds the answer of the real search until the test releases it; the look in the cache answers at once. */
@@ -174,6 +221,7 @@ beforeEach(() => {
   document.head.innerHTML = '';
   document.body.innerHTML = PAGE;
   imageGate = 'no_key';
+  aiGate = 'no_key';
   searchAnswer = (message) =>
     Promise.resolve(
       message.cacheOnly
@@ -184,12 +232,25 @@ beforeEach(() => {
             ? { status: 'ok', matches: [] }
             : { status: 'no_key' },
     );
+  aiAnswer = (message) =>
+    Promise.resolve(
+      message.cacheOnly
+        ? { status: 'not_cached' }
+        : aiGate === 'quota'
+          ? { status: 'quota' }
+          : aiGate === 'ready' || aiGate === 'manual'
+            ? { status: 'ok', review: REVIEW }
+            : { status: 'no_key' },
+    );
   vi.spyOn(browser.runtime, 'sendMessage').mockImplementation(((message: SentMessage) => {
-    if (message.type === 'getImageGate') {
-      return imageGate instanceof Error ? Promise.reject(imageGate) : Promise.resolve(imageGate);
+    if (message.type === 'getGates') {
+      return imageGate instanceof Error
+        ? Promise.reject(imageGate)
+        : Promise.resolve({ image: imageGate, ai: aiGate });
     }
     if (message.type === 'openOptions') return Promise.resolve(undefined);
     if (message.type === 'searchImage') return searchAnswer(message);
+    if (message.type === 'aiReview') return aiAnswer(message);
     return Promise.resolve({
       ok: true,
       hash: message.url?.includes('/02/') ? 'ffffffffffffffff' : '0000000000000000',
@@ -220,8 +281,8 @@ describe('listing content script', () => {
       '/api/v2/wardrobe/7000001/items?page=1&per_page=96',
     ]);
     expect(sentMessages('analyzeImage')).toHaveLength(2);
-    // The gate is asked once per run, and only that: no key ever travels to the page.
-    expect(sentMessages('getImageGate')).toEqual([{ type: 'getImageGate' }]);
+    // The gates are asked once per run, and only that: no key ever travels to the page.
+    expect(sentMessages('getGates')).toEqual([{ type: 'getGates' }]);
   }, 15_000);
 
   describe('when Vinted re-renders the item sidebar', () => {
@@ -249,7 +310,7 @@ describe('listing content script', () => {
       // Same shadow tree: the verdict and the expanded checks survive.
       expect(shadowText()).toContain('Chercher moi-même sur Google Lens');
       expect(calls.filter((url) => url.startsWith('/api/'))).toHaveLength(apiCalls);
-      expect(sentMessages('getImageGate')).toHaveLength(1);
+      expect(sentMessages('getGates')).toHaveLength(1);
     }, 15_000);
 
     it('waits for the price block to come back when it is removed alone', async () => {
@@ -537,7 +598,7 @@ describe('listing content script', () => {
       // No new free check: neither a Vinted request nor a photo download.
       expect(apiCalls(calls)).toHaveLength(requests);
       expect(sentMessages('analyzeImage')).toHaveLength(photoAnalyses);
-      expect(sentMessages('getImageGate')).toHaveLength(1);
+      expect(sentMessages('getGates')).toHaveLength(1);
       expect(paidSearches()).toHaveLength(1);
       // The checks stayed expanded through the updates.
       expect(shadowText()).toContain('Chercher moi-même sur Google Lens');
@@ -651,6 +712,697 @@ describe('listing content script', () => {
       expect(shadowText()).toContain("Rien de suspect (sans recherche d'image)");
       expect(document.querySelectorAll('fripon-listing-card')).toHaveLength(1);
     }, 15_000);
+  });
+
+  describe('AI review', () => {
+    async function openCard() {
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      await expandChecks();
+    }
+
+    it('reviews the listing after the image search, with its result among the signals', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      searchAnswer = () => Promise.resolve({ status: 'ok', matches: [SHEIN_EXACT, TEMU_SIMILAR] });
+      await openCard();
+      await until(() => aiText().includes('Résumé de test.'));
+
+      expect(paidOrder()).toEqual(['searchImage', 'aiReview']);
+      const [review] = sentMessages('aiReview');
+      expect(review?.cacheOnly).toBeUndefined();
+      expect(review?.input).toMatchObject({
+        photoUrl: PHOTO_URL,
+        title: 'Robe de soirée',
+        description: 'Robe portée une fois.',
+      });
+      expect(review?.input?.price.replace(/\s/g, ' ')).toBe('12,50 €');
+      expect(review?.input?.signals[0]).toBe(
+        "Recherche d'image : la même photo est en vente sur Shein.",
+      );
+      expect(review?.input?.signals.join('\n')).toContain('Vendeur (');
+      expect(review?.input?.fingerprint[0]).toBe(
+        "Recherche d'image : la même photo est en vente sur Shein.",
+      );
+      // The block: a title, the summary, the reminder that it can be wrong.
+      expect(aiText()).toContain("L'avis de l'IA");
+      expect(aiText()).toContain('Résumé de test.');
+      expect(aiText()).toContain('Résumé par Gemini, il peut se tromper.');
+    }, 15_000);
+
+    it('puts the summary in the expanded card only', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      stubFetch();
+      await script.main(ctx);
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      await until(() => sentMessages('aiReview').length === 1);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(shadowText()).not.toContain('Résumé de test.');
+      await expandChecks();
+      expect(aiText()).toContain('Résumé de test.');
+    }, 15_000);
+
+    it('waits for the image search before asking the AI', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      const release = holdSearch();
+      await openCard();
+      await until(() => sentMessages('searchImage').length === 1);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(sentMessages('aiReview')).toEqual([]);
+
+      release({ status: 'ok', matches: [] });
+      await until(() => aiText().includes('Résumé de test.'));
+      expect(paidOrder()).toEqual(['searchImage', 'aiReview']);
+      expect(sentMessages('aiReview')[0]?.input?.signals[0]).toBe(
+        "Recherche d'image : aucune trace de la photo sur Shein, Temu, AliExpress…",
+      );
+    }, 15_000);
+
+    it('says the AI is reading while the review runs', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      const release = holdReview();
+      await openCard();
+      await until(() => aiText().includes("L'IA lit l'annonce…"));
+      expect(aiText()).not.toContain('Résumé par Gemini');
+
+      release({ status: 'ok', review: REVIEW });
+      await until(() => aiText().includes('Résumé de test.'));
+      expect(aiText()).not.toContain("L'IA lit l'annonce…");
+    }, 15_000);
+
+    it('reviews even when the image search is not available, and says so to the AI', async () => {
+      imageGate = 'no_key';
+      aiGate = 'ready';
+      await openCard();
+      await until(() => aiText().includes('Résumé de test.'));
+      expect(sentMessages('aiReview')[0]?.input?.signals[0]).toBe("Recherche d'image : non faite.");
+    }, 15_000);
+
+    it('confirms a catalogue photo on the Photos row and redoes the verdict', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      searchAnswer = () => Promise.resolve({ status: 'ok', matches: [SHEIN_EXACT] });
+      aiAnswer = () =>
+        Promise.resolve({
+          status: 'ok',
+          review: { catalogPhoto: true, summary: 'Photo de studio, vue sur Shein.' },
+        });
+      await openCard();
+      await until(() => shadowText().includes('Photo catalogue'));
+
+      expect(shadowText()).toContain("L'IA confirme une photo de catalogue ou de studio.");
+      // An exact match and a strong signal: the verdict rules say dropshipping, not the AI.
+      expect(shadowText()).toContain('Dropshipping probable');
+      expect(aiText()).toContain('Photo de studio, vue sur Shein.');
+    }, 15_000);
+
+    it('only sees a catalogue photo, and leaves the green verdict, when the image search found nothing', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      aiAnswer = () =>
+        Promise.resolve({
+          status: 'ok',
+          review: { catalogPhoto: true, summary: 'Photo de studio.' },
+        });
+      await openCard();
+      await until(() => shadowText().includes("L'IA voit une photo de catalogue ou de studio."));
+
+      expect(shadowText()).toContain('Photo type catalogue');
+      expect(shadowText()).not.toContain("L'IA confirme");
+      expect(shadowText()).toContain('Rien de suspect');
+      expect(shadowText()).not.toContain('À vérifier');
+    }, 15_000);
+
+    it('leaves the Photos row alone when the AI sees no catalogue photo', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      await openCard();
+      await until(() => aiText().includes('Résumé de test.'));
+      expect(shadowText()).not.toContain('Photo catalogue');
+      expect(shadowText()).toContain('Rien de suspect');
+    }, 15_000);
+
+    it('says nothing of the AI without a Gemini key', async () => {
+      imageGate = 'ready';
+      aiGate = 'no_key';
+      await openCard();
+      await until(() => sentMessages('aiReview').length === 1);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(hostCard()?.shadowRoot?.querySelector('.fripon__ai')).toBeNull();
+      expect(shadowText()).not.toContain("L'avis de l'IA");
+      expect(shadowText()).not.toContain("L'IA lit l'annonce…");
+    }, 15_000);
+
+    it('shows a review that is still in the cache even without a key', async () => {
+      aiGate = 'no_key';
+      aiAnswer = () => Promise.resolve({ status: 'ok', review: REVIEW });
+      await openCard();
+      await until(() => aiText().includes('Résumé de test.'));
+    }, 15_000);
+
+    it.each([
+      [{ status: 'error', reason: 'network' }, "L'IA ne répond pas pour l'instant."],
+      [{ status: 'error', reason: 'photo' }, "L'IA n'a pas pu lire la photo de l'annonce."],
+      [{ status: 'error', reason: 'invalid_answer' }, "L'IA a donné une réponse inutilisable."],
+      [
+        { status: 'error', reason: 'quota' },
+        'Google a atteint la limite de ta clé Gemini, réessaie plus tard.',
+      ],
+      [{ status: 'quota' }, "Le plafond d'avis de l'IA est atteint pour aujourd'hui."],
+    ])(
+      'shows a short neutral line when the review ends in %j',
+      async (answer, line) => {
+        imageGate = 'ready';
+        aiGate = 'ready';
+        aiAnswer = () => Promise.resolve(answer);
+        await openCard();
+        await until(() => aiText().includes(line));
+        expect(aiText()).not.toContain('Résumé par Gemini');
+        // The verdict does not move for a failed review.
+        expect(shadowText()).toContain('Rien de suspect');
+      },
+      15_000,
+    );
+
+    it('shows the failure when the background does not answer at all', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      aiAnswer = () => Promise.reject(new Error('Extension context invalidated'));
+      await openCard();
+      await until(() => aiText().includes("L'IA ne répond pas pour l'instant."));
+    }, 15_000);
+
+    it('sends the user to the keys when Google refuses the Gemini key', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      aiAnswer = () => Promise.resolve({ status: 'error', reason: 'billing' });
+      await openCard();
+      await until(() => aiText().includes('Google refuse ta clé Gemini'));
+
+      const button = hostCard()?.shadowRoot?.querySelector<HTMLButtonElement>(
+        '.fripon__ai .fripon__action',
+      );
+      expect(button?.textContent).toBe('Vérifier ma clé');
+      button?.click();
+      expect(sentMessages('openOptions')).toContainEqual({ type: 'openOptions', section: 'keys' });
+    }, 15_000);
+
+    describe('when the image search is not final', () => {
+      /** The first search fails (a retryable failure), the next ones answer with `then`. */
+      function failThen(then: unknown) {
+        let attempts = 0;
+        searchAnswer = () =>
+          Promise.resolve(++attempts === 1 ? { status: 'error', reason: 'network' } : then);
+      }
+      /** A review whose summary says which image line it was asked about. */
+      const answerBySignal = () => {
+        aiAnswer = (message) =>
+          Promise.resolve({
+            status: 'ok',
+            review: { catalogPhoto: false, summary: `Résumé pour : ${message.input?.signals[0]}` },
+          });
+      };
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
+
+      it('waits for a retry of the search to succeed, then reviews with its result', async () => {
+        imageGate = 'ready';
+        aiGate = 'ready';
+        failThen({ status: 'ok', matches: [SHEIN_EXACT] });
+        answerBySignal();
+        await openCard();
+        await until(() => actionButton()?.textContent === 'Réessayer la recherche');
+        await settle();
+        // The row offers its retry: the review does not start, and the card says nothing of it.
+        expect(sentMessages('aiReview')).toEqual([]);
+        expect(hostCard()?.shadowRoot?.querySelector('.fripon__ai')).toBeNull();
+
+        actionButton()?.click();
+        await until(() => aiText().includes("Résumé pour : Recherche d'image : la même photo"));
+        expect(paidSearches()).toHaveLength(2);
+        expect(paidReviews()).toHaveLength(1);
+        expect(paidReviews()[0]?.input?.signals[0]).toBe(
+          "Recherche d'image : la même photo est en vente sur Shein.",
+        );
+        // The retry is the user's click, and the review it starts says so.
+        expect(paidReviews()[0]?.retry).toBe(true);
+      }, 15_000);
+
+      it('keeps waiting while the retry fails the same way', async () => {
+        imageGate = 'ready';
+        aiGate = 'ready';
+        searchAnswer = () => Promise.resolve({ status: 'error', reason: 'network' });
+        await openCard();
+        await until(() => actionButton()?.textContent === 'Réessayer la recherche');
+
+        actionButton()?.click();
+        await until(() => paidSearches().length === 2);
+        await settle();
+        expect(actionButton()?.textContent).toBe('Réessayer la recherche');
+        expect(sentMessages('aiReview')).toEqual([]);
+        expect(hostCard()?.shadowRoot?.querySelector('.fripon__ai')).toBeNull();
+      }, 15_000);
+
+      it.each([
+        ['a cap reached', { status: 'quota' }],
+        ['a photo that cannot be read', { status: 'error', reason: 'photo' }],
+        ['a key Google refuses', { status: 'error', reason: 'billing' }],
+        ['no key', { status: 'no_key' }],
+      ])(
+        'reviews as soon as the row is final: %s',
+        async (_name, answer) => {
+          imageGate = 'ready';
+          aiGate = 'ready';
+          searchAnswer = () => Promise.resolve(answer);
+          await openCard();
+          await until(() => aiText().includes('Résumé de test.'));
+          expect(paidReviews()).toHaveLength(1);
+          expect(paidReviews()[0]?.retry).toBeUndefined();
+        },
+        15_000,
+      );
+
+      it('does not review in manual mode while the click left a retry, then does once it succeeds', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        let attempts = 0;
+        searchAnswer = (message) =>
+          Promise.resolve(
+            message.cacheOnly
+              ? { status: 'not_cached' }
+              : ++attempts === 1
+                ? { status: 'error', reason: 'network' }
+                : { status: 'ok', matches: [] },
+          );
+        answerBySignal();
+        const real = aiAnswer;
+        aiAnswer = (message) =>
+          message.cacheOnly ? Promise.resolve({ status: 'not_cached' }) : real(message);
+        await openCard();
+        await until(() => sentMessages('aiReview').length === 1);
+
+        actionButton()?.click();
+        await until(() => actionButton()?.textContent === 'Réessayer la recherche');
+        await settle();
+        expect(paidReviews()).toEqual([]);
+        // No stuck "L'IA lit l'annonce…": the block gave way to the row's single button.
+        expect(aiText()).toBe('');
+
+        actionButton()?.click();
+        await until(() => aiText().includes("Résumé pour : Recherche d'image : aucune trace"));
+        expect(paidReviews()).toHaveLength(1);
+      }, 15_000);
+
+      // Real gates cannot differ like this (the mode is shared); the test needs the two steps side
+      // by side to prove a review is dropped and asked again when the image row changes under it.
+      it('drops a review that the image row changed under, and asks again with the new row', async () => {
+        imageGate = 'manual';
+        aiGate = 'ready';
+        let asked = 0;
+        let releaseFirst: (value: unknown) => void = () => undefined;
+        aiAnswer = (message) => {
+          if (message.cacheOnly) return Promise.resolve({ status: 'not_cached' });
+          if (++asked === 1) {
+            return new Promise((resolve) => {
+              releaseFirst = resolve;
+            });
+          }
+          return Promise.resolve({
+            status: 'ok',
+            review: { catalogPhoto: false, summary: `Résumé pour : ${message.input?.signals[0]}` },
+          });
+        };
+        await openCard();
+        await until(() => aiText().includes("L'IA lit l'annonce…"));
+        expect(actionButton()?.textContent).toBe("Lancer la recherche d'image");
+
+        actionButton()?.click();
+        await until(() => shadowText().includes('Introuvable'));
+        // The first review is still on its way: the search did not wait for it.
+        expect(sentMessages('aiReview').filter((m) => !m.cacheOnly)).toHaveLength(1);
+
+        releaseFirst({ status: 'ok', review: { catalogPhoto: true, summary: 'Résumé périmé.' } });
+        await until(() => aiText().includes("Résumé pour : Recherche d'image : aucune trace"));
+        expect(paidReviews()).toHaveLength(2);
+        // The stale answer was never shown, nor its catalogue photo applied.
+        expect(aiText()).not.toContain('Résumé périmé.');
+        expect(shadowText()).not.toContain('Photo type catalogue');
+        // The second review is the user's click that changed the row, not the page's doing.
+        expect(paidReviews()[0]?.retry).toBeUndefined();
+        expect(paidReviews()[1]?.retry).toBe(true);
+      }, 15_000);
+    });
+
+    it('keeps the answer when Vinted re-renders the sidebar during the review', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      const release = holdReview();
+      await openCard();
+      await until(() => aiText().includes("L'IA lit l'annonce…"));
+      const card = hostCard();
+
+      document.querySelector('.details-list--main-info')?.remove();
+      const fresh = document.createElement('div');
+      fresh.className = 'details-list--main-info';
+      fresh.innerHTML = '<div class="details-list--pricing"><span>12,50 €</span></div>';
+      document.querySelector('main')?.prepend(fresh);
+      await until(() => fresh.querySelector('.details-list--pricing')?.nextElementSibling === card);
+
+      release({ status: 'ok', review: REVIEW });
+      await until(() => aiText().includes('Résumé de test.'));
+      expect(hostCard()).toBe(card);
+    }, 15_000);
+
+    it('drops the answer of a review that a newer run replaced', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      const release = holdReview();
+      await openCard();
+      await until(() => aiText().includes("L'IA lit l'annonce…"));
+
+      // A bfcache restore starts the whole run again, with a fresh card.
+      window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+      await until(() => shadowText().includes('Voir les 5 vérifications'));
+      release({
+        status: 'ok',
+        review: { catalogPhoto: true, summary: 'Réponse périmée.' },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(shadowText()).not.toContain('Photo catalogue');
+      expect(shadowText()).not.toContain('Réponse périmée.');
+      expect(document.querySelectorAll('fripon-listing-card')).toHaveLength(1);
+    }, 15_000);
+
+    it('sends no review for a script that was invalidated during the image search', async () => {
+      imageGate = 'ready';
+      aiGate = 'ready';
+      const release = holdSearch();
+      await openCard();
+      await until(() => sentMessages('searchImage').length === 1);
+
+      ctx.notifyInvalidated();
+      release({ status: 'ok', matches: [] });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(sentMessages('aiReview')).toEqual([]);
+    }, 15_000);
+
+    describe('in manual mode', () => {
+      const aiButton = () =>
+        [
+          ...(hostCard()?.shadowRoot?.querySelectorAll<HTMLButtonElement>('.fripon__action') ?? []),
+        ].find((button) => button.textContent === "Lancer l'avis IA");
+
+      it('only looks in the cache by itself, for the image and for the AI', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        await openCard();
+        await until(() => sentMessages('aiReview').length === 1);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        expect(paidOrder()).toEqual(['searchImage:cache', 'aiReview:cache']);
+        // One button for both: the image search's, which starts the review along with it.
+        expect(actionButton()?.textContent).toBe("Lancer la recherche d'image");
+        expect(aiButton()).toBeUndefined();
+        expect(hostCard()?.shadowRoot?.querySelector('.fripon__ai')).toBeNull();
+      }, 15_000);
+
+      it('runs the image search, then the review, on one click', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        searchAnswer = (message) =>
+          Promise.resolve(
+            message.cacheOnly ? { status: 'not_cached' } : { status: 'ok', matches: [SHEIN_EXACT] },
+          );
+        await openCard();
+        await until(() => sentMessages('aiReview').length === 1);
+
+        actionButton()?.click();
+        await until(() => aiText().includes('Résumé de test.'));
+        expect(paidOrder()).toEqual([
+          'searchImage:cache',
+          'aiReview:cache',
+          'searchImage',
+          'aiReview',
+        ]);
+        expect(sentMessages('aiReview')[1]?.input?.signals[0]).toBe(
+          "Recherche d'image : la même photo est en vente sur Shein.",
+        );
+        expect(shadowText()).toContain('Trouvée sur Shein');
+      }, 15_000);
+
+      it('sends retry only with a click, never with what the page starts by itself', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        await openCard();
+        await until(() => sentMessages('aiReview').length === 1);
+        expect(sentMessages('searchImage')).toEqual([
+          { type: 'searchImage', photoUrl: PHOTO_URL, cacheOnly: true },
+        ]);
+        expect(sentMessages('aiReview')[0]?.retry).toBeUndefined();
+
+        actionButton()?.click();
+        await until(() => sentMessages('aiReview').length === 2);
+        expect(sentMessages('searchImage')[1]).toEqual({
+          type: 'searchImage',
+          photoUrl: PHOTO_URL,
+          retry: true,
+        });
+        expect(sentMessages('aiReview')[1]?.retry).toBe(true);
+        expect(sentMessages('aiReview')[1]?.cacheOnly).toBeUndefined();
+      }, 15_000);
+
+      it('shows no second button while the steps of a click run', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        const release = holdSearch();
+        await openCard();
+        actionButton()?.click();
+        await until(() => shadowText().includes('Recherche en cours…'));
+        expect(aiButton()).toBeUndefined();
+        expect(aiText()).toContain("L'IA lit l'annonce…");
+
+        release({ status: 'ok', matches: [] });
+        await until(() => aiText().includes('Résumé de test.'));
+      }, 15_000);
+
+      it('starts the steps once even if the button is clicked twice', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        const release = holdSearch();
+        await openCard();
+        const button = actionButton();
+        button?.click();
+        button?.click();
+        await until(() => shadowText().includes('Recherche en cours…'));
+        release({ status: 'ok', matches: [] });
+        await until(() => aiText().includes('Résumé de test.'));
+        expect(paidSearches()).toHaveLength(1);
+        expect(paidReviews()).toHaveLength(1);
+      }, 15_000);
+
+      it('offers "Lancer l\'avis IA" when only Gemini is set up, on the collapsed card too', async () => {
+        imageGate = 'no_key';
+        aiGate = 'manual';
+        stubFetch();
+        await script.main(ctx);
+        await until(() => shadowText().includes('Voir les 5 vérifications'));
+        expect(actionButton()?.textContent).toBe("Lancer l'avis IA");
+        expect(hostCard()?.shadowRoot?.querySelector('.fripon > .fripon__actions')).not.toBeNull();
+
+        await expandChecks();
+        // Expanded: the image row has its guide button, the AI block its own button.
+        expect(aiButton()).toBeDefined();
+        expect(aiText()).toContain("L'avis de l'IA");
+      }, 15_000);
+
+      it('runs only the review on that click', async () => {
+        imageGate = 'no_key';
+        aiGate = 'manual';
+        stubFetch();
+        await script.main(ctx);
+        await until(() => shadowText().includes('Voir les 5 vérifications'));
+        await until(() => sentMessages('aiReview').length === 1);
+        const searches = sentMessages('searchImage').length;
+
+        aiButton()?.click();
+        await expandChecks();
+        await until(() => aiText().includes('Résumé de test.'));
+        expect(paidReviews()).toHaveLength(1);
+        // No new image request: that step has no button here.
+        expect(sentMessages('searchImage')).toHaveLength(searches);
+        expect(sentMessages('aiReview')[1]?.input?.signals[0]).toBe(
+          "Recherche d'image : non faite.",
+        );
+      }, 15_000);
+
+      it('shows a review that is already in the cache without a click and without spending', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        aiAnswer = (message) =>
+          Promise.resolve(
+            message.cacheOnly
+              ? { status: 'ok', review: REVIEW }
+              : { status: 'error', reason: 'network' },
+          );
+        await openCard();
+        await until(() => aiText().includes('Résumé de test.'));
+        expect(paidReviews()).toEqual([]);
+        expect(paidSearches()).toEqual([]);
+        // The image row still waits for its click.
+        expect(actionButton()?.textContent).toBe("Lancer la recherche d'image");
+      }, 15_000);
+
+      it('reviews again when the click changes the image row after a cached review', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        aiAnswer = (message) =>
+          Promise.resolve(
+            message.cacheOnly
+              ? { status: 'ok', review: { catalogPhoto: false, summary: 'Résumé du cache.' } }
+              : { status: 'ok', review: { catalogPhoto: false, summary: 'Résumé à jour.' } },
+          );
+        await openCard();
+        await until(() => aiText().includes('Résumé du cache.'));
+        expect(paidReviews()).toEqual([]);
+
+        actionButton()?.click();
+        await until(() => aiText().includes('Résumé à jour.'));
+        expect(shadowText()).toContain('Introuvable');
+        expect(paidReviews()).toHaveLength(1);
+        // The new review was asked about the result of the search the click ran.
+        expect(paidReviews()[0]?.input?.signals[0]).toBe(
+          "Recherche d'image : aucune trace de la photo sur Shein, Temu, AliExpress…",
+        );
+        expect(aiText()).not.toContain('Résumé du cache.');
+      }, 15_000);
+
+      it('keeps a cached review when the click does not change the image row', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        searchAnswer = (message) =>
+          Promise.resolve(
+            message.cacheOnly ? { status: 'not_cached' } : { status: 'error', reason: 'network' },
+          );
+        aiAnswer = (message) =>
+          Promise.resolve(
+            message.cacheOnly
+              ? { status: 'ok', review: REVIEW }
+              : { status: 'error', reason: 'network' },
+          );
+        await openCard();
+        await until(() => aiText().includes('Résumé de test.'));
+
+        actionButton()?.click();
+        await until(() => shadowText().includes('Recherche impossible'));
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        // The search failed: the image row still reads "not done", as it did for the cached review.
+        expect(paidReviews()).toEqual([]);
+        expect(aiText()).toContain('Résumé de test.');
+      }, 15_000);
+
+      it('ignores a late cache answer for an image row that has changed since', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        let cacheAnswer: (value: unknown) => void = () => undefined;
+        aiAnswer = (message) =>
+          message.cacheOnly
+            ? new Promise((resolve) => {
+                cacheAnswer = resolve;
+              })
+            : Promise.resolve({ status: 'ok', review: REVIEW });
+        await openCard();
+        await until(() => sentMessages('aiReview').length === 1);
+
+        actionButton()?.click();
+        await until(() => aiText().includes('Résumé de test.'));
+        // Every step of the click is over: nothing is running, but the image row is not the same.
+        cacheAnswer({ status: 'ok', review: { catalogPhoto: true, summary: 'Réponse du cache.' } });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(aiText()).toContain('Résumé de test.');
+        expect(aiText()).not.toContain('Réponse du cache.');
+        expect(shadowText()).not.toContain('Photo type catalogue');
+      }, 15_000);
+
+      it.each([
+        ['an error', () => Promise.resolve({ status: 'error', reason: 'network' })],
+        ['a miss', () => Promise.resolve({ status: 'not_cached' })],
+        ['a lost message', () => Promise.reject(new Error('Extension context invalidated'))],
+        ['no answer at all', () => Promise.resolve(undefined)],
+      ])(
+        'leaves the button alone when the look in the cache ends in %s',
+        async (_name, answer) => {
+          imageGate = 'no_key';
+          aiGate = 'manual';
+          aiAnswer = (message) =>
+            message.cacheOnly ? answer() : Promise.resolve({ status: 'ok', review: REVIEW });
+          stubFetch();
+          await script.main(ctx);
+          await until(() => shadowText().includes('Voir les 5 vérifications'));
+          await until(() => sentMessages('aiReview').length === 1);
+          await new Promise((resolve) => setTimeout(resolve, 100));
+
+          expect(actionButton()?.textContent).toBe("Lancer l'avis IA");
+          await expandChecks();
+          expect(aiText()).not.toContain('Résumé');
+          expect(aiButton()).toBeDefined();
+          // The button still works.
+          aiButton()?.click();
+          await until(() => aiText().includes('Résumé de test.'));
+        },
+        15_000,
+      );
+
+      it('lets a click review even while the look in the cache has not answered', async () => {
+        imageGate = 'no_key';
+        aiGate = 'manual';
+        aiAnswer = (message) =>
+          message.cacheOnly
+            ? new Promise(() => undefined)
+            : Promise.resolve({ status: 'ok', review: REVIEW });
+        stubFetch();
+        await script.main(ctx);
+        await until(() => shadowText().includes('Voir les 5 vérifications'));
+        await until(() => sentMessages('aiReview').length === 1);
+
+        actionButton()?.click();
+        await expandChecks();
+        await until(() => aiText().includes('Résumé de test.'));
+        expect(paidReviews()).toHaveLength(1);
+      }, 15_000);
+
+      it('ignores a late cache answer once the click has started its review', async () => {
+        imageGate = 'no_key';
+        aiGate = 'manual';
+        let cacheAnswer: (value: unknown) => void = () => undefined;
+        const release = holdReview();
+        const real = aiAnswer;
+        aiAnswer = (message) =>
+          message.cacheOnly
+            ? new Promise((resolve) => {
+                cacheAnswer = resolve;
+              })
+            : real(message);
+        stubFetch();
+        await script.main(ctx);
+        await until(() => shadowText().includes('Voir les 5 vérifications'));
+        await until(() => sentMessages('aiReview').length === 1);
+
+        actionButton()?.click();
+        await expandChecks();
+        await until(() => aiText().includes("L'IA lit l'annonce…"));
+        cacheAnswer({ status: 'ok', review: { catalogPhoto: true, summary: 'Réponse du cache.' } });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(aiText()).toContain("L'IA lit l'annonce…");
+        expect(shadowText()).not.toContain('Photo catalogue');
+
+        release({ status: 'ok', review: REVIEW });
+        await until(() => aiText().includes('Résumé de test.'));
+      }, 15_000);
+    });
   });
 
   it('does nothing but warn when there is no anchor', async () => {
