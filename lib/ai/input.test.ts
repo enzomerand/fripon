@@ -60,6 +60,17 @@ describe('clampReviewInput', () => {
     expect(clamped.signals.every((line) => line.length === REVIEW_LIMITS.signal)).toBe(true);
   });
 
+  it('never leaves half an emoji at the cut, which Google would refuse as invalid text', () => {
+    // 😀 is two UTF-16 units: a cut between them leaves a lone surrogate.
+    const text = 'a'.repeat(REVIEW_LIMITS.description - 1) + '😀 et la suite';
+    const clamped = clampReviewInput({ ...INPUT, description: text });
+    expect(clamped.description).toBe('a'.repeat(REVIEW_LIMITS.description - 1));
+    expect(clamped.description.isWellFormed()).toBe(true);
+    // An emoji that fits is kept whole.
+    const fits = 'a'.repeat(REVIEW_LIMITS.description - 2) + '😀';
+    expect(clampReviewInput({ ...INPUT, description: fits }).description).toBe(fits);
+  });
+
   it('drops any field that is not part of the input', () => {
     const sneaky = { ...INPUT, apiKey: 'AIza', extra: [1] } as AiReviewInput;
     expect(Object.keys(clampReviewInput(sneaky)).sort()).toEqual([

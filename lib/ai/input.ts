@@ -38,16 +38,22 @@ export function isAiReviewInput(value: unknown): value is AiReviewInput {
   );
 }
 
+/** The first `max` UTF-16 units of `text`, without leaving the first half of an emoji at the end. */
+function cut(text: string, max: number): string {
+  const head = text.slice(0, max);
+  return /[\ud800-\udbff]$/.test(head) && text.length > max ? head.slice(0, -1) : head;
+}
+
 /** The same input with every part cut to `REVIEW_LIMITS`. */
 export function clampReviewInput(input: AiReviewInput): AiReviewInput {
   return {
     photoUrl: input.photoUrl,
-    title: input.title.slice(0, REVIEW_LIMITS.title),
-    description: input.description.slice(0, REVIEW_LIMITS.description),
-    price: input.price.slice(0, REVIEW_LIMITS.price),
+    title: cut(input.title, REVIEW_LIMITS.title),
+    description: cut(input.description, REVIEW_LIMITS.description),
+    price: cut(input.price, REVIEW_LIMITS.price),
     signals: input.signals
       .slice(0, REVIEW_LIMITS.signals)
-      .map((s) => s.slice(0, REVIEW_LIMITS.signal)),
+      .map((line) => cut(line, REVIEW_LIMITS.signal)),
   };
 }
 
