@@ -65,6 +65,23 @@ ask() {
   done
 }
 
+# `--google-keys`: the two Google keys arrive on stdin (Vision, then Gemini), piped from gcloud on
+# the owner's machine, so nobody copies them by hand. Nothing else is asked.
+if [[ ${1:-} == --google-keys ]]; then
+  IFS= read -r vision || true
+  IFS= read -r gemini || true
+  key_pattern='^AIza[0-9A-Za-z_-]{30,}$'
+  if [[ ! $vision =~ $key_pattern || ! $gemini =~ $key_pattern ]]; then
+    echo "Deux clés Google attendues sur l'entrée standard : Vision, puis Gemini." >&2
+    exit 1
+  fi
+  set_value GOOGLE_VISION_KEY "$vision"
+  set_value GEMINI_KEY "$gemini"
+  unset vision gemini
+  echo "Clés Google Vision et Gemini enregistrées dans $ENV_FILE."
+  exit 0
+fi
+
 echo "Fripon Cloud : configuration de $ENV_FILE"
 echo "Les secrets ne s'affichent pas pendant la saisie."
 echo
