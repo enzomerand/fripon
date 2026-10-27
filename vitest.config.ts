@@ -6,6 +6,6 @@ export default defineConfig({
   test: {
     environment: 'happy-dom',
     // Local scratch work (live API checks spend real credits) is never part of the suite.
-    exclude: [...configDefaults.exclude, '.claude/**'],
+    exclude: [...configDefaults.exclude, '.claude/**', 'safari/**'],
   },
 });
