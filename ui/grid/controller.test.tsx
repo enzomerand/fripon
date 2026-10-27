@@ -94,7 +94,7 @@ describe('placement', () => {
     expect(breakdown?.nextElementSibling).toBe(hostOf(9000101));
     expect(hostOf(9000101)?.parentElement).toBe(breakdown?.parentElement);
     expect(rootOf(9000101).contains(hostOf(9000101))).toBe(true);
-    expect(shadowText(hostOf(9000102))).toBe('🦊 Analyser');
+    expect(shadowText(hostOf(9000102))).toBe('Analyser');
   });
 
   it('is idempotent: scanning again adds nothing', () => {
@@ -262,7 +262,7 @@ describe('analysis of a card', () => {
     shadowButton(hostOf(9000101)).click();
     expect(openOptions).toHaveBeenCalledWith('guide');
     // Back from the options page, the card offers to analyse again.
-    await until(() => shadowText(hostOf(9000101)) === '🦊 Analyser');
+    await until(() => shadowText(hostOf(9000101)) === 'Analyser');
   });
 
   it('says the cap is reached, and opens the credits', async () => {
@@ -311,7 +311,7 @@ describe('a card node that Vinted recycles for another item', () => {
     await until(() => root.querySelector(BUTTON_HOST_TAG) !== oldBlock);
 
     const block = root.querySelector(BUTTON_HOST_TAG) as HTMLElement;
-    expect(shadowText(block)).toBe('🦊 Analyser');
+    expect(shadowText(block)).toBe('Analyser');
     expect(oldBlock.isConnected).toBe(false);
     expect(hosts()).toHaveLength(1);
     expect(running.cards().map((live) => live.id)).toEqual(['9000102']);

@@ -76,7 +76,7 @@ describe('grid content script', () => {
   it('puts a button under every card, and searches nothing before a click', async () => {
     await script.main(ctx);
     expect(hosts()).toHaveLength(2);
-    expect(hosts().map((host) => shadowText(host))).toEqual(['🦊 Analyser', '🦊 Analyser']);
+    expect(hosts().map((host) => shadowText(host))).toEqual(['Analyser', 'Analyser']);
     // The gate is all it asks (for the bar above the results): no search, no photo analysis.
     expect(sent('getGates')).toEqual([{ type: 'getGates' }]);
     expect(sent('searchImage')).toEqual([]);
@@ -92,7 +92,7 @@ describe('grid content script', () => {
     // A click is a real search, not a look in the cache; the other card was not touched.
     expect(sent('searchImage')).toEqual([{ type: 'searchImage', photoUrl: THUMB }]);
     expect(sent('analyzeImage')).toEqual([{ type: 'analyzeImage', url: THUMB }]);
-    expect(shadowText(hosts()[1])).toBe('🦊 Analyser');
+    expect(shadowText(hosts()[1])).toBe('Analyser');
   });
 
   it('opens the guide when there is no key', async () => {

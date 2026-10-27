@@ -31,16 +31,15 @@ afterEach(async () => {
 describe('GridBar', () => {
   it('offers to analyse the cards in view', async () => {
     const on = await show(idle, 24);
-    expect(text()).toBe('🦊 Analyser les 24 articles visibles');
+    expect(text()).toBe('Analyser les 24 articles visibles');
     buttons()[0]?.click();
     expect(on.onAsk).toHaveBeenCalledOnce();
   });
 
-  it('separates the fox from the label: its own item, a space, and a gap in the flex row', async () => {
+  it('separates the fox from the label: its own item and a gap in the flex row', async () => {
     await show(idle, 24);
-    const fox = buttons()[0]?.querySelector('span');
-    expect(fox?.textContent).toBe('🦊');
-    expect(buttons()[0]?.textContent).toBe('🦊 Analyser les 24 articles visibles');
+    expect(buttons()[0]?.firstElementChild?.querySelector('svg')).not.toBeNull();
+    expect(buttons()[0]?.textContent).toBe('Analyser les 24 articles visibles');
     const rule = /\.fripon-bar__button \{[^}]*\}/.exec(css)?.[0] ?? '';
     expect(rule).toMatch(/display:\s*inline-flex/);
     expect(rule).toMatch(/gap:\s*\d+px/);
@@ -48,7 +47,7 @@ describe('GridBar', () => {
 
   it('speaks of one card in the singular', async () => {
     await show(idle, 1);
-    expect(text()).toBe("🦊 Analyser l'article visible");
+    expect(text()).toBe("Analyser l'article visible");
   });
 
   it('asks to confirm, with the cost and the credits left', async () => {
@@ -83,7 +82,7 @@ describe('GridBar', () => {
     expect(root.querySelector('p')?.textContent).toBe(
       "Plafond atteint : les articles restants n'ont pas été analysés.",
     );
-    expect(buttons()[0]?.textContent).toBe('🦊 Analyser les 12 articles visibles');
+    expect(buttons()[0]?.textContent).toBe('Analyser les 12 articles visibles');
   });
 
   it('is a labelled region', async () => {

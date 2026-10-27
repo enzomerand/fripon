@@ -100,7 +100,7 @@ describe('the bar above the results', () => {
     start();
     await until(() => bar() !== null);
     expect(bar()?.nextElementSibling).toBe(document.getElementById('grid'));
-    expect(barText()).toBe('🦊 Analyser les 3 articles visibles');
+    expect(barText()).toBe('Analyser les 3 articles visibles');
   });
 
   it('is not there without a Vision key', async () => {
@@ -126,11 +126,11 @@ describe('the bar above the results', () => {
   it('follows the scroll: the cards in view are counted again', async () => {
     inView = new Set([9000101]);
     start();
-    await until(() => barText() === "🦊 Analyser l'article visible");
+    await until(() => barText() === "Analyser l'article visible");
 
     inView = new Set([9000102, 9000103]);
     window.dispatchEvent(new Event('scroll'));
-    await until(() => barText() === '🦊 Analyser les 2 articles visibles');
+    await until(() => barText() === 'Analyser les 2 articles visibles');
 
     inView = new Set();
     window.dispatchEvent(new Event('scroll'));
@@ -146,20 +146,20 @@ describe('the bar above the results', () => {
         : Promise.resolve(FOUND),
     );
     const running = start();
-    await until(() => barText() === '🦊 Analyser les 4 articles visibles');
+    await until(() => barText() === 'Analyser les 4 articles visibles');
 
     await running.analyze('9000101');
-    await until(() => barText() === '🦊 Analyser les 3 articles visibles');
+    await until(() => barText() === 'Analyser les 3 articles visibles');
 
     const second = running.analyze('9000102');
     await until(() => cardText(9000102).includes('Analyse…'));
-    await until(() => barText() === '🦊 Analyser les 2 articles visibles');
+    await until(() => barText() === 'Analyser les 2 articles visibles');
 
     answer(FOUND);
     await second;
     await until(() => cardText(9000102).includes('analyse rapide'));
     // Done now, still not counted.
-    await until(() => barText() === '🦊 Analyser les 2 articles visibles');
+    await until(() => barText() === 'Analyser les 2 articles visibles');
   });
 
   it('comes back when the key is added, as the user returns to the tab', async () => {
@@ -209,7 +209,7 @@ describe('a batch', () => {
     barButton('Annuler').click();
     await until(() => barText().includes('Analyser les 4'));
     expect(search).not.toHaveBeenCalled();
-    expect(cardText(9000101)).toBe('🦊 Analyser');
+    expect(cardText(9000101)).toBe('Analyser');
   });
 
   it('analyses the cards in view one by one, in page order, then goes away', async () => {
@@ -228,7 +228,7 @@ describe('a batch', () => {
     ]);
     // A second between two analyses, none after the last, none for the card that was out of view.
     expect(sleeps).toEqual([1_000, 1_000]);
-    expect(cardText(9000101)).toBe('🦊 Analyser');
+    expect(cardText(9000101)).toBe('Analyser');
     expect(cardText(9000102)).toContain('analyse rapide');
     expect(cardText(9000104)).toContain('analyse rapide');
   });
@@ -250,8 +250,8 @@ describe('a batch', () => {
 
     expect(search).toHaveBeenCalledOnce();
     // The cards that were not reached keep their button.
-    expect(cardText(9000102)).toBe('🦊 Analyser');
-    expect(barText()).toContain('🦊 Analyser les 3 articles visibles');
+    expect(cardText(9000102)).toBe('Analyser');
+    expect(barText()).toContain('Analyser les 3 articles visibles');
   });
 
   it('stops at the cap, and the cards that remain keep their button', async () => {
@@ -269,8 +269,8 @@ describe('a batch', () => {
     expect(search).toHaveBeenCalledTimes(2);
     expect(cardText(9000101)).toContain('analyse rapide');
     expect(cardText(9000102)).toBe('Plafond atteint');
-    expect(cardText(9000103)).toBe('🦊 Analyser');
-    expect(cardText(9000104)).toBe('🦊 Analyser');
+    expect(cardText(9000103)).toBe('Analyser');
+    expect(cardText(9000104)).toBe('Analyser');
   });
 
   it('goes on after a failed card', async () => {
@@ -381,10 +381,10 @@ describe('cards without a photo', () => {
 
   it('are not counted among the cards a batch would take once the user has looked at them', async () => {
     const running = start(html);
-    await until(() => barText() === '🦊 Analyser les 4 articles visibles');
+    await until(() => barText() === 'Analyser les 4 articles visibles');
     await running.analyze('9000101');
     // The first card, now "Photo indisponible", is left to a click of its own.
-    await until(() => barText() === '🦊 Analyser les 3 articles visibles');
+    await until(() => barText() === 'Analyser les 3 articles visibles');
   });
 });
 
@@ -660,7 +660,7 @@ describe('the bar through its confirmation', () => {
 
   it('asks about the cards the bar offered, even if none is in view by the time of the click', async () => {
     start();
-    await until(() => barText() === '🦊 Analyser les 4 articles visibles');
+    await until(() => barText() === 'Analyser les 4 articles visibles');
     // The page scrolls just before the click, and the bar has not been drawn again yet.
     inView = new Set();
 
@@ -672,7 +672,7 @@ describe('the bar through its confirmation', () => {
 
   it('does not take a card that was analysed by hand between the draw and the click', async () => {
     const running = start();
-    await until(() => barText() === '🦊 Analyser les 4 articles visibles');
+    await until(() => barText() === 'Analyser les 4 articles visibles');
     await running.analyze('9000101');
     inView = new Set();
 
