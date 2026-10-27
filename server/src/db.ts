@@ -1,9 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
-import { canonicalEmail, trialClaimKey } from './email';
-import { dropSizeSegment } from './photo-key';
-import { periodIds } from './time';
 
 export type Db = Database.Database;
 
@@ -31,12 +28,8 @@ export interface Account {
   canonical_email: string;
 }
 
-/**
- * A migration: SQL, or a function when it also has to compute (a backfill). A function also gets
- * `AUTH_SECRET` (null when the caller has none): a backfill of hashes keyed by it cannot be done
- * without it, and must refuse to run rather than skip.
- */
-type Migration = string | ((db: Db, authSecret: string | null) => void);
+/** A migration: SQL, or a function when it also has to compute (a backfill). */
+type Migration = string | ((db: Db) => void);
 
 /**
  * The schema, one entry per version: `PRAGMA user_version` holds how many have run. Never edit an
@@ -53,8 +46,11 @@ const MIGRATIONS: Migration[] = [
     subscription_id TEXT,
     plan TEXT,
     subscription_status TEXT,
-    period_end INTEGER
+    period_end INTEGER,
+    -- The address without its cosmetic variants (+tag, Gmail dots): one trial per mailbox.
+    canonical_email TEXT NOT NULL DEFAULT ''
   );
+  CREATE INDEX accounts_by_canonical_email ON accounts (canonical_email);
 
   -- One live code per email. window_start and sends throttle the sends (3 per 15 minutes); the
   -- row outlives the code's expiry on purpose, or a throttled address could be reset by verifying.
@@ -67,6 +63,24 @@ const MIGRATIONS: Migration[] = [
     window_start INTEGER NOT NULL,
     sends INTEGER NOT NULL DEFAULT 1
   );
+
+  -- Wrong guesses of a sign-in code, one row each: the per-address cap over a rolling day. A guess
+  -- also remembers where it came from (a keyed hash of the client's address prefix, never the
+  -- address): 10 per address and prefix, 50 per address.
+  CREATE TABLE login_failures (
+    email TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    ip_hash TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX login_failures_by_email ON login_failures (email, at);
+  CREATE INDEX login_failures_by_email_ip ON login_failures (email, ip_hash, at);
+
+  -- Accounts created, one row each, by a keyed hash of the client address (never the address).
+  CREATE TABLE signups (
+    ip_hash TEXT NOT NULL,
+    at INTEGER NOT NULL
+  );
+  CREATE INDEX signups_by_ip ON signups (ip_hash, at);
 
   -- Only the SHA-256 of a token is stored: a copy of the database signs nobody in.
   CREATE TABLE sessions (
@@ -91,12 +105,15 @@ const MIGRATIONS: Migration[] = [
   CREATE INDEX usage_by_month ON usage (account_id, month, kind);
   CREATE INDEX usage_by_day ON usage (account_id, day, kind);
 
+  -- AI reviews counted per account, photo AND month (Paris), only when the call really went to
+  -- Gemini.
   CREATE TABLE reviews (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     photo_key TEXT NOT NULL,
+    month TEXT NOT NULL,
     count INTEGER NOT NULL DEFAULT 0,
     last_at INTEGER NOT NULL,
-    PRIMARY KEY (account_id, photo_key)
+    PRIMARY KEY (account_id, photo_key, month)
   );
 
   -- Shared by every account (Vision answers, AI reviews).
@@ -113,163 +130,47 @@ const MIGRATIONS: Migration[] = [
     received_at INTEGER NOT NULL
   );
 
-  -- Paid Vision calls per day, all accounts together: the global ceiling.
+  -- Paid Vision calls per day, all accounts together: the global ceiling. trial_count is the part
+  -- served to accounts on their free trial, which may use a share of the ceiling only.
   CREATE TABLE vision_calls (
+    day TEXT PRIMARY KEY,
+    count INTEGER NOT NULL DEFAULT 0,
+    trial_count INTEGER NOT NULL DEFAULT 0
+  );
+
+  -- Paid Gemini calls per day, all accounts together: the global ceiling.
+  CREATE TABLE gemini_calls (
     day TEXT PRIMARY KEY,
     count INTEGER NOT NULL DEFAULT 0
   );
+
+  -- Mailboxes that had their free trial, by a keyed hash of the canonical address (never the
+  -- address): it outlives the account, so that deleting it and signing up again gives no second
+  -- trial. Purged after 12 months by the hourly maintenance.
+  CREATE TABLE trial_claims (
+    key TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX trial_claims_by_date ON trial_claims (created_at);
   `,
-  (db) => {
-    db.exec(`
-    -- The address without its cosmetic variants (+tag, Gmail dots): one trial per mailbox.
-    ALTER TABLE accounts ADD COLUMN canonical_email TEXT NOT NULL DEFAULT '';
-    CREATE INDEX accounts_by_canonical_email ON accounts (canonical_email);
-
-    -- Wrong guesses of a sign-in code, one row each: the per-address cap over a rolling day.
-    CREATE TABLE login_failures (
-      email TEXT NOT NULL,
-      at INTEGER NOT NULL
-    );
-    CREATE INDEX login_failures_by_email ON login_failures (email, at);
-
-    -- Accounts created, one row each, by a keyed hash of the client address (never the address).
-    CREATE TABLE signups (
-      ip_hash TEXT NOT NULL,
-      at INTEGER NOT NULL
-    );
-    CREATE INDEX signups_by_ip ON signups (ip_hash, at);
-
-    -- Paid Gemini calls per day, all accounts together: the global ceiling.
-    CREATE TABLE gemini_calls (
-      day TEXT PRIMARY KEY,
-      count INTEGER NOT NULL DEFAULT 0
-    );
-    `);
-    const update = db.prepare('UPDATE accounts SET canonical_email = ? WHERE id = ?');
-    for (const row of db.prepare('SELECT id, email FROM accounts').all() as {
-      id: string;
-      email: string;
-    }[]) {
-      update.run(canonicalEmail(row.email), row.id);
-    }
-  },
-  (db) => {
-    db.exec(`
-    -- A wrong guess of a sign-in code now also remembers where it came from (a keyed hash of the
-    -- client's address prefix, never the address): 10 per address and prefix, 50 per address.
-    ALTER TABLE login_failures ADD COLUMN ip_hash TEXT NOT NULL DEFAULT '';
-    CREATE INDEX login_failures_by_email_ip ON login_failures (email, ip_hash, at);
-
-    -- Vision calls served to accounts on their free trial, a part of the day's count: the trial
-    -- may use a share of the global ceiling only.
-    ALTER TABLE vision_calls ADD COLUMN trial_count INTEGER NOT NULL DEFAULT 0;
-
-    -- Reviews are now counted per account, photo AND month (Paris), and only when the call really
-    -- went to Gemini.
-    CREATE TABLE reviews_by_month (
-      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      photo_key TEXT NOT NULL,
-      month TEXT NOT NULL,
-      count INTEGER NOT NULL DEFAULT 0,
-      last_at INTEGER NOT NULL,
-      PRIMARY KEY (account_id, photo_key, month)
-    );
-    `);
-
-    // The old counters go to the month of their last review. A photo key loses its size segment
-    // (`/f800/`, `/310x430/`) like every new key does: one listing, one analysis.
-    const insert = db.prepare(
-      `INSERT INTO reviews_by_month (account_id, photo_key, month, count, last_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (account_id, photo_key, month) DO UPDATE SET
-         count = count + excluded.count, last_at = MAX(last_at, excluded.last_at)`,
-    );
-    for (const row of db.prepare('SELECT * FROM reviews').all() as {
-      account_id: string;
-      photo_key: string;
-      count: number;
-      last_at: number;
-    }[]) {
-      insert.run(
-        row.account_id,
-        dropSizeSegment(row.photo_key),
-        periodIds(new Date(row.last_at)).month,
-        row.count,
-        row.last_at,
-      );
-    }
-    db.exec('DROP TABLE reviews; ALTER TABLE reviews_by_month RENAME TO reviews;');
-
-    // OR IGNORE: two rows of one month that now share a key keep the old key of the second one.
-    const rekey = db.prepare('UPDATE OR IGNORE usage SET photo_key = ? WHERE rowid = ?');
-    for (const row of db.prepare('SELECT rowid AS id, photo_key FROM usage').all() as {
-      id: number;
-      photo_key: string;
-    }[]) {
-      const key = dropSizeSegment(row.photo_key);
-      if (key !== row.photo_key) rekey.run(key, row.id);
-    }
-  },
-  (db, authSecret) => {
-    db.exec(`
-    -- Mailboxes that had their free trial, by a keyed hash of the canonical address (never the
-    -- address): it outlives the account, so that deleting it and signing up again gives no second
-    -- trial. Purged after 12 months by the hourly maintenance.
-    CREATE TABLE trial_claims (
-      key TEXT PRIMARY KEY,
-      created_at INTEGER NOT NULL
-    );
-    CREATE INDEX trial_claims_by_date ON trial_claims (created_at);
-    `);
-
-    // Every account that exists has had its trial (or was refused one): it is claimed too.
-    const accounts = db
-      .prepare(
-        `SELECT canonical_email, MIN(created_at) AS created_at FROM accounts
-         WHERE canonical_email != '' GROUP BY canonical_email`,
-      )
-      .all() as { canonical_email: string; created_at: number }[];
-    if (accounts.length === 0) return;
-    if (authSecret === null) {
-      throw new Error(
-        'AUTH_SECRET is needed to migrate the database: the trial claims of the existing accounts are keyed by it',
-      );
-    }
-    const claim = db.prepare('INSERT OR IGNORE INTO trial_claims (key, created_at) VALUES (?, ?)');
-    for (const row of accounts) {
-      claim.run(trialClaimKey(authSecret, row.canonical_email), row.created_at);
-    }
-  },
 ];
 
-/**
- * Brings the schema up to date; safe to call on every start. `upTo` stops at an older version, so a
- * test can build the database of an earlier release, fill it, and upgrade it. `authSecret` is
- * `AUTH_SECRET`, for the migrations that fill in hashes keyed by it (they throw without it when
- * there is something to fill in).
- */
-export function migrate(
-  db: Db,
-  upTo: number = MIGRATIONS.length,
-  authSecret: string | null = null,
-): void {
+/** Brings the schema up to date; safe to call on every start. */
+export function migrate(db: Db): void {
   const current = Number(db.pragma('user_version', { simple: true }));
-  for (let version = current; version < Math.min(upTo, MIGRATIONS.length); version++) {
+  for (let version = current; version < MIGRATIONS.length; version++) {
     const migration = MIGRATIONS[version] as Migration;
     db.transaction(() => {
       if (typeof migration === 'string') db.exec(migration);
-      else migration(db, authSecret);
+      else migration(db);
       // PRAGMA takes no bound parameter: `version` is a loop counter, never user input.
       db.pragma(`user_version = ${version + 1}`);
     })();
   }
 }
 
-/**
- * Opens the database (a file, or `:memory:` in tests) and brings its schema up to date.
- * `authSecret` (`AUTH_SECRET`) is only read by the migrations that need it.
- */
-export function openDb(path: string, authSecret: string | null = null): Db {
+/** Opens the database (a file, or `:memory:` in tests) and brings its schema up to date. */
+export function openDb(path: string): Db {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
@@ -277,7 +178,7 @@ export function openDb(path: string, authSecret: string | null = null): Db {
   // Another connection holding a write lock makes this one wait instead of failing at once.
   db.pragma('busy_timeout = 5000');
   db.pragma('synchronous = NORMAL');
-  migrate(db, MIGRATIONS.length, authSecret);
+  migrate(db);
   return db;
 }
 

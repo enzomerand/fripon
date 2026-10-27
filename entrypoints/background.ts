@@ -1,7 +1,7 @@
 import { createAiReviewer } from '../lib/ai/review';
 import { createCloudAccount } from '../lib/cloud/account';
 import { createCloudClient, storedSession } from '../lib/cloud/client';
-import { clearExpired, loadSession, sessionState } from '../lib/cloud/session';
+import { clearExpired, sessionState } from '../lib/cloud/session';
 import { createRouter, sectionFor } from '../lib/cloud/router';
 import { createCloudGates, createStatusKeeper } from '../lib/cloud/status';
 import { createCloudSteps } from '../lib/cloud/steps';
@@ -57,7 +57,7 @@ const cloudStatus = createStatusKeeper({ client: cloudClient });
 const cloudSteps = createCloudSteps({
   client: cloudClient,
   status: cloudStatus,
-  token: async () => (await loadSession())?.token ?? null,
+  token: storedSession.token,
 });
 const cloudAccount = createCloudAccount({
   client: cloudClient,

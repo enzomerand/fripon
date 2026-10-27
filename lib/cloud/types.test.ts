@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { PLAN_USAGE } from './test-helpers';
 import { parseMe, parseStatus, parseUsage } from './types';
 
-const PLAN_USAGE = {
-  kind: 'plan',
-  plan: 'essentiel',
-  month: { used: 12, cap: 300 },
-  day: { used: 3, cap: 40 },
-  trialLeft: 15,
-};
 const TRIAL_USAGE = {
   kind: 'trial',
   month: { used: 4, cap: null },

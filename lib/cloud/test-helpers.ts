@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import type { AiReviewInput } from '../ai/input';
 import type { CloudClient } from './client';
 import type { CloudUsage } from './types';
 
@@ -17,6 +18,26 @@ export const TRIAL_USAGE: CloudUsage = {
   day: { used: 1, cap: null },
   trialLeft: 10,
 };
+
+/** A Vinted photo, as the card reads it. */
+export const PHOTO = 'https://images1.vinted.net/t/01_a/f800/main.webp?s=aa';
+
+/** What the card sends for an AI review of `PHOTO`. */
+export const REVIEW_INPUT: AiReviewInput = {
+  photoUrl: PHOTO,
+  title: 'Robe',
+  description: '',
+  price: '12,00 €',
+  signals: ['Recherche d’image : trouvée.'],
+  fingerprint: ['image:exact'],
+};
+
+/** A JSON answer of the Fripon server, as `fetch` returns it. */
+export const json = (status: number, body?: unknown) =>
+  new Response(body === undefined ? null : JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
 
 /** A client whose every call succeeds, each one a spy; override what a test cares about. */
 export function makeClient(overrides: Partial<CloudClient> = {}): CloudClient {

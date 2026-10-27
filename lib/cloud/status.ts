@@ -95,13 +95,12 @@ export function canAnalyse(usage: CloudUsage): boolean {
 
 /**
  * The gate of both paid steps for a signed-in account: no analysis left is `quota`, then "Au
- * clic" is `manual`, else `ready`. `no_key` is only for no account at all. A usage never read (the
+ * clic" is `manual`, else `ready`. A usage never read (the
  * server was out of reach) is not a refusal: the step itself will tell the quota or the network
  * failure, so the card never sends a subscriber to add a Google key. Only a display hint: the
  * steps ask the server whatever it says, as a photo analysed this month is served even at the cap.
  */
-export function cloudGate(status: CloudStatus | null, mode: AnalysisMode): Gate {
-  if (!status) return 'no_key';
+export function cloudGate(status: CloudStatus, mode: AnalysisMode): Gate {
   if (status.usage && !canAnalyse(status.usage)) return 'quota';
   return mode === 'click' ? 'manual' : 'ready';
 }

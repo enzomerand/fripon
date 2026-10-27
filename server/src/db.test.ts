@@ -4,10 +4,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { migrate, openDb, type Db } from './db';
-import { trialClaimKey } from './email';
 import { insertAccount } from './test-helpers';
-
-const SECRET = 'test-secret';
 
 const open: Db[] = [];
 const dirs: string[] = [];
@@ -107,130 +104,6 @@ describe('schema', () => {
       period_end: null,
       canonical_email: '',
     });
-  });
-
-  it('upgrades the database of the first release: canonical emails are filled in, data stays', () => {
-    const raw = new Database(':memory:');
-    migrate(raw, 1);
-    expect(raw.pragma('user_version', { simple: true })).toBe(1);
-    const insert = raw.prepare(
-      'INSERT INTO accounts (id, email, created_at, trial_left) VALUES (?, ?, 5, ?)',
-    );
-    insert.run('a', 'Jo.Doe+x@googlemail.com', 7);
-    insert.run('b', 'plain@example.com', 15);
-
-    migrate(raw, undefined, SECRET);
-
-    expect(
-      raw.prepare('SELECT id, email, trial_left, canonical_email FROM accounts ORDER BY id').all(),
-    ).toEqual([
-      {
-        id: 'a',
-        email: 'Jo.Doe+x@googlemail.com',
-        trial_left: 7,
-        canonical_email: 'jodoe@gmail.com',
-      },
-      { id: 'b', email: 'plain@example.com', trial_left: 15, canonical_email: 'plain@example.com' },
-    ]);
-    expect(
-      raw
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'accounts_by_canonical_email'",
-        )
-        .all(),
-    ).toHaveLength(1);
-    raw.close();
-  });
-
-  it('upgrades the database of the second release: reviews move to their month, photo keys lose their size', () => {
-    const raw = new Database(':memory:');
-    migrate(raw, 2);
-    raw.pragma('foreign_keys = ON');
-    raw.prepare("INSERT INTO accounts (id, email, created_at) VALUES ('a', 'a@b.c', 1)").run();
-    // 2026-10-20 12:00 UTC is October in Paris.
-    const lastAt = Date.UTC(2026, 9, 20, 12);
-    raw
-      .prepare('INSERT INTO reviews (account_id, photo_key, count, last_at) VALUES (?, ?, ?, ?)')
-      .run('a', 'https://images1.vinted.net/t/01_a/f800/1.jpeg', 2, lastAt);
-    raw
-      .prepare('INSERT INTO reviews (account_id, photo_key, count, last_at) VALUES (?, ?, ?, ?)')
-      .run('a', 'https://images1.vinted.net/t/01_a/310x430/1.jpeg', 1, lastAt + 1000);
-    const usage = raw.prepare(
-      "INSERT INTO usage (account_id, photo_key, month, day, kind, served_at) VALUES ('a', ?, ?, '2026-10-20', 'plan', 0)",
-    );
-    usage.run('https://images1.vinted.net/t/01_a/f800/1.jpeg', '2026-10');
-    usage.run('https://images1.vinted.net/t/01_b/f800/2.jpeg', '2026-10');
-    usage.run('https://images1.vinted.net/t/01_b/310x430/2.jpeg', '2026-10');
-    raw.prepare('INSERT INTO login_failures (email, at) VALUES (?, ?)').run('a@b.c', 5);
-    raw.prepare("INSERT INTO vision_calls (day, count) VALUES ('2026-10-20', 7)").run();
-
-    migrate(raw, undefined, SECRET);
-
-    // The two sizes of one photo are one counter now, in the month of the last review.
-    expect(raw.prepare('SELECT photo_key, month, count FROM reviews').all()).toEqual([
-      { photo_key: 'https://images1.vinted.net/t/01_a/1.jpeg', month: '2026-10', count: 3 },
-    ]);
-    // The two sizes of the second photo collide: one takes the new key, the other keeps its old
-    // one (which of the two depends on the order the rows are read in). Nothing is lost.
-    const keys = (
-      raw.prepare('SELECT photo_key FROM usage ORDER BY photo_key').all() as { photo_key: string }[]
-    ).map((row) => row.photo_key);
-    expect(keys).toHaveLength(3);
-    expect(keys).toContain('https://images1.vinted.net/t/01_a/1.jpeg');
-    expect(keys).toContain('https://images1.vinted.net/t/01_b/2.jpeg');
-    expect(raw.prepare('SELECT ip_hash FROM login_failures').all()).toEqual([{ ip_hash: '' }]);
-    expect(raw.prepare('SELECT count, trial_count FROM vision_calls').all()).toEqual([
-      { count: 7, trial_count: 0 },
-    ]);
-    raw.close();
-  });
-
-  it('upgrades the database of the third release: every account gets its trial claim, keyed, one per mailbox, no address kept', () => {
-    const raw = new Database(':memory:');
-    migrate(raw, 3);
-    expect(raw.pragma('user_version', { simple: true })).toBe(3);
-    const insert = raw.prepare(
-      'INSERT INTO accounts (id, email, created_at, trial_left, canonical_email) VALUES (?, ?, ?, 0, ?)',
-    );
-    insert.run('a', 'jo.doe@gmail.com', 50, 'jodoe@gmail.com');
-    insert.run('b', 'jodoe+x@gmail.com', 20, 'jodoe@gmail.com');
-    insert.run('c', 'plain@example.com', 30, 'plain@example.com');
-
-    migrate(raw, undefined, SECRET);
-
-    expect(raw.pragma('user_version', { simple: true })).toBe(4);
-    expect(
-      raw.prepare('SELECT key, created_at FROM trial_claims ORDER BY created_at').all(),
-    ).toEqual([
-      { key: trialClaimKey(SECRET, 'jodoe@gmail.com'), created_at: 20 },
-      { key: trialClaimKey(SECRET, 'plain@example.com'), created_at: 30 },
-    ]);
-    expect(raw.prepare('SELECT COUNT(*) AS n FROM accounts').get()).toEqual({ n: 3 });
-    raw.close();
-  });
-
-  it('refuses to upgrade a database that has accounts without AUTH_SECRET, and changes nothing', () => {
-    const raw = new Database(':memory:');
-    migrate(raw, 3);
-    raw
-      .prepare(
-        "INSERT INTO accounts (id, email, created_at, canonical_email) VALUES ('a', 'a@b.c', 1, 'a@b.c')",
-      )
-      .run();
-
-    expect(() => migrate(raw)).toThrow(/AUTH_SECRET/);
-    expect(raw.pragma('user_version', { simple: true })).toBe(3);
-    expect(
-      raw.prepare("SELECT name FROM sqlite_master WHERE name = 'trial_claims'").all(),
-    ).toHaveLength(0);
-    raw.close();
-  });
-
-  it('upgrades an empty database without AUTH_SECRET: there is nothing to claim', () => {
-    const raw = new Database(':memory:');
-    migrate(raw);
-    expect(raw.pragma('user_version', { simple: true })).toBe(4);
-    raw.close();
   });
 
   it('counts a review per account, photo and month', () => {

@@ -4,6 +4,7 @@ import { loadConfig, type Config } from './config';
 import { openDb, type Account, type Db } from './db';
 import { canonicalEmail } from './email';
 import type { Mailer } from './mailer';
+import type { StripeSubscription } from './stripe';
 
 /** Shared by the server's tests: an in-memory database, a clock to move, a mailer to read. */
 
@@ -127,4 +128,40 @@ export async function signIn(t: TestApp, email: string): Promise<string> {
   const response = await post(t.app, '/v1/auth/verify', { email, code: sent.code });
   const { token } = (await response.json()) as { token: string };
   return token;
+}
+
+/** The `authorization` header of a signed-in request. */
+export const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
+
+/** A sign-in code that is not `code`. */
+export const wrongCode = (code: string) => (code === '000000' ? '000001' : '000000');
+
+/** 2026-11-20T12:00:00Z in seconds, as Stripe says it. */
+export const PERIOD_END_SECONDS = 1_795_176_000;
+/** 2026-10-20T12:00:00Z in seconds: when a subscription was made, unless a test says otherwise. */
+export const CREATED_SECONDS = 1_792_497_600;
+
+type Price = StripeSubscription['items']['data'][number]['price'];
+
+/** A subscription as Stripe reports it; `overrides` sets any field, `price` the one item's price. */
+export function subscription(
+  overrides: Partial<StripeSubscription> & { price?: Price } = {},
+): StripeSubscription {
+  const { price, ...rest } = overrides;
+  return {
+    id: 'sub_1',
+    status: 'active',
+    created: CREATED_SECONDS,
+    customer: 'cus_1',
+    metadata: {},
+    items: {
+      data: [
+        {
+          price: price ?? { lookup_key: 'essentiel_monthly' },
+          current_period_end: PERIOD_END_SECONDS,
+        },
+      ],
+    },
+    ...rest,
+  };
 }

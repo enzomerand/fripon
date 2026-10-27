@@ -55,9 +55,6 @@ export interface CloudStatus {
   checkedAt: number;
 }
 
-/** Why the server refused to count one more analysis (`402`). */
-export type DenyReason = 'day' | 'month' | 'trial' | 'none';
-
 const isCount = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 

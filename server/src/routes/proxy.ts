@@ -13,16 +13,16 @@ import { VISION_CACHE_PREFIX, parseMatches } from '../../../lib/image/search-ent
 import { isRecord } from '../../../lib/json';
 import type { AiReview, ImageMatch } from '../../../lib/model';
 import type { RouteModule } from '../context';
+import { callsOn, giveBackCall, takeCall } from '../daily-ceiling';
 import { getAccount } from '../db';
 import { isOwnerProblem, upstreamReason, type GoogleDeps, type UpstreamReason } from '../google';
 import { limitBody, readJsonObject } from '../http';
 import { downloadPhoto, isAcceptablePhotoUrl, serverPhotoKey } from '../photo';
 import { entitlement } from '../plans';
 import { allowReview, mayReview, releaseReview, reserveAnalysis, usageSummary } from '../quota';
-import { geminiCallsOn, giveBackGeminiCall, takeGeminiCall } from '../gemini-ceiling';
 import { createSharedCache } from '../shared-cache';
 import { GOOGLE_TIME_ZONE, periodIds } from '../time';
-import { giveBackVisionCall, takeVisionCall, visionCallsOn } from '../vision-ceiling';
+import { takeVisionCall } from '../vision-ceiling';
 
 /**
  * The two paid steps, run with the owner's Google keys: `POST /v1/search` (Vision) and
@@ -204,7 +204,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
         const image = await downloadPhoto(google.fetch, photoUrl);
         if (!image) {
           // Google was never called: nothing to bill.
-          giveBackVisionCall(ctx.db, day, trial);
+          giveBackCall(ctx.db, 'vision_calls', day, trial);
           return upstream('photo', true);
         }
 
@@ -218,7 +218,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
         if (!result.ok) {
           // The one rule of the refund lives in the extension's `readRefusal`: only a call Google
           // certainly did not bill goes back to the day's ceiling.
-          if (result.refundable) giveBackVisionCall(ctx.db, day, trial);
+          if (result.refundable) giveBackCall(ctx.db, 'vision_calls', day, trial);
           ownerProblem('vision', result.reason);
           const reason = upstreamReason(result.reason);
           if (!result.refundable && isDeterministic(result.reason)) {
@@ -234,7 +234,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
         return { ok: true, matches };
       } catch (error) {
         console.error('[proxy] a search failed on the server:', message(error));
-        if (!called) giveBackVisionCall(ctx.db, day, trial);
+        if (!called) giveBackCall(ctx.db, 'vision_calls', day, trial);
         return internal(!called);
       }
     }
@@ -258,7 +258,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
       const day = periodIds(ctx.now(), GOOGLE_TIME_ZONE).day;
       const cap = ctx.config.globalDailyVisionCap;
       if (!takeVisionCall(ctx.db, day, cap, trial)) {
-        if (visionCallsOn(ctx.db, day) >= cap) ceilingReached('vision', cap);
+        if (callsOn(ctx.db, 'vision_calls', day) >= cap) ceilingReached('vision', cap);
         return Promise.resolve(capacity());
       }
 
@@ -289,7 +289,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
         const image = await downloadPhoto(google.fetch, input.photoUrl);
         if (!image) {
           // Google was never called: nothing to bill.
-          giveBackGeminiCall(ctx.db, day);
+          giveBackCall(ctx.db, 'gemini_calls', day);
           giveBackReview();
           return upstream('photo', true);
         }
@@ -312,7 +312,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
         }
         if (!result.ok) {
           // Same rule as Vision: only a call Google certainly did not bill goes back to the ceiling.
-          if (result.refundable) giveBackGeminiCall(ctx.db, day);
+          if (result.refundable) giveBackCall(ctx.db, 'gemini_calls', day);
           // An unrecognised 400 may be this very photo (a format Gemini refuses): not the key's
           // fault, so neither a mail nor a red `/healthz`.
           if (!result.specific) ownerProblem('gemini', result.reason);
@@ -332,7 +332,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
       } catch (error) {
         console.error('[proxy] a review failed on the server:', message(error));
         if (!called) {
-          giveBackGeminiCall(ctx.db, day);
+          giveBackCall(ctx.db, 'gemini_calls', day);
           giveBackReview();
         }
         return internal(!called);
@@ -367,7 +367,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
       const cap = ctx.config.globalDailyGeminiCap;
       let taken: boolean;
       try {
-        taken = takeGeminiCall(ctx.db, day, cap);
+        taken = takeCall(ctx.db, 'gemini_calls', day, cap);
       } catch (error) {
         // No call was made: the review that was just counted goes back.
         releaseReview(ctx.db, accountId, photo, countedAt);
@@ -375,7 +375,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
       }
       if (!taken) {
         releaseReview(ctx.db, accountId, photo, countedAt);
-        if (geminiCallsOn(ctx.db, day) >= cap) ceilingReached('gemini', cap);
+        if (callsOn(ctx.db, 'gemini_calls', day) >= cap) ceilingReached('gemini', cap);
         return Promise.resolve(capacity());
       }
 

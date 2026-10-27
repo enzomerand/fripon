@@ -23,7 +23,8 @@ export const REFRESH_EVERY_MS = 10 * 60 * 1000;
 /** A request waits this long for that read; past it, it answers from what is stored (the read goes on). */
 export const REFRESH_WAIT_MS = 8_000;
 
-const isActive = (status: string | null): boolean =>
+/** Whether a stored subscription status is one Stripe bills on (`ACTIVE_STATUSES`). */
+export const isActive = (status: string | null): boolean =>
   status !== null && ACTIVE_STATUSES.includes(status);
 
 /** What `resyncAll` did, in numbers: nothing about any account. */

@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { RouteModule } from '../context';
 import type { Account } from '../db';
-import { createTestApp, insertAccount, post, signIn, type TestApp } from '../test-helpers';
+import { bearer, createTestApp, insertAccount, post, signIn, type TestApp } from '../test-helpers';
 
-const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 const count = (t: TestApp, table: string, where = '1 = 1', ...params: unknown[]) =>
   (
     t.db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${where}`).get(...params) as {

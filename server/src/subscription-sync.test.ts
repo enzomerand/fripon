@@ -7,37 +7,17 @@ import {
   createSubscriptionSync,
   type SubscriptionSync,
 } from './subscription-sync';
-import { fakeClock, insertAccount, type Clock } from './test-helpers';
+import {
+  CREATED_SECONDS,
+  PERIOD_END_SECONDS,
+  fakeClock,
+  insertAccount,
+  subscription,
+  type Clock,
+} from './test-helpers';
 
-/** 2026-11-20T12:00:00Z in seconds, as Stripe says it. */
-const PERIOD_END_SECONDS = 1_795_176_000;
-const CREATED_SECONDS = 1_792_497_600;
 /** What `fakeClock()` starts at: the tables below are built before any test runs. */
 const START = Date.parse('2026-10-20T12:00:00Z');
-
-type Price = StripeSubscription['items']['data'][number]['price'];
-
-function subscription(
-  overrides: Partial<StripeSubscription> & { price?: Price } = {},
-): StripeSubscription {
-  const { price, ...rest } = overrides;
-  return {
-    id: 'sub_1',
-    status: 'active',
-    created: CREATED_SECONDS,
-    customer: 'cus_1',
-    metadata: {},
-    items: {
-      data: [
-        {
-          price: price ?? { lookup_key: 'essentiel_monthly' },
-          current_period_end: PERIOD_END_SECONDS,
-        },
-      ],
-    },
-    ...rest,
-  };
-}
 
 let db: Db;
 let clock: Clock;

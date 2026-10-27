@@ -12,10 +12,9 @@ import { PHOTO_QUOTA_MEMO_MS, STATUS_AFTER_REFUSAL_MS } from './config';
 import { expireSession, saveSession, saveStatusFor } from './session';
 import type { StatusKeeper } from './status';
 import { createCloudSteps } from './steps';
-import { PLAN_USAGE, makeClient } from './test-helpers';
+import { PHOTO, PLAN_USAGE, makeClient } from './test-helpers';
 import type { CloudStatus, CloudUsage } from './types';
 
-const PHOTO = 'https://images1.vinted.net/t/01_a/f800/main.webp?s=aa';
 const NOW = Date.UTC(2026, 9, 27, 12, 0, 0);
 const MATCHES: ImageMatch[] = [
   { platform: 'Shein', url: 'https://fr.shein.com/Robe-p-1.html', exact: true, price: null },

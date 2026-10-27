@@ -84,15 +84,9 @@ export function saveSession(session: CloudSession): Promise<void> {
   );
 }
 
-/**
- * Signs out, the marker of an expired session included. With `onlyToken`, only when that token is
- * still the stored one.
- */
-export function clearSession(onlyToken?: string): Promise<void> {
-  return withLock(SESSION_LOCK, async () => {
-    if (onlyToken !== undefined && (await loadSession())?.token !== onlyToken) return;
-    await browser.storage.local.remove([SESSION_KEY, STATUS_KEY]);
-  });
+/** Signs out, the marker of an expired session included. */
+export function clearSession(): Promise<void> {
+  return withLock(SESSION_LOCK, () => browser.storage.local.remove([SESSION_KEY, STATUS_KEY]));
 }
 
 /**

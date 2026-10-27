@@ -8,7 +8,6 @@ import {
   REVIEW_WINDOW_MS,
   allowReview,
   mayReview,
-  releaseAnalysis,
   releaseReview,
   reserveAnalysis,
   usageSummary,
@@ -344,17 +343,9 @@ describe('release: a failed analysis costs nothing', () => {
 
   it('never gives back more than the 15 of the trial', () => {
     const { id } = insertAccount(db);
-    charged(reserve(id));
+    const reservation = charged(reserve(id));
     db.prepare('UPDATE accounts SET trial_left = 15').run();
-    releaseAnalysis(db, id, photo(1), clock.now());
-    expect(trialLeft(id)).toBe(15);
-  });
-
-  it('releaseAnalysis undoes the reservation of the month of `now`', () => {
-    const { id } = insertAccount(db);
-    charged(reserve(id));
-    expect(releaseAnalysis(db, id, photo(1), clock.now())).toBe(true);
-    expect(releaseAnalysis(db, id, photo(1), clock.now())).toBe(false);
+    reservation.release();
     expect(trialLeft(id)).toBe(15);
   });
 

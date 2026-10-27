@@ -1,4 +1,4 @@
-import { callsOn, giveBackCall, takeCall } from './daily-ceiling';
+import { takeCall } from './daily-ceiling';
 import type { Db } from './db';
 
 /**
@@ -21,14 +21,4 @@ export function takeVisionCall(db: Db, day: string, cap: number, trial = false):
   return trial
     ? takeCall(db, 'vision_calls', day, cap, trialVisionCap(cap))
     : takeCall(db, 'vision_calls', day, cap);
-}
-
-/** Gives back a call `takeVisionCall` counted (with the same `trial`), because the call was never billed. */
-export function giveBackVisionCall(db: Db, day: string, trial = false): void {
-  giveBackCall(db, 'vision_calls', day, trial);
-}
-
-/** Calls counted for `day` (a day nobody searched in counts 0). */
-export function visionCallsOn(db: Db, day: string): number {
-  return callsOn(db, 'vision_calls', day);
 }

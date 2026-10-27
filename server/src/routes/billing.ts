@@ -12,7 +12,7 @@ import {
   type StripeEvent,
   type StripeSubscription,
 } from '../stripe';
-import { createSubscriptionSync } from '../subscription-sync';
+import { createSubscriptionSync, isActive } from '../subscription-sync';
 
 /** What Stripe's webhook may send: its events are bigger than the extension's requests. */
 export const WEBHOOK_MAX_BODY_BYTES = 256 * 1024;
@@ -59,23 +59,16 @@ p { margin: 0; }
 const PAGE_CSP =
   "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'";
 
-const isActive = (status: string | null): boolean =>
-  status !== null && ACTIVE_STATUSES.includes(status);
-
 /**
- * What a customer's subscription must not be for a new Checkout: Stripe has it charging the
- * customer, whatever the local row says (it only moves when a webhook arrives). `incomplete` (the
- * first payment never went through, Stripe lets it expire in 23 hours) does not block: the
- * customer must be able to try again. It is cancelled instead (`cancelAbandoned`), or it could
- * still be paid later and bill the customer a second time.
+ * What stops the deletion of an account: a subscription Stripe has charging the customer
+ * (`ACTIVE_STATUSES`, which also blocks a new Checkout, whatever the local row says: it only moves
+ * when a webhook arrives), and `incomplete` too, a payment that may still go through after the
+ * account (and the only way to cancel it) is gone. `incomplete` (the first payment never went
+ * through, Stripe lets it expire in 23 hours) does not block a Checkout: the customer must be able
+ * to try again. It is cancelled instead (`cancelAbandoned`), or it could still be paid later and
+ * bill the customer a second time.
  */
-const BLOCKS_CHECKOUT: readonly string[] = ['active', 'trialing', 'past_due'];
-
-/**
- * What stops the deletion of an account: the same, and `incomplete` too, a payment that may still
- * go through after the account (and the only way to cancel it) is gone.
- */
-const BLOCKS_DELETION: readonly string[] = [...BLOCKS_CHECKOUT, 'incomplete'];
+const BLOCKS_DELETION: readonly string[] = [...ACTIVE_STATUSES, 'incomplete'];
 
 /** How many of a customer's subscriptions are read to look for a live one. */
 const SUBSCRIPTIONS_READ = 100;
@@ -229,7 +222,7 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
       if (account.stripe_customer_id !== null) {
         const subscriptions = await subscriptionsOf(account.stripe_customer_id);
         const live = subscriptions.find((subscription) =>
-          BLOCKS_CHECKOUT.includes(subscription.status),
+          ACTIVE_STATUSES.includes(subscription.status),
         );
         if (live) {
           await storeLive(live);

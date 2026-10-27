@@ -11,7 +11,7 @@ import {
   loadStatus,
   saveSession,
 } from '../lib/cloud/session';
-import { PLAN_USAGE } from '../lib/cloud/test-helpers';
+import { PHOTO, PLAN_USAGE, REVIEW_INPUT, json } from '../lib/cloud/test-helpers';
 import { getUsage } from '../lib/credits';
 import { PENDING_SECTION_KEY } from '../lib/options-nav';
 import { saveSettings } from '../lib/settings';
@@ -24,7 +24,6 @@ type Listener = (
 ) => boolean | undefined;
 
 const ORIGIN = browser.runtime.getURL('/');
-const PHOTO = 'https://images1.vinted.net/t/01_a/f800/main.webp?s=aa';
 const TOKEN = 'cloud-token-SECRET-0123456789';
 const MATCHES = [
   { platform: 'Shein', url: 'https://fr.shein.com/Robe-p-1.html', exact: true, price: null },
@@ -47,12 +46,6 @@ function start() {
       if (!registered(message, sender, resolve)) resolve('no answer');
     });
 }
-
-const json = (status: number, body?: unknown) =>
-  new Response(body === undefined ? null : JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
 
 /** The Fripon server, the Vinted CDN and Google: only the first should be called when signed in. */
 function stubWorld(
@@ -100,15 +93,6 @@ function stubWorld(
 
 const callsTo = (fetchMock: ReturnType<typeof stubWorld>, path: string) =>
   fetchMock.mock.calls.filter(([url]) => String(url) === `${CLOUD_ORIGIN}${path}`);
-
-const REVIEW_INPUT = {
-  photoUrl: PHOTO,
-  title: 'Robe',
-  description: '',
-  price: '12,00 €',
-  signals: ['Recherche d’image : trouvée.'],
-  fingerprint: ['image:exact'],
-};
 
 // The background keeps the time of its last read of the account in memory, across tests: every
 // test starts an hour later than the one before.

@@ -21,7 +21,7 @@ import {
 import { openDb, type Db } from './db';
 import { trialClaimKey } from './email';
 import { purgeExpired } from './maintenance';
-import { fakeClock, fakeMailer, type Clock, type FakeMailer } from './test-helpers';
+import { fakeClock, fakeMailer, wrongCode, type Clock, type FakeMailer } from './test-helpers';
 
 const SECRET = 'test-secret';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -58,7 +58,6 @@ async function signIn(email = EMAIL): Promise<string> {
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const count = (table: string) =>
   (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
-const wrongCode = (code: string) => (code === '000000' ? '000001' : '000000');
 
 describe('normalizeEmail', () => {
   it('trims and lower-cases', () => {

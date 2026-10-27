@@ -66,14 +66,6 @@ describe('session storage', () => {
     expect(await loadStatus()).toBeNull();
   });
 
-  it('signs out for a token only while it is still the stored one', async () => {
-    await saveSession({ token: 'new', email: 'a@b.fr' });
-    await clearSession('old');
-    expect((await loadSession())?.token).toBe('new');
-    await clearSession('new');
-    expect(await loadSession()).toBeNull();
-  });
-
   it('writes a status only for the session it was read for', async () => {
     await saveSession({ token: 'tok-1', email: 'a@b.fr' });
     await saveStatusFor('tok-1', STATUS);
@@ -146,13 +138,6 @@ describe('an expired session', () => {
     await expired();
     await clearExpired();
     expect(await sessionState()).toBe('signed_out');
-  });
-
-  it('is not what clearSession(token) ends: there is no token to match', async () => {
-    await saveSession({ token: 'tok-1', email: 'a@b.fr' });
-    await expireSession('tok-1');
-    await clearSession('tok-1');
-    expect(await sessionState()).toBe('expired');
   });
 
   it('clearExpired never touches a live session', async () => {

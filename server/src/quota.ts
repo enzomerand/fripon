@@ -102,46 +102,29 @@ export function reserveAnalysis(
     return {
       ok: true,
       charged: true,
+      // Deletes the month's usage row (the month of the charge, even after midnight) and, for a
+      // trial row, gives the analysis back.
       release: () => {
         if (released) return;
         released = true;
-        undoAnalysis(db, accountId, photoKey, month);
+        db.transaction(() => {
+          const row = db
+            .prepare(
+              'DELETE FROM usage WHERE account_id = ? AND photo_key = ? AND month = ? RETURNING kind',
+            )
+            .get(accountId, photoKey, month) as { kind: string } | undefined;
+          if (row?.kind === 'trial') {
+            db.prepare('UPDATE accounts SET trial_left = MIN(trial_left + 1, ?) WHERE id = ?').run(
+              TRIAL_ANALYSES,
+              accountId,
+            );
+          }
+        }).immediate();
       },
     };
   });
 
   return reserve.immediate();
-}
-
-/** Deletes the month's usage row and, for a trial row, gives the analysis back. */
-function undoAnalysis(db: Db, accountId: string, photoKey: string, month: string): boolean {
-  return db
-    .transaction(() => {
-      const row = db
-        .prepare(
-          'DELETE FROM usage WHERE account_id = ? AND photo_key = ? AND month = ? RETURNING kind',
-        )
-        .get(accountId, photoKey, month) as { kind: string } | undefined;
-      if (!row) return false;
-      if (row.kind === 'trial') {
-        db.prepare('UPDATE accounts SET trial_left = MIN(trial_left + 1, ?) WHERE id = ?').run(
-          TRIAL_ANALYSES,
-          accountId,
-        );
-      }
-      return true;
-    })
-    .immediate();
-}
-
-/**
- * Undoes the reservation of this photo in the month of `now`: the usage row goes and a trial unit
- * comes back. Only for a reservation that was `charged` (a free one has nothing to undo, and this
- * would delete the earlier charge): `Reservation.release` is the safer way, it remembers the
- * month and works once. Returns whether a row was undone.
- */
-export function releaseAnalysis(db: Db, accountId: string, photoKey: string, now: Date): boolean {
-  return undoAnalysis(db, accountId, photoKey, periodIds(now).month);
 }
 
 /**

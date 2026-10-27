@@ -11,14 +11,13 @@ import { IMAGE_MAX_BYTES } from '../../../lib/image/guarded-fetch';
 import { visionCacheKey } from '../../../lib/image/search-entry';
 import type { RouteModule } from '../app';
 import type { Config } from '../config';
+import { callsOn } from '../daily-ceiling';
 import type { Account } from '../db';
 import type { GoogleDeps } from '../google';
-import { geminiCallsOn } from '../gemini-ceiling';
 import { GOOGLE_TIME_ZONE, periodIds } from '../time';
 import { createTestApp, post, signIn, testConfig, type TestApp } from '../test-helpers';
 import { ALERT_EVERY_MS } from '../alerts';
 import { OWNER_PROBLEM_WINDOW_MS } from '../health';
-import { visionCallsOn } from '../vision-ceiling';
 import { serverPhotoKey } from '../photo';
 import {
   NEGATIVE_CACHE_TTL_MS,
@@ -165,8 +164,8 @@ const reviewsCounted = (t: Setup, who: Person) =>
   )?.count ?? 0;
 /** The ceilings count on Google's day (Pacific), unlike the account quotas (Paris). */
 const googleDay = (t: Setup) => periodIds(t.clock.now(), GOOGLE_TIME_ZONE).day;
-const ceiling = (t: Setup) => visionCallsOn(t.db, googleDay(t));
-const geminiCeiling = (t: Setup) => geminiCallsOn(t.db, googleDay(t));
+const ceiling = (t: Setup) => callsOn(t.db, 'vision_calls', googleDay(t));
+const geminiCeiling = (t: Setup) => callsOn(t.db, 'gemini_calls', googleDay(t));
 
 /** Quiets and records the server's error log. */
 function captureErrors() {
@@ -602,8 +601,8 @@ describe('POST /v1/search', () => {
       // One minute later it is the 20th for Google: a new day, though still the same Paris day.
       t.clock.advance(60_000);
       expect((await search(t, ann, OTHER_PHOTO)).status).toBe(200);
-      expect(visionCallsOn(t.db, '2026-10-19')).toBe(1);
-      expect(visionCallsOn(t.db, '2026-10-20')).toBe(1);
+      expect(callsOn(t.db, 'vision_calls', '2026-10-19')).toBe(1);
+      expect(callsOn(t.db, 'vision_calls', '2026-10-20')).toBe(1);
     });
 
     it('leaves the account quotas on Paris days', async () => {
@@ -1109,14 +1108,14 @@ describe('POST /v1/review', () => {
       const t = setup({ globalDailyGeminiCap: 1, globalDailyVisionCap: 1 });
       t.clock.set('2026-10-20T06:59:00Z');
       const ann = await searched(t, 'ann@example.com');
-      expect(visionCallsOn(t.db, '2026-10-19')).toBe(1);
+      expect(callsOn(t.db, 'vision_calls', '2026-10-19')).toBe(1);
       expect((await review(t, ann)).status).toBe(200);
-      expect(geminiCallsOn(t.db, '2026-10-19')).toBe(1);
+      expect(callsOn(t.db, 'gemini_calls', '2026-10-19')).toBe(1);
       expect((await review(t, ann, reviewInput({ price: '1,00 €' }))).status).toBe(503);
 
       t.clock.advance(60_000);
       expect((await review(t, ann, reviewInput({ price: '1,00 €' }))).status).toBe(200);
-      expect(geminiCallsOn(t.db, '2026-10-20')).toBe(1);
+      expect(callsOn(t.db, 'gemini_calls', '2026-10-20')).toBe(1);
     });
   });
 

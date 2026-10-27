@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CLOUD_ORIGIN, CLOUD_SLOW_TIMEOUT_MS, CLOUD_TIMEOUT_MS } from './config';
 import { createCloudClient, type SessionAccess } from './client';
+import { PHOTO, REVIEW_INPUT, json } from './test-helpers';
 
 const ORIGIN = 'https://cloud.test';
-const PHOTO = 'https://images1.vinted.net/t/01_a/f800/main.webp?s=aa';
 const USAGE = {
   kind: 'plan',
   plan: 'essentiel',
@@ -11,20 +11,6 @@ const USAGE = {
   day: { used: 1, cap: 40 },
   trialLeft: 15,
 };
-const REVIEW_INPUT = {
-  photoUrl: PHOTO,
-  title: 'Robe',
-  description: '',
-  price: '12,00 €',
-  signals: ['Une ligne.'],
-  fingerprint: ['image:none'],
-};
-
-const json = (status: number, body?: unknown) =>
-  new Response(body === undefined ? null : JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
 
 type Handler = (input: string, init: RequestInit) => Response | Promise<Response>;
 

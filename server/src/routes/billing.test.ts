@@ -2,7 +2,17 @@ import Stripe from 'stripe';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { purgeExpired, STRIPE_EVENT_KEEP_MS } from '../maintenance';
 import { PRICE_CACHE_MS, WEBHOOK_EVENTS, type StripeApi, type StripeSubscription } from '../stripe';
-import { createTestApp, insertAccount, post, signIn, testConfig } from '../test-helpers';
+import {
+  CREATED_SECONDS,
+  PERIOD_END_SECONDS,
+  bearer,
+  createTestApp,
+  insertAccount,
+  post,
+  signIn,
+  subscription,
+  testConfig,
+} from '../test-helpers';
 import type { TestApp } from '../test-helpers';
 import type { Account } from '../db';
 import {
@@ -15,10 +25,6 @@ import {
 
 const WEBHOOK_SECRET = 'whsec_test_secret_0001';
 const PUBLIC_URL = 'https://cloud.fripon.test';
-/** 2026-11-20T12:00:00Z, in seconds as Stripe says it. */
-const PERIOD_END_SECONDS = 1_795_176_000;
-/** 2026-10-20T12:00:00Z, in seconds: when a subscription was made, unless a test says otherwise. */
-const CREATED_SECONDS = 1_792_497_600;
 
 /** A real client, only to sign test payloads and to verify them: the one thing the fake does not fake. */
 const signer = new Stripe('sk_test_signer');
@@ -153,23 +159,6 @@ function fakeStripe(): FakeStripe {
   return stripe;
 }
 
-/** A subscription as Stripe reports it; `overrides` sets any field. */
-function subscription(overrides: Partial<StripeSubscription> = {}): StripeSubscription {
-  return {
-    id: 'sub_1',
-    status: 'active',
-    created: CREATED_SECONDS,
-    customer: 'cus_1',
-    metadata: {},
-    items: {
-      data: [
-        { price: { lookup_key: 'essentiel_monthly' }, current_period_end: PERIOD_END_SECONDS },
-      ],
-    },
-    ...overrides,
-  };
-}
-
 function withLookupKey(lookupKey: string | null): StripeSubscription['items'] {
   return { data: [{ price: { lookup_key: lookupKey }, current_period_end: PERIOD_END_SECONDS }] };
 }
@@ -203,8 +192,6 @@ function deliver(
     body,
   });
 }
-
-const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 
 function row(t: TestApp, id: string): Account {
   return t.db.prepare('SELECT * FROM accounts WHERE id = ?').get(id) as Account;

@@ -182,11 +182,6 @@ describe('cloudGate', () => {
     }
   });
 
-  it('is no_key without an account, whatever the mode', () => {
-    expect(cloudGate(null, 'auto')).toBe('no_key');
-    expect(cloudGate(null, 'click')).toBe('no_key');
-  });
-
   it('is ready (manual in "Au clic" mode) when the usage was never read: the step will tell', () => {
     expect(cloudGate(status(null, 0), 'auto')).toBe('ready');
     expect(cloudGate(status(null, 0), 'click')).toBe('manual');

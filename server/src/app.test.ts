@@ -4,11 +4,17 @@ import { API_REQUESTS_PER_MINUTE } from './context';
 import { MAX_BODY_BYTES } from './http';
 import { reserveAnalysis } from './quota';
 import { CODE_REQUESTS_PER_HOUR, VERIFY_ATTEMPTS_PER_HOUR } from './routes/auth';
-import { createTestApp, insertAccount, post, signIn, testConfig } from './test-helpers';
+import {
+  bearer,
+  createTestApp,
+  insertAccount,
+  post,
+  signIn,
+  testConfig,
+  wrongCode,
+} from './test-helpers';
 
 const EMAIL = 'sam@example.com';
-const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
-const wrongCode = (code: string) => (code === '000000' ? '000001' : '000000');
 
 afterEach(() => {
   vi.restoreAllMocks();
