@@ -1,4 +1,5 @@
-import { isKeyFailure, type VisionFailure } from '../google/vision';
+import { isKeyFailure } from '../google/refusal';
+import type { VisionFailure } from '../google/vision';
 import type { SearchImageResponse } from '../messages';
 import type { CheckAction, CheckResult, ImageMatch } from '../model';
 
@@ -91,10 +92,19 @@ const FAILURE_DETAILS: Record<VisionFailure, string> = {
   quota: 'Google a atteint le quota de ta clé Vision, réessaie plus tard.',
   network: 'Google ne répond pas, réessaie plus tard.',
   photo: "La photo de l'annonce n'a pas pu être analysée.",
+  unavailable: 'Google Vision est indisponible pour le moment.',
 };
 
 /** What the retry button of a failed search says: the action is the one of the "Au clic" button. */
 const RETRY_SEARCH_LABEL = 'Réessayer la recherche';
+
+/**
+ * Whether the image row is a failed search that offers its retry button: the search is not final
+ * yet. The "Au clic" row has a button too, but it is not a retry.
+ */
+export function imageSearchCanBeRetried(row: CheckResult | undefined): boolean {
+  return row?.action === 'run_image_search' && row.actionLabel === RETRY_SEARCH_LABEL;
+}
 
 /** Failures that may pass: trying again is worth a click (and a credit). */
 const RETRYABLE_FAILURES: readonly VisionFailure[] = ['network', 'quota'];

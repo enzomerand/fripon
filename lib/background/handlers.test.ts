@@ -5,6 +5,14 @@ import { handleMessage, isAllowedSender, type BackgroundDeps } from './handlers'
 const own = { id: 'abc', origin: 'chrome-extension://abc/' };
 const page = 'https://www.vinted.fr/items/1-robe';
 const optionsPage = 'chrome-extension://abc/options.html#keys';
+const REVIEW_INPUT = {
+  photoUrl: 'https://images1.vinted.net/a.jpg',
+  title: 'Robe',
+  description: '',
+  price: '12,00 €',
+  signals: ['Recherche d’image : non faite.'],
+  fingerprint: ['Recherche d’image : non faite.'],
+};
 
 function makeDeps(overrides: Partial<BackgroundDeps> = {}): BackgroundDeps {
   return {
@@ -12,7 +20,10 @@ function makeDeps(overrides: Partial<BackgroundDeps> = {}): BackgroundDeps {
       Promise.resolve({ ok: true as const, hash: '0'.repeat(16), catalogScore: 0.1 }),
     ),
     searchImage: vi.fn(() => Promise.resolve({ status: 'ok' as const, matches: [] })),
-    loadImageGate: vi.fn(() => Promise.resolve('ready' as const)),
+    aiReview: vi.fn(() =>
+      Promise.resolve({ status: 'ok' as const, review: { catalogPhoto: false, summary: 'Ok.' } }),
+    ),
+    loadGates: vi.fn(() => Promise.resolve({ image: 'ready' as const, ai: 'ready' as const })),
     checkKey: vi.fn(() => Promise.resolve({ ok: true as const })),
     openOptions: vi.fn(() => Promise.resolve()),
     ...overrides,
@@ -22,19 +33,20 @@ function makeDeps(overrides: Partial<BackgroundDeps> = {}): BackgroundDeps {
 describe('isAllowedSender', () => {
   const analyze: RuntimeMessage = { type: 'analyzeImage', url: 'https://x.test/a.jpg' };
   const search: RuntimeMessage = { type: 'searchImage', photoUrl: 'https://x.test/a.jpg' };
-  const gate: RuntimeMessage = { type: 'getImageGate' };
+  const review: RuntimeMessage = { type: 'aiReview', input: REVIEW_INPUT };
+  const gates: RuntimeMessage = { type: 'getGates' };
   const open: RuntimeMessage = { type: 'openOptions', section: 'guide' };
   const test: RuntimeMessage = { type: 'testKey', provider: 'vision', key: 'AIzaX' };
 
   it('rejects every message from another extension or from nowhere', () => {
-    for (const message of [analyze, search, gate, open, test]) {
+    for (const message of [analyze, search, review, gates, open, test]) {
       expect(isAllowedSender(message, { id: 'other', url: optionsPage }, own)).toBe(false);
       expect(isAllowedSender(message, { url: optionsPage }, own)).toBe(false);
     }
   });
 
-  it('lets our content scripts ask for the gate, an image analysis, a search or the options page', () => {
-    for (const message of [analyze, search, gate, open]) {
+  it('lets our content scripts ask for the gates, an image analysis, a search, a review or the options page', () => {
+    for (const message of [analyze, search, review, gates, open]) {
       expect(isAllowedSender(message, { id: 'abc', url: page }, own)).toBe(true);
     }
   });
@@ -75,7 +87,7 @@ describe('handleMessage', () => {
       { type: 'searchImage', photoUrl: 'https://images1.vinted.net/a.jpg' },
       deps,
     );
-    expect(deps.searchImage).toHaveBeenCalledWith('https://images1.vinted.net/a.jpg', false);
+    expect(deps.searchImage).toHaveBeenCalledWith('https://images1.vinted.net/a.jpg', false, false);
     expect(response).toEqual({ status: 'ok', matches });
   });
 
@@ -87,9 +99,18 @@ describe('handleMessage', () => {
     expect(await handleMessage({ type: 'searchImage', photoUrl, cacheOnly: true }, deps)).toEqual({
       status: 'not_cached',
     });
-    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, true);
+    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, true, false);
     await handleMessage({ type: 'searchImage', photoUrl, cacheOnly: false }, deps);
-    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, false);
+    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, false, false);
+  });
+
+  it('tells the searcher and the reviewer when the user asked for another attempt', async () => {
+    const deps = makeDeps();
+    const photoUrl = 'https://images1.vinted.net/a.jpg';
+    await handleMessage({ type: 'searchImage', photoUrl, retry: true }, deps);
+    expect(deps.searchImage).toHaveBeenLastCalledWith(photoUrl, false, true);
+    await handleMessage({ type: 'aiReview', input: REVIEW_INPUT, retry: true }, deps);
+    expect(deps.aiReview).toHaveBeenLastCalledWith(REVIEW_INPUT, false, true);
   });
 
   it('still answers a searchImage whose searcher rejects', async () => {
@@ -102,14 +123,41 @@ describe('handleMessage', () => {
     ).toEqual({ status: 'error', reason: 'network' });
   });
 
-  it('answers getImageGate with the gate word and nothing else', async () => {
-    const deps = makeDeps({ loadImageGate: vi.fn(() => Promise.resolve('manual' as const)) });
-    expect(await handleMessage({ type: 'getImageGate' }, deps)).toBe('manual');
+  it('forwards aiReview to the reviewer with the input, and asks for the cache only when told', async () => {
+    const deps = makeDeps();
+    expect(await handleMessage({ type: 'aiReview', input: REVIEW_INPUT }, deps)).toEqual({
+      status: 'ok',
+      review: { catalogPhoto: false, summary: 'Ok.' },
+    });
+    expect(deps.aiReview).toHaveBeenLastCalledWith(REVIEW_INPUT, false, false);
+    await handleMessage({ type: 'aiReview', input: REVIEW_INPUT, cacheOnly: true }, deps);
+    expect(deps.aiReview).toHaveBeenLastCalledWith(REVIEW_INPUT, true, false);
   });
 
-  it('falls back to no_key when the gate cannot be computed', async () => {
-    const deps = makeDeps({ loadImageGate: vi.fn(() => Promise.reject(new Error('storage'))) });
-    expect(await handleMessage({ type: 'getImageGate' }, deps)).toBe('no_key');
+  it('still answers an aiReview whose reviewer rejects', async () => {
+    const deps = makeDeps({ aiReview: vi.fn(() => Promise.reject(new Error('boom'))) });
+    expect(await handleMessage({ type: 'aiReview', input: REVIEW_INPUT }, deps)).toEqual({
+      status: 'error',
+      reason: 'network',
+    });
+  });
+
+  it('answers getGates with the two gate words and nothing else', async () => {
+    const deps = makeDeps({
+      loadGates: vi.fn(() => Promise.resolve({ image: 'manual' as const, ai: 'quota' as const })),
+    });
+    expect(await handleMessage({ type: 'getGates' }, deps)).toEqual({
+      image: 'manual',
+      ai: 'quota',
+    });
+  });
+
+  it('falls back to no_key for both when the gates cannot be computed', async () => {
+    const deps = makeDeps({ loadGates: vi.fn(() => Promise.reject(new Error('storage'))) });
+    expect(await handleMessage({ type: 'getGates' }, deps)).toEqual({
+      image: 'no_key',
+      ai: 'no_key',
+    });
   });
 
   it('opens the options page at the requested section', async () => {

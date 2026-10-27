@@ -1,12 +1,7 @@
 import type { FetchLike } from '../fetch';
 import { isRecord } from '../json';
-import {
-  classifyKnown,
-  errorInfoOf,
-  isHeaderSafe,
-  readError,
-  type KeyCheckFailure,
-} from './key-check';
+import { classifyKnown, errorInfoOf, isHeaderSafe } from './key-check';
+import { readRefusal, type CallFailure } from './refusal';
 
 /** A Vision call that takes longer than this (answer body included) counts as a network failure. */
 export const VISION_TIMEOUT_MS = 20_000;
@@ -14,18 +9,8 @@ export const VISION_TIMEOUT_MS = 20_000;
 export const VISION_MAX_RESULTS = 30;
 export const VISION_URL = 'https://vision.googleapis.com/v1/images:annotate';
 
-/**
- * Why a search failed: the words of a key check (see `KeyCheckFailure`), or `photo` when the
- * problem is the image itself (Google could not read it, or it is too big).
- */
-export type VisionFailure = KeyCheckFailure | 'photo';
-
-/** Failures that come from the key or its project, and that the user fixes in Google Cloud. */
-export function isKeyFailure(reason: VisionFailure): boolean {
-  return (
-    reason === 'invalid' || reason === 'restricted' || reason === 'disabled' || reason === 'billing'
-  );
-}
+/** Why a search failed (see `CallFailure`). */
+export type VisionFailure = CallFailure;
 
 interface WebImage {
   url?: string;
@@ -75,31 +60,6 @@ function perImageFailure(error: unknown): VisionFailure {
   if (code === GRPC_PERMISSION_DENIED || code === GRPC_UNAUTHENTICATED) return 'invalid';
   if (code === GRPC_INVALID_ARGUMENT || /bad image data/i.test(info.message)) return 'photo';
   return 'network';
-}
-
-/** HTTP statuses on which a refusal that Google names is known not to have been billed. */
-const UNBILLED_REFUSALS: ReadonlySet<number> = new Set([400, 403, 429]);
-
-/**
- * An HTTP refusal. One that Google's error body names is the key's or the project's problem, and
- * free of charge on the statuses of `UNBILLED_REFUSALS`. A bare 429 (nothing readable in the body)
- * still reads as a quota, but proves nothing about billing, so it keeps the credit. An unrecognised
- * 400 or 413 blames the image, any other unrecognised refusal reads as a bad key; neither is known
- * to be free of charge.
- */
-async function refusal(response: Response): Promise<WebDetectResult> {
-  // Status 0: only what the body says counts, not the HTTP status.
-  const named = classifyKnown(0, await readError(response));
-  const known = named ?? (response.status === 429 ? 'quota' : null);
-  if (known) {
-    return {
-      ok: false,
-      reason: known,
-      refundable: named !== null && UNBILLED_REFUSALS.has(response.status),
-    };
-  }
-  const imageProblem = response.status === 400 || response.status === 413;
-  return { ok: false, reason: imageProblem ? 'photo' : 'invalid', refundable: false };
 }
 
 /**
@@ -166,7 +126,8 @@ export async function webDetect(
     });
     // Google having a bad moment says nothing about the key, and may have billed the call.
     if (response.status >= 500) return { ok: false, reason: 'network', refundable: false };
-    if (!response.ok) return await refusal(response);
+    // `readRefusal` holds the rule that says which refusals are free of charge.
+    if (!response.ok) return { ok: false, ...(await readRefusal(response)) };
 
     const body: unknown = await response.json();
     const first = isRecord(body) && Array.isArray(body.responses) ? body.responses[0] : undefined;

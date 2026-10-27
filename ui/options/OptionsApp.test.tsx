@@ -236,6 +236,15 @@ describe('keys', () => {
     expect(keyBlock('gemini').querySelector('h3')?.textContent).toBe('Analyse IA — Gemini');
   });
 
+  it('says what the Gemini key does now, not that it is coming', async () => {
+    await mount();
+    const help = plain(keyBlock('gemini').querySelector('p.muted')?.textContent);
+    expect(help).toBe(
+      "Écrit l'avis en langage simple de la carte et confirme les photos de catalogue. Pour chaque annonce analysée, la photo, le titre, la description, le prix et les indices calculés par Fripon sont envoyés à Google. Offre gratuite, sans carte bancaire.",
+    );
+    expect($('#keys')?.textContent).not.toContain('bientôt');
+  });
+
   it('saves a key, shows it masked and enables nothing else by accident', async () => {
     await mount();
     const block = keyBlock('gemini');
@@ -431,7 +440,7 @@ describe('credits', () => {
       "Recherche d'image : 0 / 1 000 ce mois-ci",
     );
     expect(plain(creditRow('gemini').querySelector('.credit__count')?.textContent)).toBe(
-      "Analyse IA : 0 / 20 aujourd'hui",
+      "Analyse IA : 0 / 100 aujourd'hui",
     );
     // Google's midnight, shown on the user's own clock.
     const vision = formatReset(nextReset('vision', now), now);
@@ -459,19 +468,31 @@ describe('credits', () => {
     expect((bar.firstElementChild as HTMLElement).style.width).toBe('1%');
   });
 
+  it('starts the Gemini cap at 100 a day, said as a safety net and not as the free limit', async () => {
+    await mount();
+    const row = creditRow('gemini');
+    expect(row.querySelector<HTMLInputElement>('input[type="number"]')?.value).toBe('100');
+    const text = plain(row.textContent);
+    expect(text).toContain(
+      'Par défaut : 100, un plafond de sécurité (sans facturation, Google refuse sans frais au-delà de sa limite).',
+    );
+    expect(text).not.toContain('la limite la plus basse');
+    expect(row.querySelector('.callout')).toBeNull();
+  });
+
   it('turns orange at 80 % and red at the cap', async () => {
-    await reserve('gemini', 16, null, now);
+    await reserve('gemini', 80, null, now);
     await mount();
     const bar = () => creditRow('gemini').querySelector('[role="progressbar"]') as HTMLElement;
     expect(bar().className).toContain('meter--warning');
     expect(creditRow('gemini').textContent).toContain('au moins 80 % de ton plafond');
 
     await act(async () => {
-      await reserve('gemini', 4, null, now);
+      await reserve('gemini', 20, null, now);
     });
     await until(() => bar().className.includes('meter--reached'));
     expect(creditRow('gemini').textContent).toContain('Plafond atteint');
-    expect(bar().getAttribute('aria-valuenow')).toBe('20');
+    expect(bar().getAttribute('aria-valuenow')).toBe('100');
   });
 
   it('follows the counters live, without a reload', async () => {
@@ -499,7 +520,7 @@ describe('credits', () => {
       await type(input, bad, true);
       expect(creditRow('gemini').textContent).toContain('nombre entier supérieur ou égal à 1');
     }
-    expect((await loadSettings()).caps.gemini).toBe(20);
+    expect((await loadSettings()).caps.gemini).toBe(100);
   });
 
   it('warns about billing above the free tier', async () => {
@@ -521,9 +542,9 @@ describe('credits', () => {
     await until(() => row.querySelector('.status--bad') !== null);
     expect(checkbox.checked).toBe(false);
     expect(row.querySelector<HTMLInputElement>('input[type="number"]')?.disabled).toBe(false);
-    expect(row.querySelector<HTMLInputElement>('input[type="number"]')?.value).toBe('20');
+    expect(row.querySelector<HTMLInputElement>('input[type="number"]')?.value).toBe('100');
     expect(row.querySelector('.callout')).toBeNull();
-    expect((await loadSettings()).caps.gemini).toBe(20);
+    expect((await loadSettings()).caps.gemini).toBe(100);
   });
 
   it('puts the typed cap back when saving it fails', async () => {
@@ -559,7 +580,7 @@ describe('credits', () => {
 
     await click(checkbox());
     await until(() => row().querySelector('.callout') === null);
-    expect((await loadSettings()).caps.gemini).toBe(20);
+    expect((await loadSettings()).caps.gemini).toBe(100);
   });
 });
 
@@ -658,5 +679,15 @@ describe('guide', () => {
     expect(guide).toContain('AIza');
     expect(guide).toContain('Create API key');
     expect(guide).toContain('Cloud Vision API');
+  });
+
+  it('warns that the free Gemini offer lets Google use what is sent, in the Gemini steps', async () => {
+    await mount();
+    const note =
+      "Avec l'offre gratuite, Google peut utiliser la photo, le titre, la description, le prix et les indices calculés par Fripon envoyés pour améliorer ses services.";
+    const details = [...document.querySelectorAll('#guide details')];
+    expect(plain(details[0]?.textContent)).toContain(note);
+    // Only the Gemini block says it: the Vision steps are about something else.
+    expect(plain(details[1]?.textContent)).not.toContain('améliorer ses services');
   });
 });

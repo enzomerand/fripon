@@ -9,9 +9,11 @@ import type { Provider } from './settings';
 export const CREDIT_POLICY: Record<Provider, { period: 'month' | 'day'; defaultCap: number }> = {
   // Web Detection free tier: 1,000 units per month.
   vision: { period: 'month', defaultCap: 1_000 },
-  // Lowest published free-tier requests-per-day among the current Flash models.
-  // To revisit in lot 4, when the real Gemini calls (and their model) are chosen.
-  gemini: { period: 'day', defaultCap: 20 },
+  // The key must come from a project without billing (the guide says so), and such a project
+  // cannot be charged: past its free limit Google answers 429 at no cost. So this cap is a safety
+  // net against a loop, not a price protection, and it is set above what a person browsing
+  // listings uses in a day (one review per listing, each 5-7 s, cached for a week).
+  gemini: { period: 'day', defaultCap: 100 },
 };
 
 /** The user is warned once this share of the cap is spent. */
@@ -21,8 +23,9 @@ export const WARN_RATIO = 0.8;
  * Prefix of the `storage.local` counters: `<prefix><provider>:<periodId>`.
  *
  * The counter is per provider on purpose, not per key or per model: Fripon counts the calls it
- * makes, and one provider is one free-tier budget for the user. Lot 4 may refine Gemini per model
- * (each model has its own daily quota) by adding the model to the key.
+ * makes, and one provider is one free-tier budget for the user. Gemini has one model (see
+ * `GEMINI_MODEL`); if a second one is ever called, its own daily quota means adding the model to the
+ * key.
  */
 export const CREDITS_KEY_PREFIX = 'fripon:credits:v1:';
 
