@@ -23,6 +23,35 @@ export const PLANS = {
 
 export type PriceLookupKey = keyof typeof PLANS;
 
+/**
+ * The prices: what the owner decided, in cents, tax included. The single place that holds them:
+ * `stripe:setup` creates the Stripe prices from it and the terms of sale (`/cgv`) print them, so
+ * the contract and the invoice cannot say two things. The keys are the ones of `PLANS`.
+ */
+export const PRICE_SPECS: Record<
+  PriceLookupKey,
+  { plan: PlanName; amount: number; interval: 'month' | 'year'; nickname: string }
+> = {
+  essentiel_monthly: {
+    plan: 'essentiel',
+    amount: 299,
+    interval: 'month',
+    nickname: 'Essentiel mensuel',
+  },
+  essentiel_yearly: {
+    plan: 'essentiel',
+    amount: 2999,
+    interval: 'year',
+    nickname: 'Essentiel annuel',
+  },
+  revendeur_monthly: {
+    plan: 'revendeur',
+    amount: 699,
+    interval: 'month',
+    nickname: 'Revendeur mensuel',
+  },
+};
+
 export function isPlanName(value: unknown): value is PlanName {
   return typeof value === 'string' && Object.hasOwn(PLAN_CAPS, value);
 }

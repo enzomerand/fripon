@@ -110,6 +110,12 @@ export function loadConfig(env: Env = process.env) {
      * Dashboard; `npm run stripe:setup` prints it. `null` lets Stripe use its default.
      */
     stripePortalConfiguration: text(env, 'STRIPE_PORTAL_CONFIGURATION') ?? null,
+    /**
+     * The terms of sale (`/cgv`) and the privacy policy (`/confidentialite`) are drafts: each page
+     * wears a "to be reviewed" banner until this is true, to be set once every placeholder is
+     * filled in and the owner has read both pages.
+     */
+    legalPagesFinal: flag('LEGAL_PAGES_FINAL', false),
   };
 
   if (production && config.authSecret.length < 32) {

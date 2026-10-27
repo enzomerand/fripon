@@ -1,5 +1,5 @@
 import type Stripe from 'stripe';
-import type { PlanName, PriceLookupKey } from './plans';
+import { PRICE_SPECS, type PlanName, type PriceLookupKey } from './plans';
 import { STRIPE_API_VERSION, WEBHOOK_EVENTS } from './stripe';
 
 /**
@@ -30,31 +30,6 @@ export const PRODUCT_SPECS: Record<PlanName, { name: string; description: string
 /** Marks what this script made, so a renamed product or portal is still found. */
 const PRODUCT_TAG = 'cloud';
 const PORTAL_TAG = { fripon: 'portal' };
-
-/** The prices: what the owner decided, in cents, tax included. The keys are the ones `plans.ts` reads. */
-export const PRICE_SPECS: Record<
-  PriceLookupKey,
-  { plan: PlanName; amount: number; interval: 'month' | 'year'; nickname: string }
-> = {
-  essentiel_monthly: {
-    plan: 'essentiel',
-    amount: 299,
-    interval: 'month',
-    nickname: 'Essentiel mensuel',
-  },
-  essentiel_yearly: {
-    plan: 'essentiel',
-    amount: 2999,
-    interval: 'year',
-    nickname: 'Essentiel annuel',
-  },
-  revendeur_monthly: {
-    plan: 'revendeur',
-    amount: 699,
-    interval: 'month',
-    nickname: 'Revendeur mensuel',
-  },
-};
 
 const CURRENCY = 'eur';
 

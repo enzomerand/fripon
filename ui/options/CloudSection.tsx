@@ -8,6 +8,7 @@ import type {
   RequestCodeResult,
   VerifyResult,
 } from '../../lib/cloud/types';
+import { CLOUD_ORIGIN } from '../../lib/cloud/config';
 import { formatCount } from '../../lib/format';
 import { sendMessage } from '../../lib/messages';
 
@@ -550,6 +551,15 @@ export function CloudSection({
           </p>
         ))}
       </div>
+      <p class="cloud__legal">
+        <a href={`${CLOUD_ORIGIN}/cgv`} target="_blank" rel="noopener noreferrer">
+          Conditions générales de vente
+        </a>
+        <span aria-hidden="true"> · </span>
+        <a href={`${CLOUD_ORIGIN}/confidentialite`} target="_blank" rel="noopener noreferrer">
+          Politique de confidentialité
+        </a>
+      </p>
     </section>
   );
 }

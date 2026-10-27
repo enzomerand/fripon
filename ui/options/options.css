@@ -478,6 +478,11 @@ summary:focus-visible {
   padding-top: 4px;
 }
 
+.cloud__legal {
+  margin: 8px 0 0;
+  font-size: 0.875rem;
+}
+
 .cloud__delete {
   margin-top: 12px;
 }

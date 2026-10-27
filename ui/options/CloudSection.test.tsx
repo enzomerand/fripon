@@ -3,6 +3,7 @@ import { act } from 'preact/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
+import { CLOUD_ORIGIN } from '../../lib/cloud/config';
 import { clearSession, expireSession, saveSession, saveStatusFor } from '../../lib/cloud/session';
 import type { CloudUsage } from '../../lib/cloud/types';
 import { PLAN_USAGE, TRIAL_USAGE } from '../../lib/cloud/test-helpers';
@@ -147,6 +148,35 @@ describe('the subscription section', () => {
     await signIn(TRIAL_USAGE);
     await mount();
     expect(paragraphs()).toEqual(CLOUD_PRIVACY);
+  });
+
+  it('links to the terms of sale and the privacy policy of the server, each in a new tab, in both states', async () => {
+    const links = () => [...cloud().querySelectorAll('.cloud__legal a')] as HTMLAnchorElement[];
+    const check = () => {
+      expect(links().map((a) => [text(a), a.href])).toEqual([
+        ['Conditions générales de vente', `${CLOUD_ORIGIN}/cgv`],
+        ['Politique de confidentialité', `${CLOUD_ORIGIN}/confidentialite`],
+      ]);
+      for (const link of links()) {
+        expect(link.target).toBe('_blank');
+        expect(link.rel).toBe('noopener noreferrer');
+      }
+      // Under the privacy text, and outside it: the paragraphs stay the shared constant.
+      const privacy = $('.cloud__privacy') as HTMLElement;
+      expect(privacy.contains(links()[0] as HTMLElement)).toBe(false);
+      expect(
+        privacy.compareDocumentPosition($('.cloud__legal') as HTMLElement) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    };
+
+    background({});
+    await mount();
+    check();
+    render(null, root);
+    await signIn(TRIAL_USAGE);
+    await mount();
+    check();
   });
 
   it('says the same in the guide', async () => {

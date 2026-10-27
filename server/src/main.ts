@@ -6,6 +6,7 @@ import { realGoogleDeps } from './google';
 import { purgeExpired } from './maintenance';
 import { createMailer } from './mailer';
 import { registerBillingRoutes } from './routes/billing';
+import { registerLegalRoutes } from './routes/legal';
 import { registerProxyRoutes } from './routes/proxy';
 import { createShutdown } from './shutdown';
 import { realStripe } from './stripe';
@@ -25,6 +26,7 @@ const now = () => new Date();
 const app = createApp({ db, mailer: createMailer(config), config, now }, [
   registerProxyRoutes(realGoogleDeps()),
   registerBillingRoutes(realStripe(config.stripeSecretKey)),
+  registerLegalRoutes,
 ]);
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

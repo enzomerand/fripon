@@ -36,6 +36,7 @@ describe('loadConfig', () => {
       stripeWebhookSecret: '',
       stripeRequireTerms: false,
       stripePortalConfiguration: null,
+      legalPagesFinal: false,
     });
   });
 
@@ -59,6 +60,7 @@ describe('loadConfig', () => {
         STRIPE_WEBHOOK_SECRET: 'whsec_xyz',
         STRIPE_REQUIRE_TERMS: 'true',
         STRIPE_PORTAL_CONFIGURATION: 'bpc_123',
+        LEGAL_PAGES_FINAL: 'true',
       }),
     ).toEqual({
       nodeEnv: 'test',
@@ -79,6 +81,7 @@ describe('loadConfig', () => {
       stripeWebhookSecret: 'whsec_xyz',
       stripeRequireTerms: true,
       stripePortalConfiguration: 'bpc_123',
+      legalPagesFinal: true,
     });
   });
 
@@ -195,6 +198,7 @@ describe('loadConfig', () => {
     [{ STRIPE_SECRET_KEY: 'pk_test_123' }, 'STRIPE_SECRET_KEY'],
     [{ STRIPE_WEBHOOK_SECRET: 'abc' }, 'STRIPE_WEBHOOK_SECRET'],
     [{ STRIPE_REQUIRE_TERMS: 'yes' }, 'STRIPE_REQUIRE_TERMS'],
+    [{ LEGAL_PAGES_FINAL: 'yes' }, 'LEGAL_PAGES_FINAL'],
   ])('refuses %j', (env, name) => {
     expect(catchConfigError(env).problems.join('\n')).toContain(name);
   });

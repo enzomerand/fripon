@@ -56,7 +56,7 @@ p { margin: 0; }
 }
 
 /** Nothing may be loaded or framed by these pages, and the inline style is the only allowance. */
-const PAGE_CSP =
+export const PAGE_CSP =
   "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'";
 
 /** How many of a customer's subscriptions are read to look for a live one. */

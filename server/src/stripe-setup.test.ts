@@ -1,9 +1,8 @@
 import type Stripe from 'stripe';
 import { describe, expect, it } from 'vitest';
-import { PLANS } from './plans';
+import { PLANS, PRICE_SPECS } from './plans';
 import { STRIPE_API_VERSION, WEBHOOK_EVENTS } from './stripe';
 import {
-  PRICE_SPECS,
   PRODUCT_SPECS,
   checkedKey,
   parseArgs,
