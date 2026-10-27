@@ -130,6 +130,10 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('Ne donne pas de verdict');
     expect(prompt).toContain("n'invente aucun fait");
     expect(prompt).toContain('aucun chiffre qui ne figure pas dans les indices');
+    // Never past the signals: absence of a trace is not proof of origin, and nothing is "safe".
+    expect(prompt).toContain('Ne conclus jamais au-delà des indices');
+    expect(prompt).toContain('« aucune trace trouvée » et non « ne provient pas de… »');
+    expect(prompt).toContain("ne dis jamais qu'une annonce est sûre, fiable ou authentique");
     expect(prompt).toContain("ne servent qu'à écrire summary");
   });
 
@@ -198,7 +202,7 @@ describe('buildPrompt', () => {
   });
 
   it('has a version, which a change of the question must bump', () => {
-    expect(PROMPT_VERSION).toBe(2);
+    expect(PROMPT_VERSION).toBe(3);
   });
 });
 
@@ -335,19 +339,6 @@ describe('reviewListing HTTP refusals Google names', () => {
 
 describe('reviewListing refusals that may have been billed', () => {
   it.each([
-    // The photo comes from Vinted's CDN: an unrecognised 400 is the request or the region, not it.
-    [
-      'a 400 with no reason Google names (region, schema)',
-      400,
-      googleError(400, 'INVALID_ARGUMENT', 'OTHER'),
-      'unavailable',
-    ],
-    [
-      'a 400 that is a region refusal',
-      400,
-      googleError(400, 'FAILED_PRECONDITION', 'OTHER'),
-      'unavailable',
-    ],
     ['a payload too large', 413, googleError(413, 'OUT_OF_RANGE', 'OTHER'), 'photo'],
     [
       'a 403 with no reason Google names',
@@ -364,6 +355,27 @@ describe('reviewListing refusals that may have been billed', () => {
       reason,
       refundable: false,
     });
+  });
+
+  // The request, the region or this very photo (a format Gemini refuses): unavailable, but said
+  // `specific` so that it is not remembered for the next listings.
+  it.each([
+    ['a 400 with no reason Google names', googleError(400, 'INVALID_ARGUMENT', 'OTHER')],
+    ['a 400 that is a region refusal', googleError(400, 'FAILED_PRECONDITION', 'OTHER')],
+  ])('keeps the credit on %s, and calls it specific to the request', async (_name, body) => {
+    expect(await reviewListing(INPUT, KEY, fakeFetch(json(400, body)))).toEqual({
+      ok: false,
+      reason: 'unavailable',
+      specific: true,
+      refundable: false,
+    });
+  });
+
+  it('does not call a refusal specific unless it is an unrecognised 400', async () => {
+    for (const status of [403, 404, 413, 429]) {
+      const result = await reviewListing(INPUT, KEY, fakeFetch(new Response('x', { status })));
+      expect(result).not.toHaveProperty('specific');
+    }
   });
 
   it.each([500, 502, 503, 504])(

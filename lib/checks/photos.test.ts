@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_CATALOG_SENTENCE,
   AI_CATALOG_TAG,
+  AI_CATALOG_UNREAD_SENTENCE,
   AI_SEEN_SENTENCE,
   AI_SEEN_TAG,
   AI_SEEN_UNREAD_SENTENCE,
@@ -221,20 +222,20 @@ describe('confirmCatalogPhoto', () => {
   describe('when the local analysis could not read the photo', () => {
     const unread = checkPhotos({ main: null, others: [] });
 
-    it('says so, with a strong signal when an exact match backs it', () => {
+    it('confirms it, with a strong signal, when an exact match backs it', () => {
       expect(confirmCatalogPhoto(unread, true)).toEqual({
         id: 'photos',
         status: 'bad',
         tag: 'Photo catalogue',
-        detail: "L'IA voit une photo de catalogue (analyse locale impossible).",
+        detail: "L'IA confirme une photo de catalogue ou de studio (analyse locale impossible).",
         signals: [{ id: 'catalog_photo', strength: 'strong' }],
       });
-      expect(AI_SEEN_UNREAD_SENTENCE).toBe(
-        "L'IA voit une photo de catalogue (analyse locale impossible).",
+      expect(AI_CATALOG_UNREAD_SENTENCE).toBe(
+        "L'IA confirme une photo de catalogue ou de studio (analyse locale impossible).",
       );
     });
 
-    it('says so, with a weak signal otherwise', () => {
+    it('only sees it, with a weak signal, otherwise', () => {
       expect(confirmCatalogPhoto(unread, false)).toEqual({
         id: 'photos',
         status: 'warn',
@@ -242,6 +243,9 @@ describe('confirmCatalogPhoto', () => {
         detail: "L'IA voit une photo de catalogue (analyse locale impossible).",
         signals: [{ id: 'catalog_photo', strength: 'weak' }],
       });
+      expect(AI_SEEN_UNREAD_SENTENCE).toBe(
+        "L'IA voit une photo de catalogue (analyse locale impossible).",
+      );
     });
   });
 

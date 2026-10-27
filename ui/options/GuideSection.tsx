@@ -42,8 +42,8 @@ export function GuideSection({
       >
         <summary>Gemini : gratuit, sans carte bancaire</summary>
         <p class="muted">
-          Avec l'offre gratuite, Google peut utiliser la photo, le titre et la description envoyés
-          pour améliorer ses services.
+          Avec l'offre gratuite, Google peut utiliser la photo, le titre, la description, le prix et
+          les indices calculés par Fripon envoyés pour améliorer ses services.
         </p>
         <Steps>
           <li>

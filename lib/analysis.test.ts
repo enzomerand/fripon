@@ -694,7 +694,7 @@ describe('withAiReview', () => {
     ).toMatchObject({
       status: 'bad',
       tag: 'Photo catalogue',
-      detail: unread,
+      detail: "L'IA confirme une photo de catalogue ou de studio (analyse locale impossible).",
       signals: [{ id: 'catalog_photo', strength: 'strong' }],
     });
   });

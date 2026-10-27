@@ -24,6 +24,12 @@ export interface Refusal {
    * 404 with `NOT_FOUND` (nothing ran).
    */
   refundable: boolean;
+  /**
+   * true when the refusal may be about this very request (an unrecognised 400 of Gemini: the
+   * photo, its format) and says nothing sure about the service: it is not remembered for the
+   * next listings.
+   */
+  specific?: true;
 }
 
 /** HTTP statuses on which a refusal that Google names is known not to have been billed. */
@@ -38,10 +44,10 @@ const UNBILLED_REFUSALS: ReadonlySet<number> = new Set([400, 403, 429]);
  * A 404, or a body that says `NOT_FOUND`, is a service that is gone (a retired model): it is
  * `unavailable`, not a bad key, and free of charge only when Google says `NOT_FOUND`. A 413 blames
  * the image. What an unrecognised 400 means depends on the call: for Vision it is a problem with
- * the image or its payload (`photo`, the default), for Gemini the image is not the suspect (the
- * photo comes from Vinted's CDN) but the request is, or the region (`unavailable`, said by
- * `unnamed400`). Any other unrecognised refusal reads as a bad key. None of these is known to be
- * free of charge.
+ * the image or its payload (`photo`, the default), for Gemini it is the request or the region
+ * (`unavailable`, said by `unnamed400`), but it may as well be this very photo (a format Gemini
+ * refuses), so it is marked `specific` and not remembered. Any other unrecognised refusal reads as
+ * a bad key. None of these is known to be free of charge.
  *
  * This is the one place where the refund rule lives: a call that was never refused (a timeout, a
  * 5xx, an unreadable answer) may have been processed, and the caller keeps its credit.
@@ -60,7 +66,11 @@ export async function readRefusal(
   if (response.status === 404 || info.status === 'NOT_FOUND') {
     return { reason: 'unavailable', refundable: info.status === 'NOT_FOUND' };
   }
-  if (response.status === 400) return { reason: unnamed400, refundable: false };
+  if (response.status === 400) {
+    return unnamed400 === 'photo'
+      ? { reason: 'photo', refundable: false }
+      : { reason: unnamed400, refundable: false, specific: true };
+  }
   if (response.status === 413) return { reason: 'photo', refundable: false };
   return { reason: 'invalid', refundable: false };
 }

@@ -408,6 +408,34 @@ describe('createImageSearcher key failures', () => {
       expect(detect).toHaveBeenCalledTimes(3);
     });
 
+    it('is not remembered when it comes in after the user fixed the key, or after a success', async () => {
+      let fail: (value: WebDetectResult) => void = () => undefined;
+      const detect = vi
+        .fn<(base64: string, key: string) => Promise<WebDetectResult>>()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              fail = resolve;
+            }),
+        )
+        .mockResolvedValue(FOUND);
+      const search = createImageSearcher({
+        fetchPhoto: () => Promise.resolve(new Blob([BYTES])),
+        webDetect: detect,
+        now: () => clock,
+      });
+      const slow = search(PHOTO);
+      await vi.waitFor(() => expect(detect).toHaveBeenCalledOnce());
+      // Meanwhile the key tested fine (or another listing succeeded): the memory is forgotten.
+      search.forgetKeyFailure();
+      fail({ ok: false, reason: 'network', refundable: false });
+      expect(await slow).toEqual({ status: 'error', reason: 'network' });
+
+      // The late failure did not arm the memory: the next listing goes to Google.
+      expect((await search(OTHER)).status).toBe('ok');
+      expect(detect).toHaveBeenCalledTimes(2);
+    });
+
     it('is forgotten after a success', async () => {
       const detect = vi
         .fn<(base64: string, key: string) => Promise<WebDetectResult>>()

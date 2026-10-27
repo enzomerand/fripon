@@ -21,8 +21,18 @@ export interface FailureMemo<R extends string> {
    * memory; a refused key still is, as nothing the user can do on the card would change it.
    */
   recall(key: string, retry?: boolean): R | null;
-  /** Remembers a failure, for as long as its kind deserves. Others (a bad photo...) are not. */
-  remember(key: string, reason: R): void;
+  /**
+   * Where the memory stands: take it when a call starts and hand it back to `remember`. Every
+   * `forget` moves it on.
+   */
+  generation(): number;
+  /**
+   * Remembers a failure, for as long as its kind deserves. Others (a bad photo...) are not. A
+   * failure that comes in after a `forget` since `generation` was taken (a call that took longer
+   * than a success, or than the user fixing their key) is stale and ignored: it must never re-arm
+   * the memory nor overwrite a newer one.
+   */
+  remember(key: string, reason: R, generation: number): void;
   /** Forgets it: the call just worked, or the user fixed something (their key tested fine). */
   forget(): void;
 }
@@ -33,13 +43,16 @@ export interface FailureMemo<R extends string> {
  */
 export function createFailureMemo<R extends string>(now: () => number): FailureMemo<R> {
   let memo: { key: string; reason: R; until: number } | null = null;
+  let generation = 0;
   return {
     recall(key, retry = false) {
       if (!memo || memo.key !== key || now() >= memo.until) return null;
       if (retry && !isKeyFailure(memo.reason)) return null;
       return memo.reason;
     },
-    remember(key, reason) {
+    generation: () => generation,
+    remember(key, reason, taken) {
+      if (taken !== generation) return;
       const ms = isKeyFailure(reason)
         ? KEY_FAILURE_MEMO_MS
         : TRANSIENT.includes(reason)
@@ -49,6 +62,7 @@ export function createFailureMemo<R extends string>(now: () => number): FailureM
     },
     forget() {
       memo = null;
+      generation++;
     },
   };
 }

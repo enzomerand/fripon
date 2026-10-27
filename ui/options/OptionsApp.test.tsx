@@ -240,7 +240,7 @@ describe('keys', () => {
     await mount();
     const help = plain(keyBlock('gemini').querySelector('p.muted')?.textContent);
     expect(help).toBe(
-      "Écrit l'avis en langage simple de la carte et confirme les photos de catalogue. Pour chaque annonce analysée, la photo, le titre et la description sont envoyés à Google. Offre gratuite, sans carte bancaire.",
+      "Écrit l'avis en langage simple de la carte et confirme les photos de catalogue. Pour chaque annonce analysée, la photo, le titre, la description, le prix et les indices calculés par Fripon sont envoyés à Google. Offre gratuite, sans carte bancaire.",
     );
     expect($('#keys')?.textContent).not.toContain('bientôt');
   });
@@ -684,7 +684,7 @@ describe('guide', () => {
   it('warns that the free Gemini offer lets Google use what is sent, in the Gemini steps', async () => {
     await mount();
     const note =
-      "Avec l'offre gratuite, Google peut utiliser la photo, le titre et la description envoyés pour améliorer ses services.";
+      "Avec l'offre gratuite, Google peut utiliser la photo, le titre, la description, le prix et les indices calculés par Fripon envoyés pour améliorer ses services.";
     const details = [...document.querySelectorAll('#guide details')];
     expect(plain(details[0]?.textContent)).toContain(note);
     // Only the Gemini block says it: the Vision steps are about something else.

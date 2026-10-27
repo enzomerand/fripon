@@ -98,6 +98,14 @@ const FAILURE_DETAILS: Record<VisionFailure, string> = {
 /** What the retry button of a failed search says: the action is the one of the "Au clic" button. */
 const RETRY_SEARCH_LABEL = 'Réessayer la recherche';
 
+/**
+ * Whether the image row is a failed search that offers its retry button: the search is not final
+ * yet. The "Au clic" row has a button too, but it is not a retry.
+ */
+export function imageSearchCanBeRetried(row: CheckResult | undefined): boolean {
+  return row?.action === 'run_image_search' && row.actionLabel === RETRY_SEARCH_LABEL;
+}
+
 /** Failures that may pass: trying again is worth a click (and a credit). */
 const RETRYABLE_FAILURES: readonly VisionFailure[] = ['network', 'quota'];
 

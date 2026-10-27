@@ -22,7 +22,9 @@ export const AI_CATALOG_SENTENCE = "L'IA confirme une photo de catalogue ou de s
 /** ... when it only sees one, with nothing else to back it: a weak hint, like the local one. */
 export const AI_SEEN_TAG = 'Photo type catalogue';
 export const AI_SEEN_SENTENCE = "L'IA voit une photo de catalogue ou de studio.";
-/** ... when the local analysis could not read the photo at all. */
+/** ... when the local analysis could not read the photo at all, with or without the match. */
+export const AI_CATALOG_UNREAD_SENTENCE =
+  "L'IA confirme une photo de catalogue ou de studio (analyse locale impossible).";
 export const AI_SEEN_UNREAD_SENTENCE =
   "L'IA voit une photo de catalogue (analyse locale impossible).";
 
@@ -100,19 +102,21 @@ export function checkPhotos(input: PhotosInput): CheckResult {
  *
  * What the local row still says about reuse is kept; its own catalogue sentence, its "nothing
  * notable" and its "not analysed" give way to the AI's (which says so when the local analysis
- * could not read the photo). Only a "yes" goes through here: when the AI says the photo is not a
- * catalogue shot, the local row stays as it is.
+ * could not read the photo, still saying how sure it is). Only a "yes" goes through here: when
+ * the AI says the photo is not a catalogue shot, the local row stays as it is.
  */
 export function confirmCatalogPhoto(photos: CheckResult, backedByExactMatch: boolean): CheckResult {
   const kept = [LOCAL_CATALOG_SENTENCE, NOTHING_NOTABLE_SENTENCE, NOT_ANALYSED_SENTENCE]
     .reduce((detail, sentence) => detail.replace(sentence, ''), photos.detail)
     .trim();
-  const sentence =
-    photos.status === 'off'
+  const unread = photos.status === 'off';
+  const sentence = backedByExactMatch
+    ? unread
+      ? AI_CATALOG_UNREAD_SENTENCE
+      : AI_CATALOG_SENTENCE
+    : unread
       ? AI_SEEN_UNREAD_SENTENCE
-      : backedByExactMatch
-        ? AI_CATALOG_SENTENCE
-        : AI_SEEN_SENTENCE;
+      : AI_SEEN_SENTENCE;
   return {
     ...photos,
     status: backedByExactMatch ? 'bad' : 'warn',

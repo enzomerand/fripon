@@ -14,7 +14,7 @@ import {
   type AnalysisResult,
   type SearchDeps,
 } from '../lib/analysis';
-import { imageCheckSearching } from '../lib/checks/image';
+import { imageCheckSearching, imageSearchCanBeRetried } from '../lib/checks/image';
 import type { Gate, Gates } from '../lib/gate';
 import { sendMessage, type OptionsSection } from '../lib/messages';
 import type { Listing } from '../lib/model';
@@ -100,6 +100,11 @@ interface Analysed {
   busyImage: boolean;
   busyAi: boolean;
   /**
+   * true from a click until the review it may start has been asked: the review is sent with
+   * `retry`. It comes from the user, never from the page asking again by itself.
+   */
+  retryAsked: boolean;
+  /**
    * What the image search had found (`imageBasis`) when the review was last asked or answered,
    * null before any. A review is asked again only when this is no longer what the card shows.
    */
@@ -123,9 +128,12 @@ type StepMode = 'lookup' | 'run' | 'skip';
 /** Whether a step with this gate can really spend a credit. */
 const canSpend = (gate: Gate) => gate === 'ready' || gate === 'manual';
 
-/** The AI block a card starts with, from the gate the page was given. */
+/**
+ * The AI block a card starts with, from the gate the page was given: the button of the "Au clic"
+ * mode, or nothing. In the other modes the block appears when the review starts, which is after
+ * the image search is final.
+ */
 function initialAiBlock(gate: Gate): AiBlock | null {
-  if (gate === 'ready') return { status: 'running' };
   return gate === 'manual' ? { status: 'waiting' } : null;
 }
 
@@ -157,7 +165,13 @@ function createCardController(ctx: ContentScriptContext) {
 
   /** Shows the current analysis; `searchingImage` puts the "search running" row in the image row's place. */
   function showAnalysed(current: Analysed, searchingImage = false) {
-    const { listing, result, ai } = current;
+    const { listing, result } = current;
+    // The click that runs the search starts the review too: its button gives way to the block
+    // saying so, from the first render.
+    const ai: AiBlock | null =
+      searchingImage && current.ai?.status === 'waiting' && canSpend(current.gates.ai)
+        ? { status: 'running' }
+        : current.ai;
     show({
       status: 'done',
       listing,
@@ -206,10 +220,7 @@ function createCardController(ctx: ContentScriptContext) {
         : gates.image === 'manual'
           ? 'lookup'
           : 'run';
-    // The click that starts the review takes the AI block's button away from the first render.
-    if (trigger === 'click' && current.ai?.status === 'waiting' && canSpend(gates.ai)) {
-      current.ai = { status: 'running' };
-    }
+    if (trigger === 'click') current.retryAsked = true;
     // A search already running is not started twice, and the review waits for its own turn.
     if (
       imageStep !== 'skip' &&
@@ -219,6 +230,8 @@ function createCardController(ctx: ContentScriptContext) {
     }
     if (analysed !== current || ctx.isInvalid) return;
     await aiReviewSteps(current, trigger);
+    // Unless a review that another call is running still has to use it.
+    if (!current.busyAi) current.retryAsked = false;
   }
 
   /** false when the search was not started because another one is running. */
@@ -275,8 +288,11 @@ function createCardController(ctx: ContentScriptContext) {
       current.busyAi = true;
     }
     try {
-      for (let pass = 0; ; pass++) {
+      for (;;) {
         if (analysed !== current || ctx.isInvalid) return;
+        // A failed search that offers its retry is not final: the review waits for the row to be
+        // (a result, no key, no credits left, or a failure that a new search would not change).
+        if (imageSearchCanBeRetried(current.result.checks.find((c) => c.id === 'image'))) return;
         const basis = imageBasis(current.result.rawChecks);
         if (current.aiBasis === basis) return;
         if (!lookup) {
@@ -288,8 +304,9 @@ function createCardController(ctx: ContentScriptContext) {
             showAnalysed(current);
           }
         }
-        // Asking again is the user's doing (a click changed the image row), like a click itself.
-        const retry = trigger === 'click' || pass > 0;
+        // Another attempt only when the user asked for one, never because the page asks again.
+        const retry = !lookup && current.retryAsked;
+        current.retryAsked = false;
         const response = await askAiReview(current.listing, current.result, aiDeps, lookup, retry);
         if (analysed !== current) return;
         const stale = basis !== imageBasis(current.result.rawChecks);
@@ -408,6 +425,7 @@ function createCardController(ctx: ContentScriptContext) {
       ai: initialAiBlock(gates.ai),
       busyImage: false,
       busyAi: false,
+      retryAsked: false,
       aiBasis: null,
     };
     showAnalysed(analysed);

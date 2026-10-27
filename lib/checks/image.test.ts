@@ -3,6 +3,7 @@ import type { ImageMatch } from '../model';
 import {
   googleLensUrl,
   imageCheckFailed,
+  imageSearchCanBeRetried,
   imageCheckForMatches,
   imageCheckForSearch,
   imageCheckOff,
@@ -200,6 +201,28 @@ describe('imageCheckFailed', () => {
       expect(imageCheckFailed(reason).action).toBe('open_keys');
     },
   );
+});
+
+describe('imageSearchCanBeRetried', () => {
+  it('is true for a failed search that offers its retry button', () => {
+    expect(imageSearchCanBeRetried(imageCheckFailed('network'))).toBe(true);
+    expect(imageSearchCanBeRetried(imageCheckFailed('quota'))).toBe(true);
+  });
+
+  it('is false for the "Au clic" row, whose button is not a retry', () => {
+    expect(imageSearchCanBeRetried(imageCheckOff('manual'))).toBe(false);
+  });
+
+  it('is false for a final row: a result, a failure without retry, a row off for another reason', () => {
+    expect(imageSearchCanBeRetried(imageCheckForMatches([]))).toBe(false);
+    expect(imageSearchCanBeRetried(imageCheckFailed('photo'))).toBe(false);
+    expect(imageSearchCanBeRetried(imageCheckFailed('billing'))).toBe(false);
+    expect(imageSearchCanBeRetried(imageCheckFailed('unavailable'))).toBe(false);
+    expect(imageSearchCanBeRetried(imageCheckOff('no_key'))).toBe(false);
+    expect(imageSearchCanBeRetried(imageCheckOff('quota'))).toBe(false);
+    expect(imageSearchCanBeRetried(imageCheckSearching())).toBe(false);
+    expect(imageSearchCanBeRetried(undefined)).toBe(false);
+  });
 });
 
 describe('imageCheckForSearch', () => {

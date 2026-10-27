@@ -64,9 +64,11 @@ describe('readRefusal', () => {
   });
 
   it('can blame the service for an unrecognised 400, but never for a 413', async () => {
+    // ... said specific to the request, as it may be this very photo: not for the next listings.
     expect(await readRefusal(new Response('{}', { status: 400 }), 'unavailable')).toEqual({
       reason: 'unavailable',
       refundable: false,
+      specific: true,
     });
     expect(await readRefusal(new Response('{}', { status: 413 }), 'unavailable')).toEqual({
       reason: 'photo',

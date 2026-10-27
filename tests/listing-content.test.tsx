@@ -911,8 +911,8 @@ describe('listing content script', () => {
       expect(sentMessages('openOptions')).toContainEqual({ type: 'openOptions', section: 'keys' });
     }, 15_000);
 
-    describe('when the image search changes after the review', () => {
-      /** The first search fails, the next ones answer with `then`; the review follows the signals it gets. */
+    describe('when the image search is not final', () => {
+      /** The first search fails (a retryable failure), the next ones answer with `then`. */
       function failThen(then: unknown) {
         let attempts = 0;
         searchAnswer = () =>
@@ -926,85 +926,133 @@ describe('listing content script', () => {
             review: { catalogPhoto: false, summary: `Résumé pour : ${message.input?.signals[0]}` },
           });
       };
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
 
-      it('reviews again, with the new result, once a retry of the search succeeds', async () => {
+      it('waits for a retry of the search to succeed, then reviews with its result', async () => {
         imageGate = 'ready';
         aiGate = 'ready';
         failThen({ status: 'ok', matches: [SHEIN_EXACT] });
         answerBySignal();
         await openCard();
-        await until(() => aiText().includes("Résumé pour : Recherche d'image : non faite."));
-        expect(actionButton()?.textContent).toBe('Réessayer la recherche');
+        await until(() => actionButton()?.textContent === 'Réessayer la recherche');
+        await settle();
+        // The row offers its retry: the review does not start, and the card says nothing of it.
+        expect(sentMessages('aiReview')).toEqual([]);
+        expect(hostCard()?.shadowRoot?.querySelector('.fripon__ai')).toBeNull();
 
         actionButton()?.click();
         await until(() => aiText().includes("Résumé pour : Recherche d'image : la même photo"));
         expect(paidSearches()).toHaveLength(2);
-        expect(paidReviews()).toHaveLength(2);
-        expect(paidReviews()[1]?.input?.signals[0]).toBe(
+        expect(paidReviews()).toHaveLength(1);
+        expect(paidReviews()[0]?.input?.signals[0]).toBe(
           "Recherche d'image : la même photo est en vente sur Shein.",
         );
-        // Only the new summary is left.
-        expect(aiText()).not.toContain('non faite');
+        // The retry is the user's click, and the review it starts says so.
+        expect(paidReviews()[0]?.retry).toBe(true);
       }, 15_000);
 
-      it('does not review again when the retry fails the same way', async () => {
+      it('keeps waiting while the retry fails the same way', async () => {
         imageGate = 'ready';
         aiGate = 'ready';
         searchAnswer = () => Promise.resolve({ status: 'error', reason: 'network' });
         await openCard();
-        await until(() => aiText().includes('Résumé de test.'));
+        await until(() => actionButton()?.textContent === 'Réessayer la recherche');
 
         actionButton()?.click();
         await until(() => paidSearches().length === 2);
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await settle();
         expect(actionButton()?.textContent).toBe('Réessayer la recherche');
-        expect(paidReviews()).toHaveLength(1);
-        expect(aiText()).toContain('Résumé de test.');
+        expect(sentMessages('aiReview')).toEqual([]);
+        expect(hostCard()?.shadowRoot?.querySelector('.fripon__ai')).toBeNull();
       }, 15_000);
 
-      it('shows the review is on its way again while the new one runs', async () => {
-        imageGate = 'ready';
-        aiGate = 'ready';
-        failThen({ status: 'ok', matches: [] });
-        await openCard();
-        await until(() => aiText().includes('Résumé de test.'));
-        const release = holdReview();
+      it.each([
+        ['a cap reached', { status: 'quota' }],
+        ['a photo that cannot be read', { status: 'error', reason: 'photo' }],
+        ['a key Google refuses', { status: 'error', reason: 'billing' }],
+        ['no key', { status: 'no_key' }],
+      ])(
+        'reviews as soon as the row is final: %s',
+        async (_name, answer) => {
+          imageGate = 'ready';
+          aiGate = 'ready';
+          searchAnswer = () => Promise.resolve(answer);
+          await openCard();
+          await until(() => aiText().includes('Résumé de test.'));
+          expect(paidReviews()).toHaveLength(1);
+          expect(paidReviews()[0]?.retry).toBeUndefined();
+        },
+        15_000,
+      );
 
-        actionButton()?.click();
-        await until(() => aiText().includes("L'IA lit l'annonce…"));
-        expect(aiText()).not.toContain('Résumé de test.');
-        release({ status: 'ok', review: { catalogPhoto: false, summary: 'Nouveau résumé.' } });
-        await until(() => aiText().includes('Nouveau résumé.'));
-      }, 15_000);
-
-      it('never ignores the retry of the search because a review is running, and drops the review it made stale', async () => {
-        imageGate = 'ready';
-        aiGate = 'ready';
-        failThen({ status: 'ok', matches: [SHEIN_EXACT] });
-        const releaseFirst = holdReview();
+      it('does not review in manual mode while the click left a retry, then does once it succeeds', async () => {
+        imageGate = 'manual';
+        aiGate = 'manual';
+        let attempts = 0;
+        searchAnswer = (message) =>
+          Promise.resolve(
+            message.cacheOnly
+              ? { status: 'not_cached' }
+              : ++attempts === 1
+                ? { status: 'error', reason: 'network' }
+                : { status: 'ok', matches: [] },
+          );
+        answerBySignal();
+        const real = aiAnswer;
+        aiAnswer = (message) =>
+          message.cacheOnly ? Promise.resolve({ status: 'not_cached' }) : real(message);
         await openCard();
         await until(() => sentMessages('aiReview').length === 1);
-        // The search failed, the review is still running: the row offers the retry.
-        await until(() => actionButton()?.textContent === 'Réessayer la recherche');
-        const first = sentMessages('aiReview')[0];
 
         actionButton()?.click();
-        await until(() => paidSearches().length === 2);
-        await until(() => shadowText().includes('Trouvée sur Shein'));
-        // The first review is still on its way: the search did not wait for it, nor was it dropped.
-        expect(sentMessages('aiReview')).toHaveLength(1);
+        await until(() => actionButton()?.textContent === 'Réessayer la recherche');
+        await settle();
+        expect(paidReviews()).toEqual([]);
+        // No stuck "L'IA lit l'annonce…": the block gave way to the row's single button.
+        expect(aiText()).toBe('');
 
-        answerBySignal();
+        actionButton()?.click();
+        await until(() => aiText().includes("Résumé pour : Recherche d'image : aucune trace"));
+        expect(paidReviews()).toHaveLength(1);
+      }, 15_000);
+
+      // Real gates cannot differ like this (the mode is shared); the test needs the two steps side
+      // by side to prove a review is dropped and asked again when the image row changes under it.
+      it('drops a review that the image row changed under, and asks again with the new row', async () => {
+        imageGate = 'manual';
+        aiGate = 'ready';
+        let asked = 0;
+        let releaseFirst: (value: unknown) => void = () => undefined;
+        aiAnswer = (message) => {
+          if (message.cacheOnly) return Promise.resolve({ status: 'not_cached' });
+          if (++asked === 1) {
+            return new Promise((resolve) => {
+              releaseFirst = resolve;
+            });
+          }
+          return Promise.resolve({
+            status: 'ok',
+            review: { catalogPhoto: false, summary: `Résumé pour : ${message.input?.signals[0]}` },
+          });
+        };
+        await openCard();
+        await until(() => aiText().includes("L'IA lit l'annonce…"));
+        expect(actionButton()?.textContent).toBe("Lancer la recherche d'image");
+
+        actionButton()?.click();
+        await until(() => shadowText().includes('Introuvable'));
+        // The first review is still on its way: the search did not wait for it.
+        expect(sentMessages('aiReview').filter((m) => !m.cacheOnly)).toHaveLength(1);
+
         releaseFirst({ status: 'ok', review: { catalogPhoto: true, summary: 'Résumé périmé.' } });
-        await until(() => aiText().includes("Résumé pour : Recherche d'image : la même photo"));
-        expect(sentMessages('aiReview')).toHaveLength(2);
-        expect(first?.input?.signals[0]).toBe("Recherche d'image : non faite.");
-        expect(sentMessages('aiReview')[1]?.input?.signals[0]).toBe(
-          "Recherche d'image : la même photo est en vente sur Shein.",
-        );
-        // The stale answer was never shown, nor its catalogue photo applied (no exact-match red).
+        await until(() => aiText().includes("Résumé pour : Recherche d'image : aucune trace"));
+        expect(paidReviews()).toHaveLength(2);
+        // The stale answer was never shown, nor its catalogue photo applied.
         expect(aiText()).not.toContain('Résumé périmé.');
-        expect(shadowText()).not.toContain("L'IA confirme");
+        expect(shadowText()).not.toContain('Photo type catalogue');
+        // The second review is the user's click that changed the row, not the page's doing.
+        expect(paidReviews()[0]?.retry).toBeUndefined();
+        expect(paidReviews()[1]?.retry).toBe(true);
       }, 15_000);
     });
 

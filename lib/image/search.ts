@@ -62,6 +62,8 @@ export function createImageSearcher(deps: ImageSearcherDeps): ImageSearcher {
     cacheKey: string,
     retry: boolean,
   ): Promise<SearchImageResponse> {
+    // Taken now: a failure that comes in after a success or a fixed key must not be remembered.
+    const generation = memo.generation();
     const cached = await cachedMatches(cacheKey);
     if (cached) return { status: 'ok', matches: cached };
 
@@ -97,7 +99,7 @@ export function createImageSearcher(deps: ImageSearcherDeps): ImageSearcher {
       // Only a call Google certainly did not bill gives its credit back: after a timeout or a
       // 5xx the image may have been processed, and the counter must not understate the spend.
       if (result.refundable) await refund('vision', 1, reservation.periodId).catch(() => undefined);
-      memo.remember(key, result.reason);
+      memo.remember(key, result.reason, generation);
       return { status: 'error', reason: result.reason };
     }
 

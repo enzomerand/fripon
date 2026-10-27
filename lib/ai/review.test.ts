@@ -364,6 +364,19 @@ describe('createAiReviewer key failures', () => {
     },
   );
 
+  it('does not remember an unrecognised 400, which may be about this very photo', async () => {
+    const { review, photo, call } = setup({
+      ok: false,
+      reason: 'unavailable',
+      specific: true,
+      refundable: false,
+    });
+    expect(await review(INPUT)).toEqual({ status: 'error', reason: 'unavailable' });
+    expect(await review(OTHER)).toEqual({ status: 'error', reason: 'unavailable' });
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(photo).toHaveBeenCalledTimes(2);
+  });
+
   describe('a failure that passes by itself', () => {
     it.each(['quota', 'network', 'unavailable'] as const)(
       'is remembered for 90 seconds when it is "%s": no download, no call, no credit for the next listings',

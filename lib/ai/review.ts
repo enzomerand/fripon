@@ -75,6 +75,8 @@ export function createAiReviewer(deps: AiReviewerDeps): AiReviewer {
     cacheKey: string,
     retry: boolean,
   ): Promise<AiReviewResponse> {
+    // Taken now: a failure that comes in after a success or a fixed key must not be remembered.
+    const generation = memo.generation();
     const cached = await cachedReview(cacheKey);
     if (cached) return { status: 'ok', review: cached };
 
@@ -120,7 +122,8 @@ export function createAiReviewer(deps: AiReviewerDeps): AiReviewer {
       // Only a call Google certainly did not bill gives its credit back: after a timeout or a
       // 5xx the photo may have been processed, and the counter must not understate the spend.
       if (result.refundable) await refund('gemini', 1, reservation.periodId).catch(() => undefined);
-      memo.remember(key, result.reason);
+      // An unrecognised 400 may be about this very photo: the next listing deserves its own try.
+      if (!result.specific) memo.remember(key, result.reason, generation);
       return { status: 'error', reason: result.reason };
     }
 

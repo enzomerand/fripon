@@ -17,7 +17,7 @@ const PROVIDER_TEXT: Record<Provider, { title: string; help: string }> = {
   },
   gemini: {
     title: 'Analyse IA — Gemini',
-    help: "Écrit l'avis en langage simple de la carte et confirme les photos de catalogue. Pour chaque annonce analysée, la photo, le titre et la description sont envoyés à Google. Offre gratuite, sans carte bancaire.",
+    help: "Écrit l'avis en langage simple de la carte et confirme les photos de catalogue. Pour chaque annonce analysée, la photo, le titre, la description, le prix et les indices calculés par Fripon sont envoyés à Google. Offre gratuite, sans carte bancaire.",
   },
 };
 
