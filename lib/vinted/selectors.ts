@@ -65,11 +65,13 @@ export const SELECTORS = {
 export const GRID_SELECTORS = {
   /** Superset of the card roots: also matches their parts, filter with the two root testids. */
   cardCandidates: '[data-testid^="product-item-id-"], [data-testid="feed-item"]',
-  /** Brand, size and price block: the Fripon button goes right after it. A card without it is not a whole card. */
+  /** Brand and size lines. A card without it is not a whole card (a promotion, a card still being drawn). */
   description: '[data-testid$="--description"]',
   title: '[data-testid$="--description-title"]',
   subtitle: '[data-testid$="--description-subtitle"]',
   price: '[data-testid$="--price-text"]',
+  /** Total with fees and the service fee, under the price: the last block of the card's text. */
+  breakdown: '[data-testid$="--breakdown"]',
   photo: '[data-testid$="--image--img"]',
   /** The link that covers the whole card. */
   overlayLink: '[data-testid$="--overlay-link"]',

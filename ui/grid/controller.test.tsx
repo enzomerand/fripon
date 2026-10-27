@@ -15,10 +15,13 @@ function card(id: number, src = THUMB(id % 10)): string {
       <div data-testid="${p}">
         <a data-testid="${p}--overlay-link" href="/items/${id}-robe-${id}?referrer=catalog"></a>
         <img data-testid="${p}--image--img" src="${src}">
-        <div data-testid="${p}--description">
-          <p data-testid="${p}--description-title">Marque ${id}</p>
-          <p data-testid="${p}--description-subtitle">M · Bon état</p>
+        <div data-testid="${p}--summary">
+          <div data-testid="${p}--description">
+            <p data-testid="${p}--description-title">Marque ${id}</p>
+            <p data-testid="${p}--description-subtitle">M · Bon état</p>
+          </div>
           <p data-testid="${p}--price-text">${id % 100},00 €</p>
+          <div data-testid="${p}--breakdown"><span>${id % 100},50 €</span></div>
         </div>
       </div>
     </div>`;
@@ -93,11 +96,13 @@ afterEach(() => {
 });
 
 describe('placement', () => {
-  it('puts one block right after the description of every whole card', () => {
+  it('puts one block under the price of every whole card, and none under a promotion', () => {
     start(card(9000101) + PROMO + card(9000102));
     expect(hosts()).toHaveLength(2);
-    const description = rootOf(9000101).querySelector('[data-testid$="--description"]');
-    expect(description?.nextElementSibling).toBe(hostOf(9000101));
+    // Last in the card's text column, after the fees line that closes the price.
+    const breakdown = rootOf(9000101).querySelector('[data-testid$="--breakdown"]');
+    expect(breakdown?.nextElementSibling).toBe(hostOf(9000101));
+    expect(hostOf(9000101)?.parentElement).toBe(breakdown?.parentElement);
     expect(rootOf(9000101).contains(hostOf(9000101))).toBe(true);
     expect(shadowText(hostOf(9000102))).toBe('🦊 Analyser');
   });

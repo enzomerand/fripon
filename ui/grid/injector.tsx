@@ -2,8 +2,12 @@ import { render } from 'preact';
 import { BUTTON_HOST_TAG, createHost, type Host, type SharedStyles } from '../../lib/grid/host';
 import type { GridStore } from '../../lib/grid/store';
 import type { OptionsSection } from '../../lib/messages';
-import { findCardRoots, readGridCard, type GridCard } from '../../lib/vinted/grid';
-import { GRID_SELECTORS } from '../../lib/vinted/selectors';
+import {
+  findButtonAnchor,
+  findCardRoots,
+  readGridCard,
+  type GridCard,
+} from '../../lib/vinted/grid';
 import { GridButton } from './GridButton';
 
 export interface InjectorOptions {
@@ -87,7 +91,7 @@ export function createGridInjector(options: InjectorOptions): GridInjector {
     };
   }
 
-  /** Right after the description block of the card, below the price and the size. */
+  /** Right after the card's text, below the title, the size and the price. */
   function place(entry: Entry, anchor: Element) {
     if (entry.host.element.previousElementSibling !== anchor) anchor.after(entry.host.element);
   }
@@ -104,7 +108,7 @@ export function createGridInjector(options: InjectorOptions): GridInjector {
       const known = byCard.get(root);
       if (known) {
         track(known);
-        const anchor = root.querySelector(GRID_SELECTORS.description);
+        const anchor = findButtonAnchor(root);
         if (anchor) place(known, anchor);
         continue;
       }

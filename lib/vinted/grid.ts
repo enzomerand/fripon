@@ -21,7 +21,7 @@ export interface GridCard {
   priceText: string;
   /** The card's root element. */
   element: Element;
-  /** The description block (title, size, price): the button goes right after it. */
+  /** The block of the card's text that ends with the price: the button goes right after it. */
   anchor: Element;
 }
 
@@ -100,6 +100,38 @@ export function findCardRoots(root: ParentNode): Element[] {
 }
 
 /**
+ * Where the Fripon block goes in a card: right after the block that ends the card's text, so below
+ * the title, the size AND the price (and the fees line under it), never between them. The card's
+ * text is a column (`--description`, then the price, then `--breakdown`, in a `--summary`): the
+ * block is the child of the column that holds the end of the price, so it sits at the level of its
+ * siblings and takes the full width, however deep the price is wrapped.
+ *
+ * Without a price in the card, or when it is not below the description, the description itself.
+ * Null without a description: not a whole card.
+ */
+export function findButtonAnchor(root: Element): Element | null {
+  const description = root.querySelector(GRID_SELECTORS.description);
+  if (!description) return null;
+  const priceEnd =
+    root.querySelector(GRID_SELECTORS.breakdown) ?? root.querySelector(GRID_SELECTORS.price);
+  if (!priceEnd || description.contains(priceEnd)) return description;
+
+  // The column that holds both the description and the price: the lowest common ancestor.
+  let column = description.parentElement;
+  while (column && !column.contains(priceEnd)) column = column.parentElement;
+  if (!column) return description;
+  let block: Element = priceEnd;
+  while (block.parentElement && block.parentElement !== column) block = block.parentElement;
+  if (block.parentElement !== column) return description;
+
+  // A price that sits above the description is not what this is made for.
+  const below =
+    block.contains(description) ||
+    description.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING;
+  return below ? block : description;
+}
+
+/**
  * Reads one card from its root element. Null when `element` is not a whole card: a part of a card
  * (the image, the link...), a card without its description block (a promotion, a card still being
  * drawn), or a card whose item cannot be told.
@@ -110,7 +142,7 @@ export function readGridCard(element: Element): GridCard | null {
     element.getAttribute('data-testid') ?? '',
   )?.[1];
 
-  const anchor = element.querySelector(GRID_SELECTORS.description);
+  const anchor = findButtonAnchor(element);
   if (!anchor) return null;
 
   const base = element.ownerDocument.baseURI;
@@ -133,16 +165,6 @@ export function readGridCard(element: Element): GridCard | null {
     element,
     anchor,
   };
-}
-
-/** Every whole result card under `root`, in page order. */
-export function readGridCards(root: ParentNode): GridCard[] {
-  const cards: GridCard[] = [];
-  for (const element of findCardRoots(root)) {
-    const card = readGridCard(element);
-    if (card) cards.push(card);
-  }
-  return cards;
 }
 
 /** Containers the bar must not be put before: it would end up outside the results. */

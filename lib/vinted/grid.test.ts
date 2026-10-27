@@ -1,16 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
+  findButtonAnchor,
   findCardRoots,
   findResultsAnchor,
   pickPhotoUrl,
   readGridCard,
-  readGridCards,
+  type GridCard,
 } from './grid';
 
 // Synthetic cards shaped like Vinted's grids. Every id, name and photo is made up.
 const THUMB = 'https://images1.vinted.net/t/01_aa/310x430/aa.webp?s=1';
 const TINY = 'https://images1.vinted.net/t/01_aa/100x100/aa.webp?s=2';
 const PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+
+/** Every whole card of the page, in page order. */
+function readGridCards(root: ParentNode): GridCard[] {
+  return findCardRoots(root).flatMap((element) => readGridCard(element) ?? []);
+}
 
 function page(html: string): Document {
   const doc = document.implementation.createHTMLDocument('test');
@@ -42,11 +48,18 @@ function catalogCard({
         <img data-testid="${p}--image--img" src="${src}" alt="Robe">
         ${
           description
-            ? `<div data-testid="${p}--description">
-                 <p data-testid="${p}--description-title">${title}</p>
-                 <p data-testid="${p}--description-subtitle">M  ·
-                   Très bon état</p>
-                 <p data-testid="${p}--price-text">12,00 €</p>
+            ? `<div data-testid="${p}--summary">
+                 <div data-testid="${p}--description">
+                   <p data-testid="${p}--description-title">${title}</p>
+                   <p data-testid="${p}--description-subtitle">M  ·
+                     Très bon état</p>
+                 </div>
+                 <div data-testid="${p}--title-container">
+                   <p data-testid="${p}--price-text">12,00 €</p>
+                 </div>
+                 <div data-testid="${p}--breakdown">
+                   <span data-testid="total-combined-price">13,30 €</span>
+                 </div>
                </div>`
             : ''
         }
@@ -60,15 +73,18 @@ function feedCard(id = '9000201'): string {
     <div data-testid="feed-item">
       <a data-testid="feed-item--overlay-link" href="https://www.vinted.fr/items/${id}-pull-test"></a>
       <img data-testid="feed-item--image--img" src="${THUMB}">
-      <div data-testid="feed-item--description">
-        <p data-testid="feed-item--description-title">Autre Marque</p>
-        <p data-testid="feed-item--description-subtitle">L · Bon état</p>
+      <div data-testid="feed-item--summary">
+        <div data-testid="feed-item--description">
+          <p data-testid="feed-item--description-title">Autre Marque</p>
+          <p data-testid="feed-item--description-subtitle">L · Bon état</p>
+        </div>
         <p data-testid="feed-item--price-text">8,50 €</p>
+        <div data-testid="feed-item--breakdown"><span>9,10 €</span></div>
       </div>
     </div>`;
 }
 
-describe('readGridCards', () => {
+describe('reading the cards of a page', () => {
   it('reads a catalogue card: id, item url, photo, title, subtitle, price', () => {
     const doc = page(catalogCard());
     const [card, ...rest] = readGridCards(doc);
@@ -85,10 +101,10 @@ describe('readGridCards', () => {
     expect(card?.element.getAttribute('data-testid')).toBe('product-item-id-9000101');
   });
 
-  it('puts the anchor on the description block, inside the card', () => {
+  it('puts the anchor after the fees line, inside the card', () => {
     const doc = page(catalogCard());
     const card = readGridCards(doc)[0];
-    expect(card?.anchor.getAttribute('data-testid')).toBe('product-item-id-9000101--description');
+    expect(card?.anchor.getAttribute('data-testid')).toBe('product-item-id-9000101--breakdown');
     expect(card?.element.contains(card.anchor)).toBe(true);
   });
 
@@ -189,6 +205,98 @@ describe('readGridCards', () => {
     const image = doc.querySelector('img') as HTMLImageElement;
     Object.defineProperty(image, 'currentSrc', { value: THUMB });
     expect(readGridCards(doc)[0]?.photoUrl).toBe(THUMB);
+  });
+});
+
+describe('findButtonAnchor', () => {
+  const rootOf = (html: string) => page(html).body.firstElementChild as Element;
+  const testidOf = (element: Element | null) => element?.getAttribute('data-testid');
+
+  it('is the fees block, below the title, the size and the price', () => {
+    const root = rootOf(catalogCard().replace('grid-item', 'g'));
+    const product = root.querySelector('[data-testid="product-item-id-9000101"]') as Element;
+    const anchor = findButtonAnchor(product);
+    expect(testidOf(anchor)).toBe('product-item-id-9000101--breakdown');
+    // Same level as the description and the price block: a child of the column, full width.
+    expect(anchor?.parentElement).toBe(product.querySelector('[data-testid$="--summary"]'));
+    const order = [...(anchor?.parentElement?.children ?? [])].map(testidOf);
+    expect(order).toEqual([
+      'product-item-id-9000101--description',
+      'product-item-id-9000101--title-container',
+      'product-item-id-9000101--breakdown',
+    ]);
+  });
+
+  it('is the fees block of a home feed card too', () => {
+    const feed = rootOf(feedCard());
+    expect(testidOf(findButtonAnchor(feed))).toBe('feed-item--breakdown');
+  });
+
+  it('climbs out of a row that holds the price and the fees', () => {
+    const root = rootOf(`
+      <div data-testid="product-item-id-9000103">
+        <div data-testid="product-item-id-9000103--summary">
+          <div data-testid="product-item-id-9000103--description"><p>Marque</p></div>
+          <div id="row"><div><p data-testid="product-item-id-9000103--price-text">9,00 €</p></div>
+            <div><div data-testid="product-item-id-9000103--breakdown"></div></div></div>
+        </div>
+      </div>`);
+    expect(findButtonAnchor(root)?.id).toBe('row');
+  });
+
+  it('follows the price when the card has no fees line', () => {
+    const root = rootOf(`
+      <div data-testid="product-item-id-9000103">
+        <div data-testid="product-item-id-9000103--summary">
+          <div data-testid="product-item-id-9000103--description"></div>
+          <div id="price"><p data-testid="product-item-id-9000103--price-text">9,00 €</p></div>
+        </div>
+      </div>`);
+    expect(findButtonAnchor(root)?.id).toBe('price');
+  });
+
+  it('finds the column even when the price is not in the same summary as the description', () => {
+    const root = rootOf(`
+      <div data-testid="product-item-id-9000103">
+        <div id="text"><div data-testid="product-item-id-9000103--description"></div></div>
+        <div id="money"><p data-testid="product-item-id-9000103--price-text">9,00 €</p></div>
+      </div>`);
+    expect(findButtonAnchor(root)?.id).toBe('money');
+  });
+
+  it('is the description when the price is inside it (the older card layout)', () => {
+    const root = rootOf(`
+      <div data-testid="product-item-id-9000103">
+        <div data-testid="product-item-id-9000103--description">
+          <p data-testid="product-item-id-9000103--price-text">9,00 €</p>
+        </div>
+      </div>`);
+    expect(testidOf(findButtonAnchor(root))).toBe('product-item-id-9000103--description');
+  });
+
+  it('is the description when the card shows no price', () => {
+    const root = rootOf(`
+      <div data-testid="product-item-id-9000103">
+        <div data-testid="product-item-id-9000103--description"></div>
+      </div>`);
+    expect(testidOf(findButtonAnchor(root))).toBe('product-item-id-9000103--description');
+  });
+
+  it('is the description when the price comes before it', () => {
+    const root = rootOf(`
+      <div data-testid="product-item-id-9000103">
+        <p data-testid="product-item-id-9000103--price-text">9,00 €</p>
+        <div data-testid="product-item-id-9000103--description"></div>
+      </div>`);
+    expect(testidOf(findButtonAnchor(root))).toBe('product-item-id-9000103--description');
+  });
+
+  it('is null without a description: not a whole card', () => {
+    const root = rootOf(`
+      <div data-testid="product-item-id-9000103">
+        <p data-testid="product-item-id-9000103--price-text">9,00 €</p>
+      </div>`);
+    expect(findButtonAnchor(root)).toBeNull();
   });
 });
 
