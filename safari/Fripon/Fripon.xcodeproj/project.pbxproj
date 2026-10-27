@@ -1,0 +1,601 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 110;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		EFAD00293090BE2B0091B82F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFAD00283090BE2B0091B82F /* AppDelegate.swift */; };
+		EFAD002D3090BE2B0091B82F /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = EFAD002B3090BE2B0091B82F /* Main.html */; };
+		EFAD002F3090BE2B0091B82F /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = EFAD002E3090BE2B0091B82F /* Icon.png */; };
+		EFAD00313090BE2B0091B82F /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = EFAD00303090BE2B0091B82F /* Style.css */; };
+		EFAD00333090BE2B0091B82F /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = EFAD00323090BE2B0091B82F /* Script.js */; };
+		EFAD00353090BE2B0091B82F /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFAD00343090BE2B0091B82F /* ViewController.swift */; };
+		EFAD00383090BE2B0091B82F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = EFAD00363090BE2B0091B82F /* Main.storyboard */; };
+		EFAD003A3090BE2D0091B82F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EFAD00393090BE2D0091B82F /* Assets.xcassets */; };
+		EFAD00413090BE2E0091B82F /* Fripon Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EFAD00403090BE2E0091B82F /* Fripon Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		EFAD00463090BE2E0091B82F /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFAD00453090BE2E0091B82F /* SafariWebExtensionHandler.swift */; };
+		EFAD00593090BE2E0091B82F /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = EFAD00523090BE2E0091B82F /* background.js */; };
+		EFAD005A3090BE2E0091B82F /* chunks in Resources */ = {isa = PBXBuildFile; fileRef = EFAD00533090BE2E0091B82F /* chunks */; };
+		EFAD005B3090BE2E0091B82F /* content-scripts in Resources */ = {isa = PBXBuildFile; fileRef = EFAD00543090BE2E0091B82F /* content-scripts */; };
+		EFAD005C3090BE2E0091B82F /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = EFAD00553090BE2E0091B82F /* manifest.json */; };
+		EFAD005D3090BE2E0091B82F /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = EFAD00563090BE2E0091B82F /* options.html */; };
+		EFAD005E3090BE2E0091B82F /* icon in Resources */ = {isa = PBXBuildFile; fileRef = EFAD00573090BE2E0091B82F /* icon */; };
+		EFAD005F3090BE2E0091B82F /* assets in Resources */ = {isa = PBXBuildFile; fileRef = EFAD00583090BE2E0091B82F /* assets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		EFAD00423090BE2E0091B82F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = EFAD001D3090BE2B0091B82F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EFAD003F3090BE2E0091B82F;
+			remoteInfo = "Fripon Extension";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		EFAD004D3090BE2E0091B82F /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			dstPath = "";
+			dstSubfolder = PlugIns;
+			files = (
+				EFAD00413090BE2E0091B82F /* Fripon Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		EFAD00253090BE2B0091B82F /* Fripon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fripon.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		EFAD00283090BE2B0091B82F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		EFAD002C3090BE2B0091B82F /* Base */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = Base; path = Base.lproj/Main.html; sourceTree = "<group>"; };
+		EFAD002E3090BE2B0091B82F /* Icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icon.png; sourceTree = "<group>"; };
+		EFAD00303090BE2B0091B82F /* Style.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = Style.css; sourceTree = "<group>"; };
+		EFAD00323090BE2B0091B82F /* Script.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Script.js; sourceTree = "<group>"; };
+		EFAD00343090BE2B0091B82F /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
+		EFAD00373090BE2B0091B82F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		EFAD00393090BE2D0091B82F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		EFAD003B3090BE2D0091B82F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		EFAD00403090BE2E0091B82F /* Fripon Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Fripon Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		EFAD00453090BE2E0091B82F /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		EFAD00473090BE2E0091B82F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		EFAD00523090BE2E0091B82F /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = Resources/background.js; sourceTree = "<group>"; };
+		EFAD00533090BE2E0091B82F /* chunks */ = {isa = PBXFileReference; lastKnownFileType = folder; name = chunks; path = Resources/chunks; sourceTree = "<group>"; };
+		EFAD00543090BE2E0091B82F /* content-scripts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "content-scripts"; path = "Resources/content-scripts"; sourceTree = "<group>"; };
+		EFAD00553090BE2E0091B82F /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = Resources/manifest.json; sourceTree = "<group>"; };
+		EFAD00563090BE2E0091B82F /* options.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = options.html; path = Resources/options.html; sourceTree = "<group>"; };
+		EFAD00573090BE2E0091B82F /* icon */ = {isa = PBXFileReference; lastKnownFileType = folder; name = icon; path = Resources/icon; sourceTree = "<group>"; };
+		EFAD00583090BE2E0091B82F /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = assets; path = Resources/assets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		EFAD00223090BE2B0091B82F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		EFAD003D3090BE2E0091B82F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		EFAD001C3090BE2B0091B82F = {
+			isa = PBXGroup;
+			children = (
+				EFAD00273090BE2B0091B82F /* Fripon */,
+				EFAD00443090BE2E0091B82F /* Fripon Extension */,
+				EFAD00263090BE2B0091B82F /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		EFAD00263090BE2B0091B82F /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				EFAD00253090BE2B0091B82F /* Fripon.app */,
+				EFAD00403090BE2E0091B82F /* Fripon Extension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		EFAD00273090BE2B0091B82F /* Fripon */ = {
+			isa = PBXGroup;
+			children = (
+				EFAD00283090BE2B0091B82F /* AppDelegate.swift */,
+				EFAD00343090BE2B0091B82F /* ViewController.swift */,
+				EFAD00363090BE2B0091B82F /* Main.storyboard */,
+				EFAD00393090BE2D0091B82F /* Assets.xcassets */,
+				EFAD003B3090BE2D0091B82F /* Info.plist */,
+				EFAD002A3090BE2B0091B82F /* Resources */,
+			);
+			path = Fripon;
+			sourceTree = "<group>";
+		};
+		EFAD002A3090BE2B0091B82F /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				EFAD002B3090BE2B0091B82F /* Main.html */,
+				EFAD002E3090BE2B0091B82F /* Icon.png */,
+				EFAD00303090BE2B0091B82F /* Style.css */,
+				EFAD00323090BE2B0091B82F /* Script.js */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		EFAD00443090BE2E0091B82F /* Fripon Extension */ = {
+			isa = PBXGroup;
+			children = (
+				EFAD00513090BE2E0091B82F /* Resources */,
+				EFAD00453090BE2E0091B82F /* SafariWebExtensionHandler.swift */,
+				EFAD00473090BE2E0091B82F /* Info.plist */,
+			);
+			path = "Fripon Extension";
+			sourceTree = "<group>";
+		};
+		EFAD00513090BE2E0091B82F /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				EFAD00523090BE2E0091B82F /* background.js */,
+				EFAD00533090BE2E0091B82F /* chunks */,
+				EFAD00543090BE2E0091B82F /* content-scripts */,
+				EFAD00553090BE2E0091B82F /* manifest.json */,
+				EFAD00563090BE2E0091B82F /* options.html */,
+				EFAD00573090BE2E0091B82F /* icon */,
+				EFAD00583090BE2E0091B82F /* assets */,
+			);
+			name = Resources;
+			path = "Fripon Extension";
+			sourceTree = SOURCE_ROOT;
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		EFAD00243090BE2B0091B82F /* Fripon */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EFAD004E3090BE2E0091B82F /* Build configuration list for PBXNativeTarget "Fripon" */;
+			buildPhases = (
+				EFAD00213090BE2B0091B82F /* Sources */,
+				EFAD00223090BE2B0091B82F /* Frameworks */,
+				EFAD00233090BE2B0091B82F /* Resources */,
+				EFAD004D3090BE2E0091B82F /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EFAD00433090BE2E0091B82F /* PBXTargetDependency */,
+			);
+			name = Fripon;
+			productName = Fripon;
+			productReference = EFAD00253090BE2B0091B82F /* Fripon.app */;
+			productType = "com.apple.product-type.application";
+		};
+		EFAD003F3090BE2E0091B82F /* Fripon Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EFAD004A3090BE2E0091B82F /* Build configuration list for PBXNativeTarget "Fripon Extension" */;
+			buildPhases = (
+				EFAD003C3090BE2E0091B82F /* Sources */,
+				EFAD003D3090BE2E0091B82F /* Frameworks */,
+				EFAD003E3090BE2E0091B82F /* Resources */,
+			);
+			buildRules = (
+			);
+			name = "Fripon Extension";
+			productName = "Fripon Extension";
+			productReference = EFAD00403090BE2E0091B82F /* Fripon Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		EFAD001D3090BE2B0091B82F /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2710;
+				LastUpgradeCheck = 2710;
+				TargetAttributes = {
+					EFAD00243090BE2B0091B82F = {
+						CreatedOnToolsVersion = 27.1;
+					};
+					EFAD003F3090BE2E0091B82F = {
+						CreatedOnToolsVersion = 27.1;
+					};
+				};
+			};
+			buildConfigurationList = EFAD00203090BE2B0091B82F /* Build configuration list for PBXProject "Fripon" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = EFAD001C3090BE2B0091B82F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = EFAD00263090BE2B0091B82F /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				EFAD00243090BE2B0091B82F /* Fripon */,
+				EFAD003F3090BE2E0091B82F /* Fripon Extension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		EFAD00233090BE2B0091B82F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+				EFAD002F3090BE2B0091B82F /* Icon.png in Resources */,
+				EFAD00383090BE2B0091B82F /* Main.storyboard in Resources */,
+				EFAD00333090BE2B0091B82F /* Script.js in Resources */,
+				EFAD002D3090BE2B0091B82F /* Main.html in Resources */,
+				EFAD003A3090BE2D0091B82F /* Assets.xcassets in Resources */,
+				EFAD00313090BE2B0091B82F /* Style.css in Resources */,
+			);
+		};
+		EFAD003E3090BE2E0091B82F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+				EFAD005C3090BE2E0091B82F /* manifest.json in Resources */,
+				EFAD005E3090BE2E0091B82F /* icon in Resources */,
+				EFAD005F3090BE2E0091B82F /* assets in Resources */,
+				EFAD005A3090BE2E0091B82F /* chunks in Resources */,
+				EFAD005D3090BE2E0091B82F /* options.html in Resources */,
+				EFAD005B3090BE2E0091B82F /* content-scripts in Resources */,
+				EFAD00593090BE2E0091B82F /* background.js in Resources */,
+			);
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		EFAD00213090BE2B0091B82F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				EFAD00353090BE2B0091B82F /* ViewController.swift in Sources */,
+				EFAD00293090BE2B0091B82F /* AppDelegate.swift in Sources */,
+			);
+		};
+		EFAD003C3090BE2E0091B82F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				EFAD00463090BE2E0091B82F /* SafariWebExtensionHandler.swift in Sources */,
+			);
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		EFAD00433090BE2E0091B82F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EFAD003F3090BE2E0091B82F /* Fripon Extension */;
+			targetProxy = EFAD00423090BE2E0091B82F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		EFAD002B3090BE2B0091B82F /* Main.html */ = {
+			isa = PBXVariantGroup;
+			children = (
+				EFAD002C3090BE2B0091B82F /* Base */,
+			);
+			name = Main.html;
+			sourceTree = "<group>";
+		};
+		EFAD00363090BE2B0091B82F /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				EFAD00373090BE2B0091B82F /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		EFAD00483090BE2E0091B82F /* Debug configuration for PBXProject "Fripon" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		EFAD00493090BE2E0091B82F /* Release configuration for PBXProject "Fripon" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		EFAD004B3090BE2E0091B82F /* Debug configuration for PBXNativeTarget "Fripon Extension" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Fripon Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Fripon Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = fr.fripon.Fripon.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		EFAD004C3090BE2E0091B82F /* Release configuration for PBXNativeTarget "Fripon Extension" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Fripon Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Fripon Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = fr.fripon.Fripon.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		EFAD004F3090BE2E0091B82F /* Debug configuration for PBXNativeTarget "Fripon" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Fripon/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Fripon;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_NSViewGestureRecognizerIsExclusive = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = fr.fripon.Fripon;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		EFAD00503090BE2E0091B82F /* Release configuration for PBXNativeTarget "Fripon" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Fripon/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Fripon;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_NSViewGestureRecognizerIsExclusive = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = fr.fripon.Fripon;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		EFAD00203090BE2B0091B82F /* Build configuration list for PBXProject "Fripon" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EFAD00483090BE2E0091B82F /* Debug configuration for PBXProject "Fripon" */,
+				EFAD00493090BE2E0091B82F /* Release configuration for PBXProject "Fripon" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		EFAD004A3090BE2E0091B82F /* Build configuration list for PBXNativeTarget "Fripon Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EFAD004B3090BE2E0091B82F /* Debug configuration for PBXNativeTarget "Fripon Extension" */,
+				EFAD004C3090BE2E0091B82F /* Release configuration for PBXNativeTarget "Fripon Extension" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		EFAD004E3090BE2E0091B82F /* Build configuration list for PBXNativeTarget "Fripon" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EFAD004F3090BE2E0091B82F /* Debug configuration for PBXNativeTarget "Fripon" */,
+				EFAD00503090BE2E0091B82F /* Release configuration for PBXNativeTarget "Fripon" */,
+			);
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = EFAD001D3090BE2B0091B82F /* Project object */;
+	validationLevel = 1;
+}
