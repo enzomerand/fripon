@@ -240,7 +240,7 @@ describe('keys', () => {
     await mount();
     const help = plain(keyBlock('gemini').querySelector('p.muted')?.textContent);
     expect(help).toBe(
-      "Écrit l'avis en langage simple de la carte et confirme les photos de catalogue. Offre gratuite, sans carte bancaire.",
+      "Écrit l'avis en langage simple de la carte et confirme les photos de catalogue. Pour chaque annonce analysée, la photo, le titre et la description sont envoyés à Google. Offre gratuite, sans carte bancaire.",
     );
     expect($('#keys')?.textContent).not.toContain('bientôt');
   });
