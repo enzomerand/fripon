@@ -1,4 +1,5 @@
 import type { BatchEnd, BatchState } from '../../lib/grid/batch';
+import { Logo } from '../Logo';
 import { press } from './press';
 
 export interface GridBarProps {
@@ -137,7 +138,8 @@ export function GridBar({ visibleCount, batch, onAsk, onLaunch, onCancel, onStop
             data-focus="ask"
             onClick={press(onAsk)}
           >
-            <span aria-hidden="true">🦊</span> {analyzeAllLabel(visibleCount)}
+            <Logo />
+            {analyzeAllLabel(visibleCount)}
           </button>
         </>
       )}

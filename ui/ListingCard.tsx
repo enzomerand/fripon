@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import type { AiBlock } from '../lib/ai/block';
 import { googleLensUrl } from '../lib/checks/image';
+import { Logo } from './Logo';
 import type { OptionsSection } from '../lib/messages';
 import type {
   CheckAction,
@@ -296,14 +297,20 @@ export function ListingCard({ state, onRetry, onOpenOptions, onRun }: ListingCar
   if (state.status === 'loading') {
     return (
       <section class="fripon fripon--neutral" role="status">
-        <span class="fripon__pulse">🦊 Fripon analyse l'annonce…</span>
+        <span class="fripon__pulse fripon__brand">
+          <Logo />
+          Fripon analyse l'annonce…
+        </span>
       </section>
     );
   }
   if (state.status === 'error') {
     return (
       <section class="fripon fripon--neutral" role="status">
-        <div class="fripon__title">🦊 Fripon n'a pas pu analyser cette annonce.</div>
+        <div class="fripon__title">
+          <Logo />
+          Fripon n'a pas pu analyser cette annonce.
+        </div>
         <p class="fripon__line">{state.message}</p>
         {onRetry && (
           <button type="button" class="fripon__toggle" onClick={onRetry}>

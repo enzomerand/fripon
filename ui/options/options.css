@@ -99,6 +99,9 @@ summary:focus-visible {
 }
 
 .header h1 {
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
   margin: 0;
   font-size: 1.75rem;
   line-height: 1.2;

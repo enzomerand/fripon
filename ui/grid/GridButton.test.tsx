@@ -47,16 +47,14 @@ afterEach(async () => {
 describe('GridButton', () => {
   it('offers to analyse in the idle state, with a name that says which item', async () => {
     await show({ status: 'idle' });
-    expect(text()).toBe('🦊 Analyser');
+    expect(text()).toBe('Analyser');
     expect(button().getAttribute('aria-label')).toBe('Analyser « Robe Test » avec Fripon');
     expect(button().type).toBe('button');
   });
 
-  it('separates the fox from the label: its own item, a space, and a gap in the flex row', async () => {
+  it('separates the fox from the label: its own item and a gap in the flex row', async () => {
     await show({ status: 'idle' });
-    const fox = button().querySelector('span');
-    expect(fox?.textContent).toBe('🦊');
-    expect(button().textContent).toBe('🦊 Analyser');
+    expect(button().firstElementChild?.querySelector('svg')).toBeTruthy();
     const rule = /\.fripon-grid__button \{[^}]*\}/.exec(css)?.[0] ?? '';
     expect(rule).toMatch(/display:\s*flex/);
     expect(rule).toMatch(/gap:\s*\d+px/);
