@@ -12,14 +12,6 @@ import { readRefusal, type CallFailure } from './refusal';
  */
 export const GEMINI_MODEL = 'gemini-flash-lite-latest';
 export const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-
-/**
- * The same model family through Vertex AI (Google Cloud), billed after use on the Cloud invoice,
- * where the Gemini API may require prepaid credits. Same body, same `x-goog-api-key` header: the
- * key must be a Cloud API key for `aiplatform.googleapis.com`. Used by the Fripon Cloud server only.
- */
-export const vertexGeminiUrl = (model: string) =>
-  `https://aiplatform.googleapis.com/v1/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
 /** A call that takes longer than this (answer body included) counts as a network failure. */
 export const GEMINI_TIMEOUT_MS = 30_000;
 /** A summary longer than this is not a summary: the answer is refused rather than cut. */
@@ -165,7 +157,6 @@ export async function reviewListing(
   input: ReviewInput,
   key: string,
   fetchImpl: FetchLike = (url, init) => fetch(url, init),
-  url: string = GEMINI_URL,
 ): Promise<ReviewResult> {
   // Never sent, so never billed.
   if (!isHeaderSafe(key)) return { ok: false, reason: 'invalid', refundable: true };
@@ -174,7 +165,7 @@ export async function reviewListing(
   // Covers the whole exchange, body included.
   const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
   try {
-    const response = await fetchImpl(url, {
+    const response = await fetchImpl(GEMINI_URL, {
       method: 'POST',
       headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
       body: JSON.stringify({

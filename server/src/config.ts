@@ -96,12 +96,6 @@ export function loadConfig(env: Env = process.env) {
     /** The owner's Google keys behind the paid steps. Empty in development: Google then refuses. */
     googleVisionKey: requiredInProduction('GOOGLE_VISION_KEY', ''),
     geminiKey: requiredInProduction('GEMINI_KEY', ''),
-    /**
-     * Set: the reviews go through Vertex AI with this model (`gemini-2.5-flash-lite`...), billed
-     * after use on the Cloud invoice, and `GEMINI_KEY` is a Cloud key for aiplatform.googleapis.com.
-     * Unset: the Gemini API (`GEMINI_MODEL`), which may require prepaid credits in AI Studio.
-     */
-    geminiVertexModel: text(env, 'GEMINI_VERTEX_MODEL') ?? null,
     /** Stripe's secret (or restricted) key. Empty in development: Stripe then refuses the call. */
     stripeSecretKey: requiredInProduction('STRIPE_SECRET_KEY', ''),
     /** The signing secret of the webhook endpoint (`whsec_...`): what proves an event is Stripe's. */

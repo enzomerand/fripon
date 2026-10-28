@@ -8,7 +8,6 @@ import {
   buildPrompt,
   parseReview,
   reviewListing,
-  vertexGeminiUrl,
   type ReviewInput,
 } from './gemini';
 
@@ -58,19 +57,6 @@ afterEach(() => {
 });
 
 describe('reviewListing request', () => {
-  it('posts to the endpoint it is given (Vertex AI), the same body and header', async () => {
-    const fetchImpl = fakeFetch(answer(REVIEW_JSON));
-    const url = vertexGeminiUrl('gemini-2.5-flash-lite');
-    await reviewListing(INPUT, KEY, fetchImpl, url);
-
-    expect(url).toBe(
-      'https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-lite:generateContent',
-    );
-    const [called, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
-    expect(called).toBe(url);
-    expect(init.headers).toEqual({ 'x-goog-api-key': KEY, 'content-type': 'application/json' });
-  });
-
   it('posts the photo and the prompt in JSON mode, with the key in a header only', async () => {
     const fetchImpl = fakeFetch(answer(REVIEW_JSON));
     await reviewListing(INPUT, KEY, fetchImpl);
