@@ -139,11 +139,9 @@ export function OptionsApp() {
             )}
             <ModeSection settings={stored.settings} onSaved={onSaved} />
             <CloudSection status={stored.cloud} expired={stored.cloudExpired} onChanged={onSaved} />
-            <KeysSection
-              settings={stored.settings}
-              signedIn={stored.cloud !== null}
-              onSaved={onSaved}
-            />
+            {/* Signed in, the keys serve nothing (the server calls the providers): not shown,
+                and kept for a sign-out. An expired session still works from them: shown. */}
+            {stored.cloud === null && <KeysSection settings={stored.settings} onSaved={onSaved} />}
             <CreditsSection
               usage={stored.usage}
               cloud={stored.cloud}

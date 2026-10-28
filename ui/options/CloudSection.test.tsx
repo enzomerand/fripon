@@ -692,12 +692,13 @@ describe('signed in', () => {
 });
 
 describe('the other sections while signed in', () => {
-  it('tell that the keys and their credits are not used', async () => {
+  it('hide the keys, and tell that their credits are not used', async () => {
     await saveSettings({ keys: { vision: 'AIza' + 'a'.repeat(35) } });
     await signIn(PLAN_USAGE, { status: 'active', periodEnd: null });
     background({});
     await mount();
-    expect(text($('#keys .callout'))).toContain('ces clés ne sont pas utilisées');
+    // Signed in, the keys serve nothing: their section is not shown at all (the key stays saved).
+    expect($('#keys')).toBeNull();
     const credits = $('#credits') as HTMLElement;
     expect(text(credits)).toContain("Tu es connecté à l'abonnement Fripon");
     expect(text(credits)).toContain('12 / 300 ce mois-ci');
@@ -709,7 +710,7 @@ describe('the other sections while signed in', () => {
   it('leave the keys and the credits as they were when signed out', async () => {
     background({});
     await mount();
-    expect($('#keys .callout')).toBeNull();
+    expect($('#keys')).not.toBeNull();
     expect(root.querySelectorAll('#credits .credit')).toHaveLength(2);
     expect(text($('#keys'))).toContain('Sans abonnement, tes clés restent dans ce navigateur');
   });
