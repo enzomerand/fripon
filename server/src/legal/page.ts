@@ -1,4 +1,5 @@
 import { formatMoney } from '../../../lib/format';
+import { HOST, PUBLISHER, type Publisher } from './entity';
 
 /**
  * What the two legal pages (`/cgv`, `/confidentialite`) share: the page around the text, the
@@ -16,7 +17,7 @@ export const DRAFT_BANNER = "Brouillon à faire relire — ne pas publier en l'�
  * The date of the texts, shown on both pages. Move it whenever a text changes, and send the
  * subscribers their notice (the terms promise 30 days).
  */
-export const LEGAL_VERSION_DATE = '2026-10-27';
+export const LEGAL_VERSION_DATE = '2026-10-28';
 
 /**
  * A fact the owner has to give (a name, an address, a number...). Written exactly like this on
@@ -30,8 +31,38 @@ export function todo(what: string): string {
 /** What marks a placeholder in a rendered page (the start of every `todo`). */
 export const TODO_MARK = '[À COMPLÉTER';
 
-/** The owner's contact address, asked for in several places. */
-export const contact = (): string => todo('adresse e-mail de contact');
+/** What each unfilled field of the publisher says in its placeholder. One entry per field: a new field is a type error until it has its words. */
+export const PUBLISHER_LABELS: Record<keyof Publisher, string> = {
+  companyName: 'dénomination sociale de la société éditrice',
+  legalForm: 'forme juridique (SAS, SARL…)',
+  shareCapital: 'capital social',
+  registeredOffice: 'adresse du siège social',
+  rcs: 'ville du greffe et numéro RCS',
+  siret: 'numéro SIRET',
+  vat: 'numéro de TVA intracommunautaire, ou mention de la franchise en base de TVA',
+  publicationDirector: 'nom du directeur de la publication',
+  contactEmail: 'adresse e-mail de contact',
+  mediatorName: 'nom du médiateur de la consommation',
+  mediatorAddress: 'adresse postale du médiateur de la consommation',
+  mediatorWebsite: 'site internet du médiateur de la consommation',
+};
+
+/**
+ * One detail of the publisher, ready for a page: its value (escaped: a company can be « Dupont &
+ * Fils »), or the placeholder of its label while it is `null` (a blank string counts as not filled).
+ */
+export function publisherField(publisher: Publisher, key: keyof Publisher): string {
+  const value = publisher[key]?.trim();
+  return value ? escapeHtml(value) : todo(PUBLISHER_LABELS[key]);
+}
+
+/**
+ * The reminder next to every paragraph about Stripe acting as merchant of record: the owner has to
+ * check it against the Managed Payments terms in the Stripe Dashboard (the exact Stripe entity and
+ * its buyer terms are not known here, so neither page names one). Delete the `todo` once checked.
+ */
+export const STRIPE_PARAGRAPH_CHECK =
+  'vérifier ce paragraphe avec les conditions Managed Payments de Stripe (tableau de bord Stripe)';
 
 /** `299` is "2,99 €": cents in, a French price out (the same formatter as the extension's). */
 export const euros = (cents: number): string =>
@@ -81,16 +112,23 @@ export function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/** The publisher, host and contact: the legal notice of the terms, and the controller of the privacy policy. */
-export function publisherList(serviceUrl: string): string {
+/**
+ * The publisher, host and contact: the legal notice of the terms (the company's name, form,
+ * capital, registered office, RCS, SIRET, VAT, director of publication, contact, host), and the
+ * controller of the privacy policy. Everything comes from `entity.ts`.
+ */
+export function publisherList(serviceUrl: string, publisher: Publisher = PUBLISHER): string {
+  const field = (key: keyof Publisher) => publisherField(publisher, key);
   return `<ul>
-<li>Éditeur et responsable du service : Enzo Mérand, ${todo('statut juridique (entrepreneur individuel, société…) et dénomination ou raison sociale')}</li>
-<li>Adresse : ${todo("adresse postale de l'éditeur")}</li>
-<li>SIRET : ${todo('numéro SIRET')}</li>
-<li>TVA : ${todo('numéro de TVA intracommunautaire, ou mention de la franchise en base de TVA')}</li>
-<li>Directeur de la publication : ${todo('nom du directeur de la publication')}</li>
-<li>Contact : ${contact()}</li>
-<li>Hébergeur : ${todo("nom de l'hébergeur")}, ${todo("adresse de l'hébergeur")}</li>
+<li>Éditeur et responsable du service : ${field('companyName')}, ${field('legalForm')}</li>
+<li>Capital social : ${field('shareCapital')}</li>
+<li>Siège social : ${field('registeredOffice')}</li>
+<li>Immatriculation au RCS : ${field('rcs')}</li>
+<li>SIRET : ${field('siret')}</li>
+<li>TVA : ${field('vat')}</li>
+<li>Directeur de la publication : ${field('publicationDirector')}</li>
+<li>Contact : ${field('contactEmail')}</li>
+<li>Hébergeur : ${escapeHtml(HOST.name)}, ${escapeHtml(HOST.address)} (le serveur est dans ${escapeHtml(HOST.datacentre)})</li>
 <li>Adresse du service : ${escapeHtml(serviceUrl)}</li>
 </ul>`;
 }

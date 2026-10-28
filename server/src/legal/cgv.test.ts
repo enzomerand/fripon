@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TERMS_MESSAGE } from '../routes/billing';
 import { CHANGE_NOTICE_DAYS, cgvBody } from './cgv';
+import { STRIPE_PARAGRAPH_CHECK } from './page';
 
 // Every figure of the terms must come from the server's own constants. They are swapped here for
 // values nobody would type by hand: a price, a cap, the trial or the review limit retyped in the
@@ -52,6 +53,34 @@ describe('the terms of sale', () => {
     expect(html).toContain(TERMS_MESSAGE);
     expect(html).toContain('L221-28, 13°');
     expect(html).toContain('14 jours');
+  });
+
+  it('say plainly that Stripe is the reseller (merchant of record) and the publisher provides the service', () => {
+    const section = html.slice(html.indexOf('<h2>6.'), html.indexOf('<h2>7.'));
+
+    expect(section).toContain('Stripe, qui intervient comme revendeur');
+    expect(section).toContain('« merchant of record », offre « Managed Payments »');
+    expect(section).toContain(
+      'Stripe encaisse le paiement, émet le reçu ou la facture, collecte la TVA',
+    );
+    expect(section).toContain(
+      'traite les questions relatives au paiement, les remboursements demandés sur le paiement et les litiges de paiement',
+    );
+    expect(section).toContain(
+      "Le service lui-même (comptes, analyses, plafonds) est fourni par l'éditeur",
+    );
+    expect(section).toContain(`[À COMPLÉTER : ${STRIPE_PARAGRAPH_CHECK}]`);
+    // It names no Stripe legal entity and quotes no Stripe terms.
+    expect(html).not.toMatch(/Stripe (Payments|Technology|Inc|Ltd|Limited|Europe)/);
+  });
+
+  it('say the waiver is collected at Checkout, at the order', () => {
+    expect(html).toContain(
+      'la page de paiement Stripe (Checkout) vous demande, au moment de la commande',
+    );
+    expect(html).toContain(
+      'Votre accord exprès et votre renoncement sont recueillis à cet endroit',
+    );
   });
 
   it('promise the notice period of a change by the constant, and name the withdrawal, cancellation and mediation', () => {
