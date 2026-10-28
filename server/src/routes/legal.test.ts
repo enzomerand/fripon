@@ -70,12 +70,25 @@ describe('GET /cgv and /confidentialite', () => {
     expect(wellFormed).toHaveLength(marked);
   });
 
-  it.each(PAGES)('%s names the publisher, and the service by its public address', async (path) => {
-    const { html } = await get(setup(false, 'https://cloud.fripon.test/'), path);
+  it.each(PAGES)(
+    '%s names the publisher company fields, the host and the service by its public address',
+    async (path) => {
+      const { html } = await get(setup(false, 'https://cloud.fripon.test/'), path);
 
-    expect(html).toContain('Enzo Mérand');
-    expect(html).toContain('Adresse du service : https://cloud.fripon.test</li>');
-  });
+      // Nothing is filled in the committed object: each company fact is a placeholder, not a person.
+      expect(html).not.toContain('Enzo Mérand');
+      for (const label of [
+        'dénomination sociale',
+        'capital social',
+        'numéro SIRET',
+        'ville du greffe',
+      ]) {
+        expect(html).toContain(label);
+      }
+      expect(html).toContain('Hébergeur : OVH SAS, 2 rue Kellermann, 59100 Roubaix, France');
+      expect(html).toContain('Adresse du service : https://cloud.fripon.test</li>');
+    },
+  );
 
   it.each(PAGES)('%s gives the date of its version', async (path) => {
     const { html } = await get(setup(), path);

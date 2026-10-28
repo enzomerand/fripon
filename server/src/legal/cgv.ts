@@ -2,7 +2,15 @@ import { formatCount } from '../../../lib/format';
 import { PLAN_CAPS, PRICE_SPECS, TRIAL_ANALYSES, type PlanName } from '../plans';
 import { REVIEWS_PER_PHOTO } from '../quota';
 import { TERMS_MESSAGE } from '../routes/billing';
-import { contact, escapeHtml, euros, publisherList, todo } from './page';
+import { PUBLISHER, type Publisher } from './entity';
+import {
+  STRIPE_PARAGRAPH_CHECK,
+  escapeHtml,
+  euros,
+  publisherField,
+  publisherList,
+  todo,
+} from './page';
 
 /** How many days the subscribers are warned before a change of the terms takes effect. */
 export const CHANGE_NOTICE_DAYS = 30;
@@ -33,12 +41,13 @@ ${rows}
 }
 
 /** The terms of sale and use, as the HTML of the page's body (the page around it is `legalPage`). */
-export function cgvBody(serviceUrl: string): string {
+export function cgvBody(serviceUrl: string, publisher: Publisher = PUBLISHER): string {
+  const field = (key: keyof Publisher) => publisherField(publisher, key);
   return `
-<p>Ces conditions s'appliquent à Fripon Cloud, l'abonnement de l'extension de navigateur Fripon. En créant un compte ou en vous abonnant, vous les acceptez. « L'éditeur » désigne la personne identifiée à l'article 1, « vous » la personne qui utilise Fripon Cloud.</p>
+<p>Ces conditions s'appliquent à Fripon Cloud, l'abonnement de l'extension de navigateur Fripon. En créant un compte ou en vous abonnant, vous les acceptez. « L'éditeur » désigne la société identifiée à l'article 1, « vous » la personne qui utilise Fripon Cloud.</p>
 
 <h2>1. Éditeur et mentions légales</h2>
-${publisherList(serviceUrl)}
+${publisherList(serviceUrl, publisher)}
 
 <h2>2. Le service</h2>
 <p>Fripon est une extension de navigateur libre (licence AGPL-3.0, code source public) qui signale, sur les pages de Vinted, les annonces qui paraissent revendues depuis Shein, Temu, AliExpress et consorts (dropshipping) ou affichées à un prix gonflé. Ses vérifications simples se font dans votre navigateur. Deux étapes demandent un service payant : la recherche d'image (Google Cloud Vision) et l'avis de l'IA (Gemini de Google avec vos propres clés ; Claude d'Anthropic dans l'abonnement).</p>
@@ -67,12 +76,12 @@ ${offersTable()}
 </ul>
 
 <h2>6. Paiement, renouvellement et factures</h2>
+<p>Le paiement passe par Stripe, qui intervient comme revendeur (« merchant of record », offre « Managed Payments ») : Stripe encaisse le paiement, émet le reçu ou la facture, collecte la TVA et la reverse, et traite les questions relatives au paiement, les remboursements demandés sur le paiement et les litiges de paiement. Le service lui-même (comptes, analyses, plafonds) est fourni par l'éditeur. Vous payez avec les moyens de paiement que Stripe propose au moment de l'achat, et l'éditeur ne voit ni ne conserve votre numéro de carte. ${todo(STRIPE_PARAGRAPH_CHECK)}</p>
 <ul>
-<li>Le paiement est traité par Stripe, prestataire de paiement, avec les moyens de paiement qu'il propose au moment de l'achat. L'éditeur ne voit ni ne conserve votre numéro de carte.</li>
 <li>L'abonnement est pris pour un mois ou pour un an, selon l'offre. Il se renouvelle automatiquement, pour la même durée et au même prix (sauf modification annoncée selon l'article 13), jusqu'à ce que vous le résiliez. Le paiement est prélevé à chaque échéance.</li>
 <li>Si un paiement échoue, Stripe le retente pendant quelques jours et l'accès au service est maintenu pendant ce délai. Si le paiement n'aboutit jamais, l'abonnement prend fin. Vous pouvez mettre votre carte à jour depuis « Gérer mon abonnement ».</li>
 <li>Vous pouvez changer d'offre depuis « Gérer mon abonnement » ; Stripe calcule alors l'ajustement au prorata de ce que vous avez déjà payé.</li>
-<li>Vos factures sont consultables depuis « Gérer mon abonnement ».</li>
+<li>Les reçus et les factures sont émis par Stripe ; vous les retrouvez depuis « Gérer mon abonnement ».</li>
 </ul>
 
 <h2>7. Résiliation</h2>
@@ -82,7 +91,7 @@ ${offersTable()}
 <h2>8. Droit de rétractation</h2>
 <p>Si vous agissez en tant que consommateur (à des fins qui n'entrent pas dans le cadre de votre activité professionnelle), vous disposez en principe de 14 jours pour vous rétracter d'un contrat conclu à distance.</p>
 <p>Fripon Cloud est un service numérique fourni dès le paiement. Conformément à l'article L221-28, 13° du Code de la consommation, le droit de rétractation ne peut pas être exercé pour un contenu numérique fourni sans support matériel dont l'exécution a commencé avec votre accord préalable exprès et votre renoncement exprès à ce droit.</p>
-<p>C'est pourquoi la page de paiement Stripe vous demande, avant de payer, de cocher la case suivante : « ${escapeHtml(TERMS_MESSAGE)} ». Sans cette case cochée, le paiement ne peut pas être fait. L'essai gratuit n'implique ni paiement ni renonciation.</p>
+<p>C'est pourquoi la page de paiement Stripe (Checkout) vous demande, au moment de la commande et avant de payer, de cocher la case suivante : « ${escapeHtml(TERMS_MESSAGE)} ». Votre accord exprès et votre renoncement sont recueillis à cet endroit, par cette case. Sans cette case cochée, le paiement ne peut pas être fait. L'essai gratuit n'implique ni paiement ni renonciation.</p>
 
 <h2>9. Disponibilité du service</h2>
 <p>Fripon Cloud est fourni au mieux de ce que l'éditeur peut faire, sans garantie de disponibilité continue. Il dépend de prestataires (Google, Anthropic, Stripe, l'hébergeur, l'envoi d'e-mails) et des pages de Vinted, dont la structure peut changer sans préavis. Il peut être interrompu pour une maintenance ou un incident, ou limité par des plafonds de capacité, ceux de l'éditeur comme ceux de ses prestataires. Une analyse refusée pour l'une de ces raisons n'est en général pas décomptée.</p>
@@ -104,6 +113,6 @@ ${offersTable()}
 
 <h2>14. Droit applicable, litiges et médiation</h2>
 <p>Ces conditions sont soumises au droit français. Si vous êtes consommateur, vous pouvez saisir la juridiction du lieu où vous demeurez, dans les conditions prévues par la loi.</p>
-<p>Avant toute action, écrivez à l'éditeur (${contact()}) : la plupart des difficultés se règlent ainsi. Si vous êtes consommateur et que le litige n'est pas réglé, vous avez le droit de recourir gratuitement à un médiateur de la consommation. Médiateur de la consommation de l'éditeur : ${todo('nom, adresse postale et site internet du médiateur de la consommation')}.</p>
+<p>Avant toute action, écrivez à l'éditeur (${field('contactEmail')}) : la plupart des difficultés se règlent ainsi. Si vous êtes consommateur et que le litige n'est pas réglé, vous avez le droit de recourir gratuitement à un médiateur de la consommation. Médiateur de la consommation de l'éditeur : ${field('mediatorName')}, ${field('mediatorAddress')}, ${field('mediatorWebsite')}.</p>
 `;
 }

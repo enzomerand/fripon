@@ -8,7 +8,15 @@ import {
   TRIAL_CLAIM_KEEP_MS,
 } from '../auth';
 import { NEGATIVE_CACHE_TTL_MS, VISION_SERVER_CACHE_TTL_MS } from '../routes/proxy';
-import { contact, duration, publisherList, todo } from './page';
+import { HOST, MAIL_PROVIDER, PUBLISHER, type Publisher } from './entity';
+import {
+  STRIPE_PARAGRAPH_CHECK,
+  duration,
+  escapeHtml,
+  publisherField,
+  publisherList,
+  todo,
+} from './page';
 
 /**
  * How long Caddy keeps its access logs. It is written in `server/caddy/fripon.caddy`
@@ -37,7 +45,9 @@ function item(
 }
 
 /** The privacy policy, as the HTML of the page's body (the page around it is `legalPage`). */
-export function privacyBody(serviceUrl: string): string {
+export function privacyBody(serviceUrl: string, publisher: Publisher = PUBLISHER): string {
+  const mailer = `${escapeHtml(MAIL_PROVIDER.name)} (${escapeHtml(MAIL_PROVIDER.company)}), ${escapeHtml(MAIL_PROVIDER.address)}`;
+  const host = `${escapeHtml(HOST.name)}, ${escapeHtml(HOST.address)}`;
   const contract = 'exécution du contrat (les <a href="/cgv">conditions</a> que vous acceptez)';
   const legitimate = "intérêt légitime de l'éditeur";
 
@@ -47,7 +57,7 @@ export function privacyBody(serviceUrl: string): string {
 
 <h2>1. Responsable du traitement</h2>
 <p>Le responsable du traitement est l'éditeur de Fripon Cloud :</p>
-${publisherList(serviceUrl)}
+${publisherList(serviceUrl, publisher)}
 
 <h2>2. Les données, leur usage et leur durée</h2>
 
@@ -120,15 +130,15 @@ ${item('Paiement et factures', {
 <ul>
 <li><strong>Google</strong> (Google Cloud Vision, pour la recherche d'image) reçoit la photo de chaque analyse. Fripon Cloud l'appelle avec la clé payante de l'éditeur : dans ce cadre, Google n'utilise pas ces données pour améliorer ses produits.</li>
 <li><strong>Anthropic</strong> (son modèle Claude, pour l'avis de l'IA) reçoit la photo, le titre, la description, le prix et les indices de chaque avis demandé. Fripon Cloud l'appelle par son API avec la clé payante de l'éditeur : dans ce cadre, Anthropic n'utilise pas ces données pour entraîner ses modèles. Il les traite et les conserve selon sa propre politique de confidentialité et ses conditions commerciales.</li>
-<li><strong>Stripe</strong> traite les paiements et les abonnements, selon sa propre politique de confidentialité. Il reçoit votre adresse e-mail et l'identifiant de votre compte Fripon.</li>
-<li><strong>Le prestataire d'envoi d'e-mails</strong> (${todo("nom du prestataire d'envoi d'e-mails")}) reçoit votre adresse e-mail et le code de connexion pour vous les envoyer.</li>
-<li><strong>L'hébergeur</strong> (${todo("nom de l'hébergeur")}) héberge le serveur et sa base de données.</li>
+<li><strong>Stripe</strong> traite les paiements et les abonnements, selon sa propre politique de confidentialité. Il intervient comme revendeur (« merchant of record », offre « Managed Payments ») : il encaisse le paiement, émet le reçu ou la facture, collecte la TVA et la reverse, et traite les questions relatives au paiement, les remboursements demandés sur le paiement et les litiges de paiement. Il reçoit votre adresse e-mail, l'identifiant de votre compte Fripon et les informations de paiement et de facturation que sa page de paiement vous demande. Le service lui-même (comptes, analyses, plafonds) est fourni par l'éditeur, à qui Stripe transmet l'état de votre abonnement. ${todo(STRIPE_PARAGRAPH_CHECK)}</li>
+<li><strong>Le prestataire d'envoi d'e-mails</strong> (${mailer}) reçoit votre adresse e-mail et le code de connexion pour vous les envoyer.</li>
+<li><strong>L'hébergeur</strong> (${host}) héberge le serveur et sa base de données, dans ${escapeHtml(HOST.datacentre)}.</li>
 </ul>
 <p>L'éditeur ne vend pas vos données et ne les utilise pas pour de la publicité.</p>
 
 <h2>4. Transferts hors de l'Union européenne</h2>
 <p>Google, Anthropic et Stripe peuvent traiter des données en dehors de l'Union européenne, notamment aux États-Unis : Anthropic est une société américaine, et chaque avis de l'IA lui envoie donc des données hors de l'Union. Ils encadrent ces transferts par les garanties que le RGPD prévoit et qu'ils décrivent dans leurs propres documents contractuels (décision d'adéquation de la Commission européenne ou clauses contractuelles types, selon le cas) : reportez-vous à leurs politiques pour le détail.</p>
-<p>Pays de traitement du prestataire d'envoi d'e-mails et de l'hébergeur, et garanties le cas échéant : ${todo("pays de traitement et garanties du prestataire d'e-mails et de l'hébergeur")}.</p>
+<p>L'hébergeur traite les données ${escapeHtml(HOST.processing)} et le prestataire d'envoi d'e-mails ${escapeHtml(MAIL_PROVIDER.processing)} : aucun transfert hors de l'Union européenne n'est fait vers eux.</p>
 
 <h2>5. Ce que l'extension garde sur votre appareil</h2>
 <p>L'extension garde dans son stockage, sur votre appareil : votre jeton de session et l'état de votre abonnement, vos réglages, des compteurs de crédits et les résultats de vos analyses (${duration(AI_CACHE_TTL_MS)} pour un résultat). Si vous utilisez vos propres clés Google, elles y restent aussi. L'éditeur n'y a pas accès. « Me déconnecter » efface la session et l'état de l'abonnement ; désinstaller l'extension efface tout.</p>
@@ -140,7 +150,7 @@ ${item('Paiement et factures', {
 <p>Vous avez le droit d'accéder à vos données, de les faire rectifier, de les faire effacer, de les recevoir dans un format réutilisable (portabilité), de vous opposer à un traitement fondé sur l'intérêt légitime et d'en demander la limitation.</p>
 <ul>
 <li><strong>Effacement.</strong> Le bouton « Supprimer mon compte », dans la page d'options de l'extension, efface votre compte et l'historique de vos analyses (résiliez d'abord un abonnement en cours). Restent, pour les raisons données plus haut : vos factures chez Stripe et chez l'éditeur, l'empreinte de l'essai gratuit pendant ${duration(TRIAL_CLAIM_KEEP_MS)}, et les sauvegardes pendant ${BACKUP_KEEP_DAYS} jours au plus.</li>
-<li><strong>Les autres droits.</strong> Écrivez à ${contact()}. L'éditeur répond dans un délai d'un mois. Pour votre sécurité, il peut vous demander de prouver que le compte est le vôtre, par exemple en écrivant depuis l'adresse du compte.</li>
+<li><strong>Les autres droits.</strong> Écrivez à ${publisherField(publisher, 'contactEmail')}. L'éditeur répond dans un délai d'un mois. Pour votre sécurité, il peut vous demander de prouver que le compte est le vôtre, par exemple en écrivant depuis l'adresse du compte.</li>
 <li><strong>Réclamation.</strong> Si vous estimez que vos droits ne sont pas respectés, vous pouvez saisir la Commission nationale de l'informatique et des libertés (CNIL) : <a href="https://www.cnil.fr" rel="noopener noreferrer">www.cnil.fr</a>.</li>
 </ul>
 <p>Les données demandées pour créer le compte et payer sont nécessaires au service : sans elles, il ne peut pas vous être fourni.</p>
