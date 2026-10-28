@@ -1,5 +1,6 @@
 import type { FetchLike } from '../../lib/fetch';
 import {
+  GEMINI_URL,
   reviewListing,
   type GeminiFailure,
   type ReviewInput,
@@ -22,11 +23,13 @@ export interface GoogleDeps {
   reviewListing(input: ReviewInput, key: string): Promise<ReviewResult>;
 }
 
-export function realGoogleDeps(): GoogleDeps {
+/** `geminiUrl`: the Gemini API by default, or Vertex AI (`vertexGeminiUrl`, see `config.ts`). */
+export function realGoogleDeps(geminiUrl: string = GEMINI_URL): GoogleDeps {
   return {
     fetch: (input, init) => fetch(input, init),
     webDetect: (base64, key) => webDetect(base64, key),
-    reviewListing: (input, key) => reviewListing(input, key),
+    reviewListing: (input, key) =>
+      reviewListing(input, key, (url, init) => fetch(url, init), geminiUrl),
   };
 }
 

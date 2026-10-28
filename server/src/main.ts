@@ -1,4 +1,5 @@
 import { serve } from '@hono/node-server';
+import { GEMINI_URL, vertexGeminiUrl } from '../../lib/google/gemini';
 import { createApp } from './app';
 import { loadConfig } from './config';
 import { openDb } from './db';
@@ -24,7 +25,11 @@ const db = openDb(config.databasePath);
 const now = () => new Date();
 
 const app = createApp({ db, mailer: createMailer(config), config, now }, [
-  registerProxyRoutes(realGoogleDeps()),
+  registerProxyRoutes(
+    realGoogleDeps(
+      config.geminiVertexModel === null ? GEMINI_URL : vertexGeminiUrl(config.geminiVertexModel),
+    ),
+  ),
   registerBillingRoutes(realStripe(config.stripeSecretKey)),
   registerLegalRoutes,
 ]);
