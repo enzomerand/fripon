@@ -169,7 +169,13 @@ fi
 # Nothing else is asked.
 anthropic_pattern='^sk-ant-[A-Za-z0-9_-]{20,}$'
 if [[ ${1:-} == --anthropic-key ]]; then
-  IFS= read -r anthropic || true
+  # Typed by hand rather than piped: hidden like every other secret.
+  if [[ -t 0 ]]; then
+    IFS= read -r -s -p "Clé Anthropic (sk-ant-…) : " anthropic || true
+    echo
+  else
+    IFS= read -r anthropic || true
+  fi
   if [[ ! $anthropic =~ $anthropic_pattern ]]; then
     echo "Une clé Anthropic (sk-ant-…) attendue sur l'entrée standard." >&2
     exit 1
@@ -181,20 +187,25 @@ if [[ ${1:-} == --anthropic-key ]]; then
   exit 0
 fi
 
-# `--google-keys`: the two Google keys arrive on stdin (Vision, then Gemini), piped from gcloud on
-# the owner's machine, so nobody copies them by hand. Nothing else is asked.
+# `--google-keys`: the Google keys arrive on stdin (Vision, then Gemini, which only the Gemini
+# provider needs: one line is enough with Claude), piped from gcloud on the owner's machine, so
+# nobody copies them by hand. Nothing else is asked.
 if [[ ${1:-} == --google-keys ]]; then
   IFS= read -r vision || true
   IFS= read -r gemini || true
   key_pattern='^AIza[0-9A-Za-z_-]{30,}$'
-  if [[ ! $vision =~ $key_pattern || ! $gemini =~ $key_pattern ]]; then
-    echo "Deux clés Google attendues sur l'entrée standard : Vision, puis Gemini." >&2
+  if [[ ! $vision =~ $key_pattern || (-n $gemini && ! $gemini =~ $key_pattern) ]]; then
+    echo "Clés Google attendues sur l'entrée standard : Vision, puis Gemini (facultative)." >&2
     exit 1
   fi
   set_value GOOGLE_VISION_KEY "$vision"
-  set_value GEMINI_KEY "$gemini"
+  if [[ -n $gemini ]]; then
+    set_value GEMINI_KEY "$gemini"
+    echo "Clés Google Vision et Gemini enregistrées dans $ENV_FILE."
+  else
+    echo "Clé Google Vision enregistrée dans $ENV_FILE."
+  fi
   unset vision gemini
-  echo "Clés Google Vision et Gemini enregistrées dans $ENV_FILE."
   exit 0
 fi
 

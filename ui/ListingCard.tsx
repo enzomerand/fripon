@@ -65,7 +65,8 @@ const AI_ACTIONS: Record<'open_keys' | 'open_cloud', { section: OptionsSection; 
 const RUN_IMAGE_SEARCH_LABEL = "Lancer la recherche d'image";
 const RUN_AI_REVIEW_LABEL = "Lancer l'avis IA";
 const AI_BLOCK_TITLE = "L'avis de l'IA";
-const AI_NOTE = 'Résumé par Gemini, il peut se tromper.';
+// The review is Gemini's with personal keys, Claude's through the subscription: name neither.
+const AI_NOTE = "Résumé par l'IA, elle peut se tromper.";
 const AI_RUNNING = "L'IA lit l'annonce…";
 
 /** "Voir sur Shein" for a copy of the photo, "Photo proche sur Temu" for a lookalike. */

@@ -281,6 +281,18 @@ describe('reviewWithClaude errors', () => {
     expect(other).toMatchObject({ reason: 'unavailable', specific: true });
   });
 
+  it('logs a refused request (its type and message), never the key', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await reviewWithClaude(INPUT, KEY, {
+      fetch: fakeFetch(() => apiError(400, 'invalid_request_error', 'max_tokens: too large')),
+    });
+    expect(warn).toHaveBeenCalledOnce();
+    const line = String(warn.mock.calls[0]?.[0]);
+    expect(line).toContain('invalid_request_error: max_tokens: too large');
+    expect(line).not.toContain(KEY);
+    warn.mockRestore();
+  });
+
   it('reads a refusal with no readable body by its status', async () => {
     const result = await reviewWithClaude(INPUT, KEY, {
       fetch: fakeFetch(() => new Response('<html>Bad gateway</html>', { status: 502 })),

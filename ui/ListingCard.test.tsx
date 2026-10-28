@@ -488,7 +488,7 @@ describe('ListingCard', () => {
       await expand();
       expect(block()?.querySelector('.fripon__ai-title')?.textContent).toBe("L'avis de l'IA");
       expect(block()?.textContent).toContain('Photo de studio, vue sur Shein.');
-      expect(block()?.textContent).toContain('Résumé par Gemini, il peut se tromper.');
+      expect(block()?.textContent).toContain("Résumé par l'IA, elle peut se tromper.");
     });
 
     it('puts the block first in the expanded card: before the checks and the prudence note', async () => {
@@ -516,7 +516,7 @@ describe('ListingCard', () => {
       await show(withAi({ status: 'running' }), undefined, undefined, vi.fn());
       await expand();
       expect(block()?.querySelector('[role="status"]')?.textContent).toBe("L'IA lit l'annonce…");
-      expect(block()?.textContent).not.toContain('Résumé par Gemini');
+      expect(block()?.textContent).not.toContain("Résumé par l'IA");
       expect(aiButtons()).toHaveLength(0);
     });
 
@@ -524,7 +524,7 @@ describe('ListingCard', () => {
       await show(withAi({ status: 'failed', message: "L'IA ne répond pas pour l'instant." }));
       await expand();
       expect(block()?.textContent).toContain("L'IA ne répond pas pour l'instant.");
-      expect(block()?.textContent).not.toContain('Résumé par Gemini');
+      expect(block()?.textContent).not.toContain("Résumé par l'IA");
       expect(aiButtons()).toHaveLength(0);
     });
 

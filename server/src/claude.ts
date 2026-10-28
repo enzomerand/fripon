@@ -66,6 +66,16 @@ const imageTypeOf = (mimeType: string): ImageType | undefined =>
 const isLowCredit = (error: BadRequestError) => /credit balance is too low/i.test(error.message);
 
 /**
+ * What a refused request says, for the log: Anthropic's error type and its message, which names a
+ * field and a limit (the request carries the photo as base64, never its address, and no key).
+ */
+function refusalOf(error: BadRequestError): string {
+  const body = error.error as { error?: { type?: unknown } } | undefined;
+  const type = typeof body?.error?.type === 'string' ? body.error.type : 'error';
+  return `${type}: ${error.message.slice(0, 200)}`;
+}
+
+/**
  * A call the API refused or could not finish, as a failure of the repo's vocabulary. The refund
  * rule is the repo's own: refundable only when Anthropic certainly did not bill the call (it
  * refused the request itself), never for a timeout or a 5xx, which may have been processed.
@@ -82,7 +92,9 @@ function failureOf(error: unknown): Failed {
   if (error instanceof BadRequestError) {
     if (isLowCredit(error)) return { ok: false, reason: 'billing', refundable: true };
     // The request, or this very photo: refused before any work, but not remembered for the next
-    // listings (see `Refusal.specific`).
+    // listings (see `Refusal.specific`). Neither alerted nor remembered, so it is logged: a request
+    // refused every time would otherwise leave no trace.
+    console.warn(`[claude] request refused (400 ${refusalOf(error)})`);
     return { ok: false, reason: 'unavailable', specific: true, refundable: true };
   }
   if (error instanceof NotFoundError) {
