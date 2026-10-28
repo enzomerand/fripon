@@ -41,6 +41,22 @@ describe('readRefusal', () => {
     });
   });
 
+  it('reads a 402 of depleted Gemini prepaid credits as billing, free of charge', async () => {
+    // The exact answer of a new paid project (prepaid plan) before credits are bought.
+    const body = {
+      error: {
+        code: 402,
+        status: 'RESOURCE_EXHAUSTED',
+        message:
+          'Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing.',
+      },
+    };
+    expect(await readRefusal(new Response(JSON.stringify(body), { status: 402 }))).toEqual({
+      reason: 'billing',
+      refundable: true,
+    });
+  });
+
   it('reads a bare 429 as a quota that proves nothing about billing', async () => {
     expect(await readRefusal(new Response('slow down', { status: 429 }))).toEqual({
       reason: 'quota',

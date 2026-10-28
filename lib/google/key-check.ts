@@ -93,9 +93,12 @@ export function classifyKnown(status: number, info: GoogleErrorInfo): KeyCheckFa
   // The key is restricted to other APIs (403 PERMISSION_DENIED): not a disabled API, a restriction.
   if (has(info, 'API_KEY_SERVICE_BLOCKED')) return 'restricted';
   if (has(info, 'API_KEY_INVALID')) return 'invalid';
+  // 402 Payment Required: a prepaid Gemini plan without credits (« Your prepayment credits are
+  // depleted »), sent with RESOURCE_EXHAUSTED, which is not a quota the user can wait out.
   if (
+    status === 402 ||
     has(info, 'BILLING_DISABLED') ||
-    /requires billing|billing (is )?(not enabled|disabled)/i.test(info.message)
+    /requires billing|billing (is )?(not enabled|disabled)|prepayment credits/i.test(info.message)
   ) {
     return 'billing';
   }
