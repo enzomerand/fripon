@@ -257,7 +257,7 @@ describe('analyzeListing', () => {
 
 // What each row says is covered in checks/image.test.ts: here, only which row each gate leads to.
 describe('analyzeListing image gate', () => {
-  const closedGates = ['no_key', 'quota', 'manual'] as const;
+  const closedGates = ['no_key', 'quota', 'manual', 'expired'] as const;
 
   it('is "no key" when the gate is not given', async () => {
     const { checks } = await analyzeListing(listing, deps());
@@ -288,7 +288,7 @@ describe('analyzeListing image gate', () => {
 
   it('runs the free checks the same way whatever the gate', async () => {
     const results = await Promise.all(
-      (['ready', 'no_key', 'quota', 'manual'] as const).map((imageGate) =>
+      (['ready', 'no_key', 'quota', 'manual', 'expired'] as const).map((imageGate) =>
         analyzeListing(listing, deps(), { imageGate }),
       ),
     );

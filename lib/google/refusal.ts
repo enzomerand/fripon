@@ -19,7 +19,7 @@ export function isKeyFailure(reason: string): boolean {
 export interface Refusal {
   reason: CallFailure;
   /**
-   * true only when Google certainly did not bill the call: it answered 400, 403 or 429 with a
+   * true only when Google certainly did not bill the call: it answered 400, 402, 403 or 429 with a
    * refusal its error body names (invalid key, API blocked or disabled, billing off, quota), or
    * 404 with `NOT_FOUND` (nothing ran).
    */
@@ -32,8 +32,11 @@ export interface Refusal {
   specific?: true;
 }
 
-/** HTTP statuses on which a refusal that Google names is known not to have been billed. */
-const UNBILLED_REFUSALS: ReadonlySet<number> = new Set([400, 403, 429]);
+/**
+ * HTTP statuses on which a refusal that Google names is known not to have been billed (402: no
+ * credit left to bill it with).
+ */
+const UNBILLED_REFUSALS: ReadonlySet<number> = new Set([400, 402, 403, 429]);
 
 /**
  * Reads an HTTP refusal of a paid Google call (Vision, Gemini). One that Google's error body names

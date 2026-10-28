@@ -170,6 +170,17 @@ describe('ListingCard', () => {
       expect(open).toHaveBeenCalledWith('guide');
     });
 
+    it('shows "Me reconnecter" on the cloud action, and opens the subscription', async () => {
+      const open = vi.fn();
+      await show(withImage({ action: 'open_cloud', tag: 'Session expirée' }), undefined, open);
+      await expand();
+
+      const button = actionButton() as HTMLButtonElement;
+      expect(button.textContent).toBe('Me reconnecter');
+      await act(() => button.click());
+      expect(open).toHaveBeenCalledWith('cloud');
+    });
+
     it('shows "Voir mes réglages" on the settings action, and opens the credits', async () => {
       const open = vi.fn();
       await show(withImage({ action: 'open_settings', tag: 'Plafond atteint' }), undefined, open);
@@ -477,7 +488,7 @@ describe('ListingCard', () => {
       await expand();
       expect(block()?.querySelector('.fripon__ai-title')?.textContent).toBe("L'avis de l'IA");
       expect(block()?.textContent).toContain('Photo de studio, vue sur Shein.');
-      expect(block()?.textContent).toContain('Résumé par Gemini, il peut se tromper.');
+      expect(block()?.textContent).toContain("Résumé par l'IA, elle peut se tromper.");
     });
 
     it('puts the block first in the expanded card: before the checks and the prudence note', async () => {
@@ -505,7 +516,7 @@ describe('ListingCard', () => {
       await show(withAi({ status: 'running' }), undefined, undefined, vi.fn());
       await expand();
       expect(block()?.querySelector('[role="status"]')?.textContent).toBe("L'IA lit l'annonce…");
-      expect(block()?.textContent).not.toContain('Résumé par Gemini');
+      expect(block()?.textContent).not.toContain("Résumé par l'IA");
       expect(aiButtons()).toHaveLength(0);
     });
 
@@ -513,7 +524,7 @@ describe('ListingCard', () => {
       await show(withAi({ status: 'failed', message: "L'IA ne répond pas pour l'instant." }));
       await expand();
       expect(block()?.textContent).toContain("L'IA ne répond pas pour l'instant.");
-      expect(block()?.textContent).not.toContain('Résumé par Gemini');
+      expect(block()?.textContent).not.toContain("Résumé par l'IA");
       expect(aiButtons()).toHaveLength(0);
     });
 
@@ -528,6 +539,24 @@ describe('ListingCard', () => {
       expect(aiButtons().map((b) => b.textContent)).toEqual(['Vérifier ma clé']);
       await act(() => aiButtons()[0]?.click());
       expect(open).toHaveBeenCalledWith('keys');
+    });
+
+    it('adds the "Voir mon abonnement" button when the subscription has nothing left, and opens it', async () => {
+      const open = vi.fn();
+      await show(
+        withAi({
+          status: 'failed',
+          message: "Tu n'as plus d'analyses disponibles.",
+          action: 'open_cloud',
+        }),
+        undefined,
+        open,
+      );
+      await expand();
+      expect(block()?.textContent).toContain("Tu n'as plus d'analyses disponibles.");
+      expect(aiButtons().map((b) => b.textContent)).toEqual(['Voir mon abonnement']);
+      await act(() => aiButtons()[0]?.click());
+      expect(open).toHaveBeenCalledWith('cloud');
     });
 
     it('has no key button when nobody handles the click', async () => {

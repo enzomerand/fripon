@@ -1,0 +1,21 @@
+# Docker build context of the Fripon Cloud image (the context is this folder, see server/Dockerfile).
+# The image needs the server and the extension modules it bundles from lib/, nothing else:
+# everything is excluded first, then those two folders come back.
+*
+!lib/
+!server/
+
+# Inside them, what the image never reads (server/scripts/ stays: the build bundles the resync command from it).
+**/node_modules
+**/dist
+**/.output
+**/.wxt
+**/coverage
+**/*.test.ts
+**/.DS_Store
+**/.env
+**/.env.*
+server/data
+server/Dockerfile
+server/compose.yml
+server/caddy

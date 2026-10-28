@@ -15,7 +15,7 @@
     "build:safari": "wxt build -b safari --mv3",
     "safari:sync": "node scripts/safari-sync.mjs",
     "safari:app": "npm run build:safari && npm run safari:sync && node scripts/safari-app.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && npm --prefix server run typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

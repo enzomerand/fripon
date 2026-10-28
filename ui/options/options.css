@@ -409,6 +409,89 @@ summary:focus-visible {
   font-size: 0.9375rem;
 }
 
+.callout--info {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+/* ---- Fripon subscription --------------------------------------------------------------- */
+
+.cloud__form {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.cloud__field {
+  display: flex;
+  gap: 8px;
+}
+
+.cloud__field .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.input--code {
+  font-family: var(--mono);
+  letter-spacing: 0.15em;
+}
+
+.cloud__actions,
+.cloud__offers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cloud__who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.cloud__email {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.cloud__plan {
+  margin: 16px 0;
+  border-top: 1px solid var(--rule);
+  padding-top: 16px;
+}
+
+.cloud__meter {
+  margin-top: 12px;
+}
+
+.cloud__refresh {
+  margin-top: 4px;
+  padding-left: 0;
+}
+
+.cloud__privacy {
+  margin-top: 16px;
+  border-top: 1px solid var(--rule);
+  padding-top: 4px;
+}
+
+.cloud__legal {
+  margin: 8px 0 0;
+  font-size: 0.875rem;
+}
+
+.cloud__delete {
+  margin-top: 12px;
+}
+
+.cloud__delete .button--ghost {
+  padding-left: 0;
+  font-size: 0.875rem;
+}
+
 /* ---- Guide ----------------------------------------------------------------------------- */
 
 .guide {

@@ -1,3 +1,4 @@
+import { isTinyThumbnail } from '../image/photo-url';
 import {
   FEED_CARD_TESTID,
   GRID_SELECTORS,
@@ -21,22 +22,10 @@ export interface GridCard {
   anchor: Element;
 }
 
-/** Longest side, in px, up to which a Vinted thumbnail (`/100x100/`, `/70x100/`) is too small to search. */
-const TINY_THUMBNAIL_MAX_SIDE = 100;
-
-const SIZE_SEGMENT_PATTERN = /^(\d+)x(\d+)$/;
-
 const squash = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
 
 function isVintedImageHost(host: string): boolean {
   return host === 'vinted.net' || host.endsWith('.vinted.net');
-}
-
-function isTinyThumbnail(pathname: string): boolean {
-  return pathname.split('/').some((segment) => {
-    const size = SIZE_SEGMENT_PATTERN.exec(segment);
-    return size !== null && Math.max(Number(size[1]), Number(size[2])) <= TINY_THUMBNAIL_MAX_SIDE;
-  });
 }
 
 /**

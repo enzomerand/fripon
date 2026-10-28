@@ -4,6 +4,7 @@ import { PENDING_SECTION_KEY, takePendingSection } from '../../lib/options-nav';
 import { PROVIDERS } from '../../lib/settings';
 import { saveUiState } from '../../lib/ui-state';
 import { Logo } from '../Logo';
+import { CloudSection } from './CloudSection';
 import { CreditsSection } from './CreditsSection';
 import { GuideSection } from './GuideSection';
 import { KeysSection } from './KeysSection';
@@ -12,7 +13,7 @@ import { WelcomeBanner } from './WelcomeBanner';
 import { useStored } from './useStored';
 
 const REPO_URL = 'https://github.com/enzomerand/fripon';
-const SECTION_IDS: readonly string[] = ['welcome', 'mode', 'keys', 'credits', 'guide'];
+const SECTION_IDS: readonly string[] = ['welcome', 'mode', 'cloud', 'keys', 'credits', 'guide'];
 
 function hashSection(): string {
   return location.hash.replace(/^#/, '');
@@ -109,7 +110,10 @@ export function OptionsApp() {
     stored !== null &&
     !welcomeClosed &&
     (welcomeAsked ||
-      (!PROVIDERS.some((provider) => stored.settings.keys[provider] !== '') &&
+      // A subscriber needs no Google key: the banner would send them to a guide they do not need.
+      (stored.cloud === null &&
+        stored.cloudExpired === null &&
+        !PROVIDERS.some((provider) => stored.settings.keys[provider] !== '') &&
         !stored.ui.welcomeDismissed));
 
   return (
@@ -134,8 +138,16 @@ export function OptionsApp() {
               <WelcomeBanner onFollowGuide={followGuide} onDismiss={dismissWelcome} />
             )}
             <ModeSection settings={stored.settings} onSaved={onSaved} />
-            <KeysSection settings={stored.settings} onSaved={onSaved} />
-            <CreditsSection usage={stored.usage} now={stored.now} onSaved={onSaved} />
+            <CloudSection status={stored.cloud} expired={stored.cloudExpired} onChanged={onSaved} />
+            {/* Signed in, the keys serve nothing (the server calls the providers): not shown,
+                and kept for a sign-out. An expired session still works from them: shown. */}
+            {stored.cloud === null && <KeysSection settings={stored.settings} onSaved={onSaved} />}
+            <CreditsSection
+              usage={stored.usage}
+              cloud={stored.cloud}
+              now={stored.now}
+              onSaved={onSaved}
+            />
             <GuideSection
               geminiOpen={geminiOpen}
               visionOpen={visionOpen}
@@ -148,7 +160,9 @@ export function OptionsApp() {
 
       <footer class="footer">
         <p>
-          Tes clés restent dans ton navigateur. Fripon n'a aucun serveur.{' '}
+          Sans abonnement, tes clés restent dans ton navigateur et aucun serveur de Fripon n'est
+          appelé. Avec l'abonnement, l'analyse d'une annonce passe par le serveur de Fripon, qui la
+          confie à Google (recherche d'image) et à Anthropic (avis de l'IA).{' '}
           <a href={REPO_URL} target="_blank" rel="noopener noreferrer">
             Code source sur GitHub
           </a>

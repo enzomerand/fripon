@@ -35,6 +35,8 @@ export function endNotice(end: BatchEnd | null): string | null {
       return "Plafond atteint : les articles restants n'ont pas été analysés.";
     case 'needsKey':
       return "Clé Google à vérifier : l'analyse s'est arrêtée.";
+    case 'expired':
+      return "Ta session Fripon a expiré : reconnecte-toi. L'analyse s'est arrêtée.";
     case 'failures':
       return "Plusieurs recherches ont échoué : l'analyse s'est arrêtée, réessaie dans un instant.";
     case 'stopped':

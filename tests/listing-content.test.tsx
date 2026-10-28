@@ -753,7 +753,7 @@ describe('listing content script', () => {
       // The block: a title, the summary, the reminder that it can be wrong.
       expect(aiText()).toContain("L'avis de l'IA");
       expect(aiText()).toContain('Résumé de test.');
-      expect(aiText()).toContain('Résumé par Gemini, il peut se tromper.');
+      expect(aiText()).toContain("Résumé par l'IA, elle peut se tromper.");
     }, 15_000);
 
     it('puts the summary in the expanded card only', async () => {
@@ -792,7 +792,7 @@ describe('listing content script', () => {
       const release = holdReview();
       await openCard();
       await until(() => aiText().includes("L'IA lit l'annonce…"));
-      expect(aiText()).not.toContain('Résumé par Gemini');
+      expect(aiText()).not.toContain("Résumé par l'IA");
 
       release({ status: 'ok', review: REVIEW });
       await until(() => aiText().includes('Résumé de test.'));
@@ -886,7 +886,7 @@ describe('listing content script', () => {
         aiAnswer = () => Promise.resolve(answer);
         await openCard();
         await until(() => aiText().includes(line));
-        expect(aiText()).not.toContain('Résumé par Gemini');
+        expect(aiText()).not.toContain("Résumé par l'IA");
         // The verdict does not move for a failed review.
         expect(shadowText()).toContain('Rien de suspect');
       },

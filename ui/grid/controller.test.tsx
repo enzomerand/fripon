@@ -265,6 +265,15 @@ describe('analysis of a card', () => {
     await until(() => shadowText(hostOf(9000101)) === 'Analyser');
   });
 
+  it('asks to sign in again, never for a key, when the session expired', async () => {
+    search.mockResolvedValueOnce({ status: 'expired' });
+    const running = start(card(9000101));
+    expect(await running.analyze('9000101')).toBe('expired');
+    expect(shadowButton(hostOf(9000101)).textContent).toBe('Me reconnecter');
+    shadowButton(hostOf(9000101)).click();
+    expect(openOptions).toHaveBeenCalledWith('cloud');
+  });
+
   it('says the cap is reached, and opens the credits', async () => {
     search.mockResolvedValueOnce({ status: 'quota' });
     const running = start(card(9000101));

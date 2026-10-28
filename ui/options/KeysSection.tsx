@@ -227,9 +227,9 @@ export function KeysSection({ settings, onSaved }: { settings: Settings; onSaved
     <section class="card" id="keys" aria-labelledby="keys-title">
       <h2 id="keys-title">Tes clés Google</h2>
       <p class="muted">
-        Tes clés restent dans ce navigateur et ne servent qu'à appeler Google, jamais un serveur de
-        Fripon. Il en faut une par service ; aucune n'est obligatoire pour les vérifications
-        gratuites.
+        Sans abonnement, tes clés restent dans ce navigateur et ne servent qu'à appeler Google,
+        jamais un serveur de Fripon. Il en faut une par service ; aucune n'est obligatoire pour les
+        vérifications gratuites.
       </p>
       {PROVIDERS.map((provider) => (
         <KeyBlock

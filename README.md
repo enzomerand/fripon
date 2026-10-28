@@ -6,7 +6,7 @@
 
 <p align="center">
   Repère le dropshipping et les annonces douteuses sur Vinted, directement sur la page.<br>
-  Gratuit · Open source · Sans serveur · Chrome, Safari (macOS), Firefox
+  Gratuit avec tes clés Google, ou par abonnement · Open source · Chrome, Safari (macOS), Firefox
 </p>
 
 ---
@@ -29,18 +29,43 @@ Fripon ajoute une carte sur chaque annonce que tu ouvres : un verdict en couleur
 
 ## Coûts
 
-Pas d’abonnement ni de compte. La recherche de photo et l’IA utilisent **tes propres clés Google** :
+Les vérifications gratuites ne demandent rien. Pour la recherche de photo et l’IA, deux façons de
+faire, au choix dans la page de réglages :
 
-- **Google Vision** : 1 000 recherches gratuites par mois, puis environ 3,50 $ les 1 000. Fripon
-  s’arrête à 1 000 par mois (modifiable) et garde les recherches récentes en cache 7 jours.
-- **Gemini** : gratuit, dans un projet Google Cloud sans facturation.
+- **Tes propres clés Google**, sans compte ni abonnement :
+  - **Google Vision** : 1 000 recherches gratuites par mois, puis environ 3,50 $ les 1 000. Fripon
+    s’arrête à 1 000 par mois (modifiable) et garde les recherches récentes en cache 7 jours.
+  - **Gemini** : gratuit, dans un projet Google Cloud sans facturation.
 
-La page de réglages guide pas à pas la création des clés.
+  La page de réglages guide pas à pas la création des clés.
+
+- **L’abonnement Fripon**, sans clé à créer : tu te connectes avec ton e-mail (un code, pas de mot de
+  passe) et Fripon s’occupe de la recherche de photo et de l’IA. 15 analyses sont offertes pour
+  essayer, puis **Essentiel** (2,99 €/mois ou 29,99 €/an, 300 analyses par mois, 40 par jour) ou
+  **Revendeur** (6,99 €/mois, 1 000 analyses par mois, 100 par jour). Une analyse, c’est une
+  annonce : la revoir dans le mois ne compte pas.
 
 ## Vie privée
 
-Fripon n’a aucun serveur et ne mesure rien. Tes clés restent dans ton navigateur. Seules la photo de
-l’annonce et, pour l’IA, son texte, son prix et les indices relevés partent chez Google.
+Fripon ne mesure rien. Sans abonnement, il n’a aucun serveur : tes clés restent dans ton navigateur,
+et seules la photo de l’annonce et, pour l’IA, son texte, son prix et les indices relevés partent
+chez Google.
+
+Avec l’abonnement, l’adresse de la photo, le titre, la description, le prix et les indices relevés
+partent vers le serveur de Fripon, qui appelle deux services avec ses propres clés payantes : Google
+(Cloud Vision) pour la recherche d’image, qui reçoit la photo, et Anthropic (Claude) pour l’avis de
+l’IA, qui reçoit la photo, le titre, la description, le prix et les indices. Google ne les utilise
+pas pour améliorer ses produits, et Anthropic ne s’en sert pas pour entraîner ses modèles ; Anthropic
+est une société américaine, donc l’avis de l’IA est un transfert hors de l’Union européenne. Le
+serveur garde ton adresse e-mail, l’état de ton
+abonnement et la liste des photos analysées (2 mois au plus) ; les résultats sont gardés 35 jours
+pour une recherche de photo et 7 jours pour un avis de l’IA ; ton adresse IP, tronquée, reste 7
+jours dans les journaux du serveur web, et l’application n’en garde qu’une empreinte (hash) pendant
+24 h, pour limiter les abus ; une empreinte de ton adresse e-mail est gardée 12 mois, même si tu
+supprimes ton compte, pour qu’un essai gratuit ne serve qu’une fois. Fripon s’appuie sur Google (la recherche d’image),
+Anthropic (l’avis de l’IA), Stripe (le paiement), un service d’envoi d’e-mails (les codes de connexion) et un hébergeur. Tu peux
+supprimer ton compte et son historique depuis la page de réglages ; tes factures restent chez
+Stripe.
 
 ## Installer
 

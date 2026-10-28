@@ -23,6 +23,14 @@ describe('askGates', () => {
     expect(await askGates()).toEqual({ image: 'manual', ai: 'quota' });
   });
 
+  it('passes on an expired subscription session as such, not as a missing key', async () => {
+    vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue({
+      image: 'expired',
+      ai: 'expired',
+    } as never);
+    expect(await askGates()).toEqual({ image: 'expired', ai: 'expired' });
+  });
+
   it('counts anything else as no key', async () => {
     vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue({ image: 'ok', ai: 3 } as never);
     expect(await askGates()).toEqual({ image: 'no_key', ai: 'no_key' });

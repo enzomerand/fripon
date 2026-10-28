@@ -5,12 +5,17 @@ node_modules/
 dist/
 .DS_Store
 .env*
+# ...except the Fripon Cloud template, which holds placeholders only.
+!server/.env.example
 .claude/settings.local.json
 .impeccable/
 .claude/work/
 stats.html
 web-ext.config.ts
 *.log
+
+# Fripon Cloud server: the SQLite database and the bundle `npm --prefix server run build` makes.
+server/data/
 
 # Safari: the Xcode project in safari/ is committed; what Xcode and the build generate is not.
 # The web extension files in "Fripon Extension/Resources" are copied there by `npm run safari:sync`.

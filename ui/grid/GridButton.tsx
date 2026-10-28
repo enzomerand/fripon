@@ -18,6 +18,7 @@ export const RUNNING_LABEL = 'Analyse…';
 export const GUIDE_LABEL = 'Activer en 2 minutes';
 export const KEYS_LABEL = 'Vérifier ma clé';
 export const QUOTA_LABEL = 'Plafond atteint';
+export const SIGN_IN_LABEL = 'Me reconnecter';
 export const RETRY_LABEL = 'Réessayer';
 export const OPEN_FULL_ANALYSIS = "Ouvrir l'analyse complète";
 
@@ -87,6 +88,16 @@ function Body({ view, title, onAnalyze, onOpenOptions }: GridButtonProps) {
           onClick={press(() => onOpenOptions(view.section))}
         >
           {view.section === 'keys' ? KEYS_LABEL : GUIDE_LABEL}
+        </button>
+      );
+    case 'expired':
+      return (
+        <button
+          type="button"
+          class="fripon-grid__button"
+          onClick={press(() => onOpenOptions('cloud'))}
+        >
+          {SIGN_IN_LABEL}
         </button>
       );
     case 'quota':

@@ -9,8 +9,10 @@ import { loadSettings, type Settings } from './settings';
  * - quota: the cap is reached for this period.
  * - manual: key and credits are fine, but the user chose "Au clic".
  * - ready: run it.
+ * - expired: the Fripon subscription's session has ended (the server refused it): sign in again.
+ *   Nothing is sent; only the wording and the button of the card differ from `no_key`.
  */
-export type Gate = 'ready' | 'no_key' | 'quota' | 'manual';
+export type Gate = 'ready' | 'no_key' | 'quota' | 'manual' | 'expired';
 /** The reverse image search (Google Vision). */
 export type ImageGate = Gate;
 

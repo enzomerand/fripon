@@ -1,12 +1,13 @@
 import type { FetchLike } from '../fetch';
 import type { AnalyzeImageResponse } from '../messages';
+import { fetchGuardedImage } from './guarded-fetch';
+import { isAllowedImageUrl } from './photo-url';
 
-/** Photos are only fetched from Vinted's image CDN (`images1.vinted.net`...). */
-export const ALLOWED_IMAGE_HOST_SUFFIX = '.vinted.net';
-/** A photo that takes longer than this to download is abandoned. */
-export const IMAGE_FETCH_TIMEOUT_MS = 10_000;
-/** A photo bigger than this is refused before it is decoded. */
-export const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+// The pure part (what a photo address may be, the guarded download) lives in its own files so the
+// Fripon Cloud server can import it; the background keeps reading it from here.
+export { IMAGE_FETCH_TIMEOUT_MS, IMAGE_MAX_BYTES, fetchGuardedImage } from './guarded-fetch';
+export { ALLOWED_IMAGE_HOST_SUFFIX, isAllowedImageUrl } from './photo-url';
+
 /** Results kept in memory, oldest evicted first. */
 export const IMAGE_CACHE_MAX_ENTRIES = 500;
 
@@ -20,71 +21,6 @@ export interface ImageAnalyzerDeps {
   fetch: FetchLike;
   /** Decodes the image and computes its hash and catalogue score. */
   computePixels(blob: Blob): Promise<PixelResult>;
-}
-
-/**
- * https, the default port and a `*.vinted.net` host: the background must not become a fetch
- * proxy for the page.
- */
-export function isAllowedImageUrl(raw: string): boolean {
-  try {
-    const url = new URL(raw);
-    return (
-      url.protocol === 'https:' &&
-      url.port === '' &&
-      url.username === '' &&
-      url.password === '' &&
-      url.hostname.toLowerCase().endsWith(ALLOWED_IMAGE_HOST_SUFFIX)
-    );
-  } catch {
-    return false;
-  }
-}
-
-/** Reads the body, giving up as soon as it grows past `IMAGE_MAX_BYTES`. */
-async function readLimited(response: Response): Promise<Blob> {
-  const declared = Number(response.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > IMAGE_MAX_BYTES) throw new Error('Image too large');
-
-  const type = response.headers.get('content-type') ?? '';
-  if (!response.body) {
-    const blob = await response.blob();
-    if (blob.size > IMAGE_MAX_BYTES) throw new Error('Image too large');
-    return blob;
-  }
-
-  const reader = response.body.getReader();
-  const chunks: BlobPart[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > IMAGE_MAX_BYTES) {
-      await reader.cancel();
-      throw new Error('Image too large');
-    }
-    chunks.push(value as BlobPart);
-  }
-  return new Blob(chunks, { type });
-}
-
-/**
- * Downloads a Vinted photo with every guard: an allowed URL, no redirect, no cookies, a timeout,
- * a final host that is still the CDN and a size limit. Everything the background fetches from
- * the page's request goes through here.
- */
-export async function fetchGuardedImage(fetchImpl: FetchLike, url: string): Promise<Blob> {
-  if (!isAllowedImageUrl(url)) throw new Error('URL not allowed');
-  const response = await fetchImpl(url, {
-    // A redirect could lead anywhere: refuse it rather than follow it.
-    redirect: 'error',
-    credentials: 'omit',
-    signal: AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS),
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  if (response.url && !isAllowedImageUrl(response.url)) throw new Error('Unexpected image host');
-  return readLimited(response);
 }
 
 /**

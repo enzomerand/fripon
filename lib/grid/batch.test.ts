@@ -215,6 +215,15 @@ describe('running', () => {
     expect(batch.state()).toEqual({ phase: 'idle', last: { reason: 'needsKey', analysed: 0 } });
   });
 
+  it('stops when the subscription session expired, without counting that card', async () => {
+    const { deps, calls } = setup(['done', 'expired']);
+    const batch = createBatch(deps);
+    await batch.ask(IDS);
+    await batch.launch();
+    expect(calls).toEqual(['9000101', '9000102']);
+    expect(batch.state()).toEqual({ phase: 'idle', last: { reason: 'expired', analysed: 1 } });
+  });
+
   it('goes on after a failure, and gives up after several in a row', async () => {
     expect(MAX_CONSECUTIVE_FAILURES).toBe(3);
     const lone = setup(['error', 'done', 'error', 'done']);

@@ -156,6 +156,11 @@ describe('quickAnalysis', () => {
     expect(await quickAnalysis(PHOTO, deps)).toEqual({ status: 'needsKey', section: 'guide' });
   });
 
+  it('asks to sign in again, not for a key, when the subscription session expired', async () => {
+    const { deps } = setup({ status: 'expired' });
+    expect(await quickAnalysis(PHOTO, deps)).toEqual({ status: 'expired' });
+  });
+
   it.each(['invalid', 'restricted', 'disabled', 'billing'] as const)(
     'sends to the keys when Google refuses the key (%s)',
     async (reason) => {
