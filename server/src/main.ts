@@ -24,7 +24,7 @@ const db = openDb(config.databasePath);
 const now = () => new Date();
 
 const app = createApp({ db, mailer: createMailer(config), config, now }, [
-  registerProxyRoutes(realGoogleDeps()),
+  registerProxyRoutes(realGoogleDeps(config)),
   registerBillingRoutes(realStripe(config.stripeSecretKey)),
   registerLegalRoutes,
 ]);

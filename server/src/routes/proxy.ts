@@ -2,12 +2,7 @@ import { createHash } from 'node:crypto';
 import { clampReviewInput, isAiReviewInput, type AiReviewInput } from '../../../lib/ai/input';
 import { AI_CACHE_PREFIX, AI_CACHE_TTL_MS } from '../../../lib/ai/review-key';
 import { parseWebDetection } from '../../../lib/checks/image-matches';
-import {
-  GEMINI_MODEL,
-  PROMPT_VERSION,
-  parseReview,
-  type GeminiFailure,
-} from '../../../lib/google/gemini';
+import { PROMPT_VERSION, parseReview, type GeminiFailure } from '../../../lib/google/gemini';
 import type { WebDetectResult } from '../../../lib/google/vision';
 import { VISION_CACHE_PREFIX, parseMatches } from '../../../lib/image/search-entry';
 import { isRecord } from '../../../lib/json';
@@ -15,6 +10,7 @@ import type { AiReview, ImageMatch } from '../../../lib/model';
 import type { RouteModule } from '../context';
 import { callsOn, giveBackCall, takeCall } from '../daily-ceiling';
 import { getAccount } from '../db';
+import type { AiProvider } from '../config';
 import { isOwnerProblem, upstreamReason, type GoogleDeps, type UpstreamReason } from '../google';
 import { limitBody, readJsonObject } from '../http';
 import { downloadPhoto, isAcceptablePhotoUrl, serverPhotoKey } from '../photo';
@@ -25,9 +21,10 @@ import { GOOGLE_TIME_ZONE, periodIds } from '../time';
 import { takeVisionCall } from '../vision-ceiling';
 
 /**
- * The two paid steps, run with the owner's Google keys: `POST /v1/search` (Vision) and
- * `POST /v1/review` (Gemini). The server's cache is shared by every account, and a client only
- * ever hears `quota`, `capacity`, `upstream` and the like: never a key, never a Google answer.
+ * The two paid steps, run with the owner's keys: `POST /v1/search` (Google Vision) and
+ * `POST /v1/review` (Claude or Gemini, `AI_PROVIDER`, see `GoogleDeps.reviewer`). The server's
+ * cache is shared by every account, and a client only ever hears `quota`, `capacity`, `upstream`
+ * and the like: never a key, never a provider's answer.
  *
  * A photo is identified by `serverPhotoKey` (its origin and path, without the size segment of a
  * Vinted image path): the same listing seen in a grid, then on its page, is one analysis.
@@ -55,16 +52,17 @@ export const visionKey = (photo: string) => `${unbranded(VISION_CACHE_PREFIX)}${
 
 /**
  * Shared-cache key of a review: a hash of EVERYTHING that feeds the prompt (the photo, the title,
- * the price, the description, every signal line, the fingerprint) and of the model and the prompt
- * version. A review is shared across accounts, so one account's forged signals or description can
+ * the price, the description, every signal line, the fingerprint) and of the model that writes it
+ * (`model`: the provider's, so switching provider never serves the other one's reviews) and the
+ * prompt version. A review is shared across accounts, so one account's forged signals or description can
  * never be the answer another account gets: the extension's own key, which leaves most of it out
  * (it only reuses a review on the same device), is not enough here.
  */
-export const reviewKey = (photo: string, input: AiReviewInput) =>
+export const reviewKey = (model: string, photo: string, input: AiReviewInput) =>
   `${unbranded(AI_CACHE_PREFIX)}${photo}:${createHash('sha256')
     .update(
       JSON.stringify([
-        GEMINI_MODEL,
+        model,
         PROMPT_VERSION,
         photo,
         input.title,
@@ -96,6 +94,20 @@ function parseNegative(raw: unknown): { reason: UpstreamReason } | null {
 
 /** The same owner problem is logged once a minute at most, so a revoked key cannot flood the log. */
 const OWNER_LOG_EVERY_MS = 60_000;
+
+/** The paid services whose key can be the owner's problem: Vision, and whichever provider reviews. */
+type OwnerService = 'vision' | AiProvider;
+
+/** Who to blame and where to fix it, per service (`alert` is the key of the once-an-hour mail). */
+const OWNER_SERVICES: Record<OwnerService, { vendor: string; where: string; alert: string }> = {
+  vision: { vendor: 'Google', where: 'Google Cloud', alert: 'google-vision-key' },
+  gemini: { vendor: 'Google', where: 'Google Cloud or AI Studio', alert: 'google-gemini-key' },
+  claude: {
+    vendor: 'Anthropic',
+    where: 'the Anthropic Console (credits, API key)',
+    alert: 'anthropic-claude-key',
+  },
+};
 
 /**
  * A step that failed. `refundable` is the account's side of it: true when the account got nothing
@@ -148,14 +160,19 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
     const reviewing = new Map<string, Promise<ReviewOutcome>>();
     const lastLogged = new Map<string, number>();
 
-    /** The server's own key was refused, its project has no billing, a quota or a retired model: the owner must hear about it. */
-    function ownerProblem(service: 'vision' | 'gemini', reason: GeminiFailure): void {
+    /**
+     * The server's own key was refused, its project has no billing (or its Anthropic account no
+     * credit), a quota or a retired model: the owner must hear about it. The service is named as
+     * it is (`vision`, `gemini` or `claude`, the provider that really ran), never by a default.
+     */
+    function ownerProblem(service: OwnerService, reason: GeminiFailure): void {
       if (!isOwnerProblem(reason)) return;
+      const { vendor, where, alert } = OWNER_SERVICES[service];
       ctx.health.ownerProblem(service);
       ctx.alert(
-        `google-${service}-key`,
-        `The ${service} step answered "${reason}" to the server's Google key. Subscribers get ` +
-          '"unavailable" until it is fixed in Google Cloud or in the server environment (docs/cloud.md).',
+        alert,
+        `The ${service} step answered "${reason}" to the server's ${vendor} key. Subscribers get ` +
+          `"unavailable" until it is fixed in ${where} or in the server environment (docs/cloud.md).`,
       );
 
       const at = ctx.now().getTime();
@@ -164,18 +181,19 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
       if (before !== undefined && at - before < OWNER_LOG_EVERY_MS) return;
       lastLogged.set(id, at);
       console.error(
-        `[google] OWNER KEY PROBLEM: ${service} answered "${reason}" to the server's key. ` +
-          'Subscribers get "unavailable" until it is fixed in Google Cloud or in the server environment.',
+        `[${vendor.toLowerCase()}] OWNER KEY PROBLEM: ${service} answered "${reason}" to the server's key. ` +
+          `Subscribers get "unavailable" until it is fixed in ${where} or in the server environment.`,
       );
     }
 
     /** The ceiling is full: the owner hears about it (once an hour), whoever's call it was. */
-    function ceilingReached(service: 'vision' | 'gemini', cap: number): void {
+    function ceilingReached(service: 'vision' | 'review', cap: number): void {
+      const name = service === 'vision' ? 'Vision' : `AI review (${google.reviewer.provider})`;
       ctx.alert(
         `${service}-ceiling`,
-        `The global ${service === 'vision' ? 'Vision' : 'Gemini'} ceiling of ${cap} calls a day (Pacific ` +
-          'time) is reached: subscribers get "capacity" until the next day. Raise ' +
-          `GLOBAL_DAILY_${service === 'vision' ? 'VISION' : 'GEMINI'}_CAP if it is real use.`,
+        `The global ${name} ceiling of ${cap} calls a day (Pacific time) is reached: ` +
+          'subscribers get "capacity" until the next day. Raise ' +
+          `GLOBAL_DAILY_${service === 'vision' ? 'VISION' : 'REVIEW'}_CAP if it is real use.`,
       );
     }
 
@@ -270,10 +288,10 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
     }
 
     /**
-     * The Gemini step for a review no cache holds, its call to the ceiling taken and the account's
-     * review counted: download, call, cache. Never throws. The account's review goes back when
-     * the account got nothing for it (Google not billed, or a failure it would repeat) and stays
-     * counted when Google may have billed.
+     * The AI step (`google.reviewer`) for a review no cache holds, its call to the ceiling taken
+     * and the account's review counted: download, call, cache. Never throws. The account's review
+     * goes back when the account got nothing for it (not billed, or a failure it would repeat) and
+     * stays counted when the provider may have billed.
      */
     async function reviewGoogle(
       input: AiReviewInput,
@@ -295,27 +313,24 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
         }
 
         called = true;
-        let result: Awaited<ReturnType<GoogleDeps['reviewListing']>>;
+        let result: Awaited<ReturnType<GoogleDeps['reviewer']['review']>>;
         try {
-          result = await google.reviewListing(
-            {
-              photo: image,
-              title: input.title,
-              description: input.description,
-              price: input.price,
-              signals: input.signals,
-            },
-            ctx.config.geminiKey,
-          );
+          result = await google.reviewer.review({
+            photo: image,
+            title: input.title,
+            description: input.description,
+            price: input.price,
+            signals: input.signals,
+          });
         } catch {
           result = { ok: false, reason: 'network', refundable: false };
         }
         if (!result.ok) {
-          // Same rule as Vision: only a call Google certainly did not bill goes back to the ceiling.
+          // Same rule as Vision: only a call the provider certainly did not bill goes back to the ceiling.
           if (result.refundable) giveBackCall(ctx.db, 'gemini_calls', day);
-          // An unrecognised 400 may be this very photo (a format Gemini refuses): not the key's
+          // An unrecognised 400 may be this very photo (a format the model refuses): not the key's
           // fault, so neither a mail nor a red `/healthz`.
-          if (!result.specific) ownerProblem('gemini', result.reason);
+          if (!result.specific) ownerProblem(google.reviewer.provider, result.reason);
           const reason = upstreamReason(result.reason);
           if (result.refundable || isDeterministic(result.reason)) {
             if (!result.refundable) {
@@ -341,7 +356,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
 
     /**
      * The review for `key`: the shared cache, a failure remembered, a call somebody else is
-     * already making, or a new Gemini call. Only that last one costs anything, so only it counts
+     * already making, or a new AI call. Only that last one costs anything, so only it counts
      * against the account's 3 reviews of the photo this month (and the global ceiling).
      */
     function reviewOf(
@@ -364,7 +379,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
         return Promise.resolve({ ok: false, error: 'limit', refundable: true });
       }
       const day = periodIds(countedAt, GOOGLE_TIME_ZONE).day;
-      const cap = ctx.config.globalDailyGeminiCap;
+      const cap = ctx.config.globalDailyReviewCap;
       let taken: boolean;
       try {
         taken = takeCall(ctx.db, 'gemini_calls', day, cap);
@@ -375,7 +390,7 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
       }
       if (!taken) {
         releaseReview(ctx.db, accountId, photo, countedAt);
-        if (callsOn(ctx.db, 'gemini_calls', day) >= cap) ceilingReached('gemini', cap);
+        if (callsOn(ctx.db, 'gemini_calls', day) >= cap) ceilingReached('review', cap);
         return Promise.resolve(capacity());
       }
 
@@ -450,8 +465,9 @@ export function registerProxyRoutes(google: GoogleDeps): RouteModule {
       }
 
       // Nothing to give back here: the review is counted, and given back, by the one request that
-      // really calls Gemini (`reviewOf`), never by a request the cache or another call answered.
-      const outcome = await reviewOf(input, reviewKey(photo, input), photo, account.id);
+      // really calls the AI (`reviewOf`), never by a request the cache or another call answered.
+      const key = reviewKey(google.reviewer.model, photo, input);
+      const outcome = await reviewOf(input, key, photo, account.id);
       if (!outcome.ok) {
         if (outcome.error === 'capacity') return c.json({ error: 'capacity' }, 503);
         if (outcome.error === 'internal') return c.json({ error: 'internal' }, 500);

@@ -106,7 +106,7 @@ const MIGRATIONS: Migration[] = [
   CREATE INDEX usage_by_day ON usage (account_id, day, kind);
 
   -- AI reviews counted per account, photo AND month (Paris), only when the call really went to
-  -- Gemini.
+  -- the AI provider.
   CREATE TABLE reviews (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     photo_key TEXT NOT NULL,
@@ -138,7 +138,9 @@ const MIGRATIONS: Migration[] = [
     trial_count INTEGER NOT NULL DEFAULT 0
   );
 
-  -- Paid Gemini calls per day, all accounts together: the global ceiling.
+  -- Paid AI review calls per day, all accounts together: the global ceiling. Named after Gemini,
+  -- the first provider; it counts the reviews whoever writes them (Claude too), and a database
+  -- already exists in production, so the name stays.
   CREATE TABLE gemini_calls (
     day TEXT PRIMARY KEY,
     count INTEGER NOT NULL DEFAULT 0

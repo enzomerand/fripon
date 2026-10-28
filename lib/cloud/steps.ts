@@ -29,6 +29,18 @@ type Transient = 'network' | 'unavailable';
 const reviewQuota = (): AiReviewResponse => ({ status: 'quota', source: 'cloud' });
 
 /**
+ * A review that failed in subscriber mode: the card then words it without naming the AI provider
+ * (the server picks which one writes the review; a personal Gemini key's lines do not apply).
+ */
+const reviewError = (
+  reason: Extract<AiReviewResponse, { status: 'error' }>['reason'],
+): AiReviewResponse => ({
+  status: 'error',
+  reason,
+  source: 'cloud',
+});
+
+/**
  * There is no token to send: signed out, or the session just ended. A request of this browser that
  * the server answered with a 401 turns the session into its `expired` marker while another one is
  * on its way (the search, then the review that follows it), and that one must say `expired`, not
@@ -183,7 +195,7 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
     const token = await deps.token();
     if (token === null) return withoutToken();
     const remembered = reviewMemo.recall(token, retry);
-    if (remembered) return { status: 'error', reason: remembered };
+    if (remembered) return reviewError(remembered);
 
     // The review follows the search of the same photo: if the server just refused that one, this
     // listing is out of analyses, and the review would only be refused (403, then 402 on the
@@ -201,7 +213,7 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
       if (!served.ok) {
         if (served.reason === 'signed_out') return { status: 'expired' };
         if (served.reason === 'quota') return reviewQuota();
-        return { status: 'error', reason: describe(served.reason).word };
+        return reviewError(describe(served.reason).word);
       }
       result = await deps.client.review(input);
     }
@@ -213,13 +225,13 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
       return { status: 'ok', review: result.review };
     }
     if (result.reason === 'signed_out') return { status: 'expired' };
-    if (result.reason === 'invalid_answer') return { status: 'error', reason: 'invalid_answer' };
+    if (result.reason === 'invalid_answer') return reviewError('invalid_answer');
     // The month's 3 reviews of this photo are used: no catch-up search (it would not change that,
     // and it may cost an analysis), no memory (a click asks the server, which answers for free).
-    if (result.reason === 'review_limit') return { status: 'error', reason: 'review_limit' };
+    if (result.reason === 'review_limit') return reviewError('review_limit');
     const failure = describe(result.reason);
     if (failure.transient) reviewMemo.remember(token, failure.word, generation);
-    return { status: 'error', reason: failure.word };
+    return reviewError(failure.word);
   }
 
   return {
@@ -245,7 +257,7 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
 
     aiReview(rawInput, cacheOnly = false, retry = false) {
       if (!isAllowedImageUrl(rawInput.photoUrl)) {
-        return Promise.resolve({ status: 'error', reason: 'photo' });
+        return Promise.resolve(reviewError('photo'));
       }
       const input = clampReviewInput(rawInput);
       const cacheKey = aiCacheKey(input.photoUrl, input);
@@ -257,7 +269,7 @@ export function createCloudSteps(deps: CloudStepsDeps): CloudSteps {
       const pending = reviews.get(cacheKey);
       if (pending) return pending;
       const review = runReview(input, cacheKey, retry)
-        .catch((): AiReviewResponse => ({ status: 'error', reason: 'network' }))
+        .catch((): AiReviewResponse => reviewError('network'))
         .finally(() => reviews.delete(cacheKey));
       reviews.set(cacheKey, review);
       return review;

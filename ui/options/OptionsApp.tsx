@@ -163,7 +163,8 @@ export function OptionsApp() {
       <footer class="footer">
         <p>
           Sans abonnement, tes clés restent dans ton navigateur et aucun serveur de Fripon n'est
-          appelé. Avec l'abonnement, l'analyse d'une annonce passe par le serveur de Fripon.{' '}
+          appelé. Avec l'abonnement, l'analyse d'une annonce passe par le serveur de Fripon, qui la
+          confie à Google (recherche d'image) et à Anthropic (avis de l'IA).{' '}
           <a href={REPO_URL} target="_blank" rel="noopener noreferrer">
             Code source sur GitHub
           </a>

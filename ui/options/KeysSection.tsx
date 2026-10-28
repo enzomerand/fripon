@@ -243,7 +243,8 @@ export function KeysSection({
       {signedIn && (
         <p class="callout callout--info" role="note">
           Tu es connecté à l'abonnement Fripon : ces clés ne sont pas utilisées tant que tu restes
-          connecté. C'est le serveur de Fripon qui appelle Google (voir « Abonnement Fripon »).
+          connecté. C'est le serveur de Fripon qui appelle Google et Anthropic (voir « Abonnement
+          Fripon »).
         </p>
       )}
       {PROVIDERS.map((provider) => (

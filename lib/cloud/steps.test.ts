@@ -235,8 +235,16 @@ describe('aiReview', () => {
   it('refuses a photo that is not a Vinted image, before anything else', async () => {
     const { steps, client } = setup();
     const bad = { ...INPUT, photoUrl: 'https://evil.test/a.jpg' };
-    expect(await steps.aiReview(bad)).toEqual({ status: 'error', reason: 'photo' });
-    expect(await steps.aiReview(bad, true)).toEqual({ status: 'error', reason: 'photo' });
+    expect(await steps.aiReview(bad)).toEqual({
+      status: 'error',
+      reason: 'photo',
+      source: 'cloud',
+    });
+    expect(await steps.aiReview(bad, true)).toEqual({
+      status: 'error',
+      reason: 'photo',
+      source: 'cloud',
+    });
     expect(client.review).not.toHaveBeenCalled();
   });
 
@@ -287,7 +295,11 @@ describe('aiReview', () => {
       Promise.resolve({ ok: false as const, reason: 'not_searched' as const }),
     );
     const { steps, client } = setup(makeClient({ review }));
-    expect(await steps.aiReview(INPUT)).toEqual({ status: 'error', reason: 'unavailable' });
+    expect(await steps.aiReview(INPUT)).toEqual({
+      status: 'error',
+      reason: 'unavailable',
+      source: 'cloud',
+    });
     expect(review).toHaveBeenCalledTimes(2);
     expect(client.search).toHaveBeenCalledTimes(1);
   });
@@ -326,12 +338,20 @@ describe('aiReview', () => {
     );
     const { steps, client } = setup(makeClient({ review }));
 
-    expect(await steps.aiReview(INPUT)).toEqual({ status: 'error', reason: 'review_limit' });
+    expect(await steps.aiReview(INPUT)).toEqual({
+      status: 'error',
+      reason: 'review_limit',
+      source: 'cloud',
+    });
     expect(client.search).not.toHaveBeenCalled();
     expect(review).toHaveBeenCalledTimes(1);
 
     // A click asks the server again (it answers for free); no memory of 90 seconds stands in the way.
-    expect(await steps.aiReview(INPUT)).toEqual({ status: 'error', reason: 'review_limit' });
+    expect(await steps.aiReview(INPUT)).toEqual({
+      status: 'error',
+      reason: 'review_limit',
+      source: 'cloud',
+    });
     expect(review).toHaveBeenCalledTimes(2);
     expect(client.search).not.toHaveBeenCalled();
   });
@@ -343,7 +363,11 @@ describe('aiReview', () => {
       .mockResolvedValue({ ok: false, reason: 'review_limit' });
     const { steps, client } = setup(makeClient({ review }));
 
-    expect(await steps.aiReview(INPUT)).toEqual({ status: 'error', reason: 'review_limit' });
+    expect(await steps.aiReview(INPUT)).toEqual({
+      status: 'error',
+      reason: 'review_limit',
+      source: 'cloud',
+    });
     expect(client.search).toHaveBeenCalledTimes(1);
     expect(review).toHaveBeenCalledTimes(2);
   });
@@ -378,13 +402,17 @@ describe('aiReview', () => {
       makeClient({ review: vi.fn(() => Promise.resolve({ ok: false as const, reason })) }),
     );
     const answer = await steps.aiReview(INPUT);
-    expect(answer).toEqual({ status: 'error', reason: word });
+    expect(answer).toEqual({ status: 'error', reason: word, source: 'cloud' });
     if (answer.status === 'error') expect(isKeyFailure(answer.reason)).toBe(false);
   });
 
   it('never rejects, whatever the client does', async () => {
     const { steps } = setup(makeClient({ review: vi.fn(() => Promise.reject(new Error('boom'))) }));
-    expect(await steps.aiReview(INPUT)).toEqual({ status: 'error', reason: 'network' });
+    expect(await steps.aiReview(INPUT)).toEqual({
+      status: 'error',
+      reason: 'network',
+      source: 'cloud',
+    });
   });
 
   it('does not ask again for a minute and a half after a failure, unless the user clicks', async () => {
@@ -407,7 +435,11 @@ describe('aiReview', () => {
       Promise.resolve({ ok: false as const, reason: 'invalid_answer' as const }),
     );
     const { steps } = setup(makeClient({ review }));
-    expect(await steps.aiReview(INPUT)).toEqual({ status: 'error', reason: 'invalid_answer' });
+    expect(await steps.aiReview(INPUT)).toEqual({
+      status: 'error',
+      reason: 'invalid_answer',
+      source: 'cloud',
+    });
     await steps.aiReview(INPUT);
     expect(review).toHaveBeenCalledTimes(2);
   });

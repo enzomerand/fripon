@@ -10,6 +10,7 @@ import type { WebDetectResult } from '../../../lib/google/vision';
 import { IMAGE_MAX_BYTES } from '../../../lib/image/guarded-fetch';
 import { visionCacheKey } from '../../../lib/image/search-entry';
 import type { RouteModule } from '../app';
+import { CLAUDE_REVIEW_MODEL } from '../claude';
 import type { Config } from '../config';
 import { callsOn } from '../daily-ceiling';
 import type { Account } from '../db';
@@ -49,7 +50,7 @@ const REVIEW: ReviewResult = { ok: true, review: REVIEW_TEXT };
 interface FakeGoogle extends GoogleDeps {
   fetched: Array<{ url: string; init: RequestInit }>;
   detections: Array<{ base64: string; key: string }>;
-  reviews: Array<{ input: ReviewInput; key: string }>;
+  reviews: Array<{ input: ReviewInput }>;
   photoAnswer: () => Response | Promise<Response>;
   detect: () => Promise<WebDetectResult>;
   review: () => Promise<ReviewResult>;
@@ -73,9 +74,15 @@ function fakeGoogle(): FakeGoogle {
       google.detections.push({ base64, key });
       return google.detect();
     },
-    reviewListing(input, key) {
-      google.reviews.push({ input, key });
-      return google.review();
+    // The real one is bound to a provider and its key at startup (`realReviewer`, google.test.ts);
+    // a test that wants the other provider sets `provider` and `model` before its calls.
+    reviewer: {
+      provider: 'gemini',
+      model: GEMINI_MODEL,
+      review(input) {
+        google.reviews.push({ input });
+        return google.review();
+      },
     },
   };
   return google;
@@ -290,8 +297,8 @@ describe('POST /v1/search', () => {
 
   it('keys a review by EVERYTHING that feeds the prompt, the model and the prompt version', () => {
     const photo = serverPhotoKey(PHOTO);
-    const base = reviewKey(photo, reviewInput());
-    expect(reviewKey(photo, reviewInput())).toBe(base);
+    const base = reviewKey(GEMINI_MODEL, photo, reviewInput());
+    expect(reviewKey(GEMINI_MODEL, photo, reviewInput())).toBe(base);
     expect(base.startsWith(`ai:v1:${photo}:`)).toBe(true);
     expect(base).toMatch(/:[0-9a-f]{64}$/);
 
@@ -316,18 +323,18 @@ describe('POST /v1/search', () => {
       ['the fingerprint', { fingerprint: ['autre'] }],
     ];
     for (const [what, change] of changes) {
-      expect(reviewKey(photo, reviewInput(change)), what).not.toBe(base);
+      expect(reviewKey(GEMINI_MODEL, photo, reviewInput(change)), what).not.toBe(base);
     }
-    expect(reviewKey(serverPhotoKey(OTHER_PHOTO), reviewInput())).not.toBe(base);
+    expect(reviewKey(GEMINI_MODEL, serverPhotoKey(OTHER_PHOTO), reviewInput())).not.toBe(base);
     // Fields cannot be shifted into each other.
-    expect(reviewKey(photo, reviewInput({ title: 'a', price: 'b' }))).not.toBe(
-      reviewKey(photo, reviewInput({ title: 'ab', price: '' })),
+    expect(reviewKey(GEMINI_MODEL, photo, reviewInput({ title: 'a', price: 'b' }))).not.toBe(
+      reviewKey(GEMINI_MODEL, photo, reviewInput({ title: 'ab', price: '' })),
     );
-    expect(reviewKey(photo, reviewInput({ signals: ['a', 'b'] }))).not.toBe(
-      reviewKey(photo, reviewInput({ signals: ['a b'] })),
+    expect(reviewKey(GEMINI_MODEL, photo, reviewInput({ signals: ['a', 'b'] }))).not.toBe(
+      reviewKey(GEMINI_MODEL, photo, reviewInput({ signals: ['a b'] })),
     );
-    // The model and the prompt version are in the hash (a new model or prompt is a new review).
-    expect(GEMINI_MODEL).not.toBe('');
+    // The model is in the hash: another provider is another review, never the first one's cached answer.
+    expect(reviewKey(CLAUDE_REVIEW_MODEL, photo, reviewInput())).not.toBe(base);
     expect(PROMPT_VERSION).toBeGreaterThan(0);
   });
 
@@ -824,7 +831,6 @@ describe('POST /v1/review', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ review: REVIEW_TEXT });
     expect(t.google.reviews).toHaveLength(1);
-    expect(t.google.reviews[0]?.key).toBe(GEMINI_KEY);
     expect(t.google.reviews[0]?.input).toMatchObject({
       title: 'Robe fleurie',
       description: 'Jamais portée',
@@ -921,6 +927,30 @@ describe('POST /v1/review', () => {
     // Only the account whose request went to Gemini is counted; the cache hit costs nothing.
     expect(reviewsCounted(t, ann)).toBe(1);
     expect(reviewsCounted(t, bob)).toBe(0);
+  });
+
+  it('keeps a review per provider: switching provider asks the new one, then serves its own cache', async () => {
+    const t = setup();
+    const ann = await searched(t, 'ann@example.com');
+    const bob = await searched(t, 'bob@example.com');
+
+    await review(t, ann);
+    expect(t.google.reviews).toHaveLength(1);
+
+    // The same listing, another provider (AI_PROVIDER changed, server restarted): not the Gemini
+    // answer, a new call.
+    t.google.reviewer.provider = 'claude';
+    t.google.reviewer.model = CLAUDE_REVIEW_MODEL;
+    expect((await review(t, bob)).status).toBe(200);
+    expect(t.google.reviews).toHaveLength(2);
+    expect((await review(t, ann)).status).toBe(200);
+    expect(t.google.reviews).toHaveLength(2);
+
+    // Back to the first one: its own answer is still there.
+    t.google.reviewer.provider = 'gemini';
+    t.google.reviewer.model = GEMINI_MODEL;
+    expect((await review(t, bob)).status).toBe(200);
+    expect(t.google.reviews).toHaveLength(2);
   });
 
   it('does not share a review with an account whose description differs', async () => {
@@ -1077,11 +1107,11 @@ describe('POST /v1/review', () => {
 
   describe('the global daily ceiling', () => {
     it('is 5000 a day unless the environment says otherwise', () => {
-      expect(testConfig().globalDailyGeminiCap).toBe(5000);
+      expect(testConfig().globalDailyReviewCap).toBe(5000);
     });
 
     it('answers 503 `capacity` once the day is full, and the review is not counted', async () => {
-      const t = setup({ globalDailyGeminiCap: 1 });
+      const t = setup({ globalDailyReviewCap: 1 });
       const ann = await searched(t, 'ann@example.com');
       const bob = await searched(t, 'bob@example.com');
       expect((await review(t, ann)).status).toBe(200);
@@ -1095,7 +1125,7 @@ describe('POST /v1/review', () => {
     });
 
     it('does not count the answers of the cache, which cost nothing', async () => {
-      const t = setup({ globalDailyGeminiCap: 1 });
+      const t = setup({ globalDailyReviewCap: 1 });
       const ann = await searched(t, 'ann@example.com');
       const bob = await searched(t, 'bob@example.com');
       await review(t, ann);
@@ -1105,7 +1135,7 @@ describe('POST /v1/review', () => {
     });
 
     it('counts its own table, apart from the Vision ceiling, on the Pacific day', async () => {
-      const t = setup({ globalDailyGeminiCap: 1, globalDailyVisionCap: 1 });
+      const t = setup({ globalDailyReviewCap: 1, globalDailyVisionCap: 1 });
       t.clock.set('2026-10-20T06:59:00Z');
       const ann = await searched(t, 'ann@example.com');
       expect(callsOn(t.db, 'vision_calls', '2026-10-19')).toBe(1);
@@ -1448,6 +1478,38 @@ describe('the owner is told', () => {
     expect(await healthz(t)).toEqual({ status: 503, body: { ok: false, degraded: ['gemini'] } });
   });
 
+  it('names the provider that really ran: a Claude key out of credit is Anthropic and claude, never Gemini or Google', async () => {
+    const t = setup();
+    t.google.reviewer.provider = 'claude';
+    t.google.reviewer.model = CLAUDE_REVIEW_MODEL;
+    const ann = await person(t, 'ann@example.com');
+    await search(t, ann);
+    t.google.review = async () => ({ ok: false, reason: 'billing', refundable: true });
+    const log = captureErrors();
+
+    const response = await review(t, ann);
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: 'upstream', reason: 'unavailable' });
+    const [mail] = await alertsOf(t, 1);
+    expect(mail?.subject).toBe('[Fripon Cloud] anthropic-claude-key');
+    expect(mail?.text).toContain('claude');
+    expect(mail?.text).toContain('Anthropic');
+    expect(mail?.text).toContain('billing');
+    expect(mail?.text).not.toMatch(/gemini|google/i);
+    expect(await healthz(t)).toEqual({ status: 503, body: { ok: false, degraded: ['claude'] } });
+
+    expect(log).toHaveBeenCalledTimes(1);
+    const line = String(log.mock.calls[0]?.[0]);
+    expect(line).toContain('OWNER KEY PROBLEM');
+    expect(line).toContain('claude');
+    expect(line).not.toMatch(/gemini|google/i);
+    for (const secret of [ann.email, ann.token, GEMINI_KEY, PHOTO]) {
+      expect(line).not.toContain(secret);
+      expect(mail?.text).not.toContain(secret);
+    }
+  });
+
   it('not for a refusal that may be this very photo (an unrecognised 400 of Gemini): no mail, /healthz stays green', async () => {
     const t = setup();
     const ann = await person(t, 'ann@example.com');
@@ -1522,8 +1584,8 @@ describe('the owner is told', () => {
     expect(mail?.text).toContain('GLOBAL_DAILY_VISION_CAP');
   });
 
-  it('when the global Gemini ceiling is reached', async () => {
-    const t = setup({ globalDailyGeminiCap: 1 });
+  it('when the global AI review ceiling is reached, naming the provider', async () => {
+    const t = setup({ globalDailyReviewCap: 1 });
     const ann = await person(t, 'ann@example.com');
     await search(t, ann);
     await review(t, ann);
@@ -1531,8 +1593,25 @@ describe('the owner is told', () => {
     expect((await review(t, ann, reviewInput({ price: '99,00 €' }))).status).toBe(503);
 
     const [mail] = await alertsOf(t, 1);
-    expect(mail?.subject).toBe('[Fripon Cloud] gemini-ceiling');
-    expect(mail?.text).toContain('GLOBAL_DAILY_GEMINI_CAP');
+    expect(mail?.subject).toBe('[Fripon Cloud] review-ceiling');
+    expect(mail?.text).toContain('GLOBAL_DAILY_REVIEW_CAP');
+    expect(mail?.text).toContain('(gemini)');
+  });
+
+  it('when the global AI review ceiling is reached with Claude, the mail says so', async () => {
+    const t = setup({ globalDailyReviewCap: 1 });
+    t.google.reviewer.provider = 'claude';
+    t.google.reviewer.model = CLAUDE_REVIEW_MODEL;
+    const ann = await person(t, 'ann@example.com');
+    await search(t, ann);
+    await review(t, ann);
+
+    expect((await review(t, ann, reviewInput({ price: '99,00 €' }))).status).toBe(503);
+
+    const [mail] = await alertsOf(t, 1);
+    expect(mail?.subject).toBe('[Fripon Cloud] review-ceiling');
+    expect(mail?.text).toContain('(claude)');
+    expect(mail?.text).not.toMatch(/gemini/i);
   });
 });
 

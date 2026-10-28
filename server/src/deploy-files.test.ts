@@ -54,6 +54,12 @@ describe('server/.env.example', () => {
     expect(example).toMatch(/^TRUST_PROXY=(true|false)$/m);
   });
 
+  it('picks Claude for the AI review, and asks for its key rather than for a Gemini one', () => {
+    expect(example).toMatch(/^AI_PROVIDER=claude$/m);
+    expect(example).toMatch(/^ANTHROPIC_API_KEY=sk-ant-/m);
+    expect(example).not.toMatch(/^GEMINI_KEY=/m);
+  });
+
   it('is a complete production environment once its placeholders are filled in', () => {
     const env: Record<string, string> = {};
     for (const line of example.split('\n')) {

@@ -91,9 +91,11 @@ export type AiReviewResponse =
   /**
    * The review did not complete; the credit was only given back when Google certainly did not bill
    * it. `review_limit`: the subscription's server refused it, the account has had its 3 reviews of
-   * this photo this month (asking again changes nothing until the next month).
+   * this photo this month (asking again changes nothing until the next month). `source: 'cloud'`
+   * when it failed in subscriber mode: the server's provider writes the review, so the card's
+   * lines do not name one (or a personal key).
    */
-  | { status: 'error'; reason: GeminiFailure | 'review_limit' };
+  | { status: 'error'; reason: GeminiFailure | 'review_limit'; source?: 'cloud' };
 
 /**
  * Ask whether the paid steps may run. The keys stay in the background: a content script only ever

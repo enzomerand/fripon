@@ -1,9 +1,10 @@
 import type { Db } from './db';
 
 /**
- * A global ceiling: paid Google calls per day, all accounts together. It sits on top of the Google
- * Cloud quota and the budget alert, so a bug or an abuse cannot spend more than a known amount in
- * a day. One table per service (`vision_calls`, `gemini_calls`), each a counter per day; like the
+ * A global ceiling: paid calls per day, all accounts together. It sits on top of the providers'
+ * quotas and the budget alert, so a bug or an abuse cannot spend more than a known amount in
+ * a day. One table per service (`vision_calls`, `gemini_calls`: the AI reviews, whichever provider
+ * writes them, the table keeps the name of the first one), each a counter per day; like the
  * quotas, each write is one `BEGIN IMMEDIATE` transaction. The day is the caller's: Google resets
  * its own quotas at midnight Pacific time (`GOOGLE_TIME_ZONE` in `time.ts`).
  */
@@ -11,7 +12,7 @@ export type CeilingTable = 'vision_calls' | 'gemini_calls';
 
 /**
  * Takes one call of the day's ceiling. False when `cap` calls were already taken: nothing is
- * counted then. Give it back with `giveBackCall` when Google certainly did not bill the call.
+ * counted then. Give it back with `giveBackCall` when the provider certainly did not bill the call.
  */
 export function takeCall(db: Db, table: CeilingTable, day: string, cap: number): boolean;
 /**

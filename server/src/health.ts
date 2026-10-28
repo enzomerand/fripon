@@ -1,7 +1,7 @@
-/** What `/healthz` reports besides the database: whether the owner's own Google keys work. */
+/** What `/healthz` reports besides the database: whether the owner's own keys (Google, Anthropic) work. */
 export interface Health {
   /** The server's key for this service was refused (or its project has no billing, quota...) just now. */
-  ownerProblem(service: 'vision' | 'gemini'): void;
+  ownerProblem(service: 'vision' | 'gemini' | 'claude'): void;
   /** The services whose owner key had a problem in the last `OWNER_PROBLEM_WINDOW_MS`, sorted. */
   degraded(): string[];
 }

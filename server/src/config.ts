@@ -10,6 +10,9 @@ export class ConfigError extends Error {
 }
 
 const NODE_ENVS = ['development', 'production', 'test'] as const;
+/** Who writes the AI review of the subscription: Gemini (Google) or Claude Haiku (Anthropic). */
+export const AI_PROVIDERS = ['gemini', 'claude'] as const;
+export type AiProvider = (typeof AI_PROVIDERS)[number];
 
 /** The text of a variable, trimmed; `undefined` when it is unset or blank. */
 function text(env: Env, name: string): string | undefined {
@@ -65,6 +68,22 @@ export function loadConfig(env: Env = process.env) {
     return devFallback;
   }
 
+  // Gemini stays the default so a deployment that never heard of Claude keeps working as it was.
+  const rawProvider = text(env, 'AI_PROVIDER')?.toLowerCase() ?? 'gemini';
+  const aiProvider = AI_PROVIDERS.find((name) => name === rawProvider) ?? 'gemini';
+  if (aiProvider !== rawProvider) {
+    problems.push(`AI_PROVIDER must be ${AI_PROVIDERS.join(' or ')} (got "${rawProvider}")`);
+  }
+  /** The key of the provider that is used is required in production; the other one is optional. */
+  const providerKey = (name: string, provider: AiProvider) =>
+    aiProvider === provider ? requiredInProduction(name, '') : (text(env, name) ?? '');
+  // `GLOBAL_DAILY_GEMINI_CAP` was the name before Claude: still read when the new one is unset.
+  const reviewCapName =
+    text(env, 'GLOBAL_DAILY_REVIEW_CAP') === undefined &&
+    text(env, 'GLOBAL_DAILY_GEMINI_CAP') !== undefined
+      ? 'GLOBAL_DAILY_GEMINI_CAP'
+      : 'GLOBAL_DAILY_REVIEW_CAP';
+
   const port = integer('PORT', 8787, 1, 65_535);
 
   const config = {
@@ -91,11 +110,19 @@ export function loadConfig(env: Env = process.env) {
     ownerEmail: requiredInProduction('OWNER_EMAIL', ''),
     /** Vision calls per day (Pacific time), all accounts together, on top of the Google Cloud quota. */
     globalDailyVisionCap: integer('GLOBAL_DAILY_VISION_CAP', 3_000, 1, 1_000_000),
-    /** Gemini reviews per day, all accounts together, on top of the Google quota. */
-    globalDailyGeminiCap: integer('GLOBAL_DAILY_GEMINI_CAP', 5_000, 1, 1_000_000),
-    /** The owner's Google keys behind the paid steps. Empty in development: Google then refuses. */
+    /**
+     * AI reviews per day (Pacific time), all accounts together, whoever writes them, on top of the
+     * provider's own limits. Counted in the `gemini_calls` table, whose name is older than Claude.
+     */
+    globalDailyReviewCap: integer(reviewCapName, 5_000, 1, 1_000_000),
+    /** Who writes the AI review: `gemini` (default) or `claude`. */
+    aiProvider,
+    /** The owner's Google Vision key behind the image search. Empty in development: Google then refuses. */
     googleVisionKey: requiredInProduction('GOOGLE_VISION_KEY', ''),
-    geminiKey: requiredInProduction('GEMINI_KEY', ''),
+    /** The owner's Gemini key: required in production only when `aiProvider` is `gemini`. */
+    geminiKey: providerKey('GEMINI_KEY', 'gemini'),
+    /** The owner's Anthropic key: required in production only when `aiProvider` is `claude`. */
+    anthropicKey: providerKey('ANTHROPIC_API_KEY', 'claude'),
     /** Stripe's secret (or restricted) key. Empty in development: Stripe then refuses the call. */
     stripeSecretKey: requiredInProduction('STRIPE_SECRET_KEY', ''),
     /** The signing secret of the webhook endpoint (`whsec_...`): what proves an event is Stripe's. */
@@ -128,6 +155,9 @@ export function loadConfig(env: Env = process.env) {
   }
   if (config.ownerEmail !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(config.ownerEmail)) {
     problems.push(`OWNER_EMAIL must be an e-mail address (got "${config.ownerEmail}")`);
+  }
+  if (config.anthropicKey !== '' && !config.anthropicKey.startsWith('sk-ant-')) {
+    problems.push('ANTHROPIC_API_KEY must be an Anthropic API key (sk-ant-...)');
   }
   if (config.stripeSecretKey !== '' && !/^(sk|rk)_(test|live)_/.test(config.stripeSecretKey)) {
     problems.push('STRIPE_SECRET_KEY must be a Stripe secret or restricted key (sk_... or rk_...)');

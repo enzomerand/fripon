@@ -97,7 +97,7 @@ describe('options page', () => {
     const footer = $('footer') as HTMLElement;
     // The privacy sentence has to stay true in both modes.
     expect(plain(footer.textContent)).toContain(
-      "Sans abonnement, tes clés restent dans ton navigateur et aucun serveur de Fripon n'est appelé. Avec l'abonnement, l'analyse d'une annonce passe par le serveur de Fripon.",
+      "Sans abonnement, tes clés restent dans ton navigateur et aucun serveur de Fripon n'est appelé. Avec l'abonnement, l'analyse d'une annonce passe par le serveur de Fripon, qui la confie à Google (recherche d'image) et à Anthropic (avis de l'IA).",
     );
     const repo = footer.querySelector('a') as HTMLAnchorElement;
     expect(repo.href).toBe('https://github.com/enzomerand/fripon');

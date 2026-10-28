@@ -1,5 +1,5 @@
 /**
- * How long a stop waits for the requests in flight (a Vision call and a Gemini call may each take
+ * How long a stop waits for the requests in flight (a Vision call and an AI review call may each take
  * up to 30 seconds) before it gives up and exits. `compose.yml` gives Docker 5 more seconds
  * (`stop_grace_period: 50s`): this guard must fire first, or Docker would kill the process.
  */

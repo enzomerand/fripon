@@ -80,15 +80,15 @@ ${item('Vos analyses', {
 })}
 
 ${item('Ce qui est envoyé pour analyser une annonce', {
-  data: "l'adresse de la photo, le titre, la description, le prix et les indices calculés par l'extension. Fripon Cloud télécharge lui-même la photo depuis les serveurs d'images de Vinted. La photo est envoyée à Google Cloud Vision (recherche d'image) ; la photo, le titre, la description, le prix et les indices sont envoyés à Google Gemini (avis de l'IA). Une photo d'annonce peut montrer des personnes.",
+  data: "l'adresse de la photo, le titre, la description, le prix et les indices calculés par l'extension. Fripon Cloud télécharge lui-même la photo depuis les serveurs d'images de Vinted. La photo est envoyée à Google Cloud Vision (recherche d'image) ; la photo, le titre, la description, le prix et les indices sont envoyés à Anthropic, pour son modèle Claude (avis de l'IA). Une photo d'annonce peut montrer des personnes.",
   why: "obtenir la recherche d'image et l'avis de l'IA que vous avez demandés.",
   basis: contract,
-  keep: `Fripon Cloud ne garde ni l'image ni les textes (titre, description, prix, indices). Il garde seulement le résultat, dans un cache partagé entre tous les comptes et qui n'est pas relié au vôtre : ${duration(VISION_SERVER_CACHE_TTL_MS)} pour les résultats d'une recherche d'image (les pages web où la photo a été retrouvée), ${duration(AI_CACHE_TTL_MS)} pour ceux d'un avis de l'IA, et ${duration(NEGATIVE_CACHE_TTL_MS)} pour le souvenir d'une photo que Google n'a pas su lire.`,
+  keep: `Fripon Cloud ne garde ni l'image ni les textes (titre, description, prix, indices). Il garde seulement le résultat, dans un cache partagé entre tous les comptes et qui n'est pas relié au vôtre : ${duration(VISION_SERVER_CACHE_TTL_MS)} pour les résultats d'une recherche d'image (les pages web où la photo a été retrouvée), ${duration(AI_CACHE_TTL_MS)} pour ceux d'un avis de l'IA, et ${duration(NEGATIVE_CACHE_TTL_MS)} pour le souvenir d'une photo que le prestataire d'analyse n'a pas su lire.`,
 })}
 
 ${item('Lutte contre les abus et sécurité', {
   data: "votre adresse IP, sous trois formes. (1) Une empreinte (hachage à clé), jamais l'adresse elle-même, gardée pour limiter le nombre de comptes créés depuis une même adresse et les essais de code erronés. (2) L'adresse elle-même, en mémoire vive seulement (jamais écrite sur le disque), pour limiter le nombre de demandes de code : une heure au plus, et effacée dès que le serveur s'arrête. (3) Une version tronquée dans les journaux du serveur web (voir plus bas).",
-  why: 'protéger le service contre les abus et la fraude, et en maîtriser le coût (chaque analyse est payée à Google).',
+  why: 'protéger le service contre les abus et la fraude, et en maîtriser le coût (chaque analyse est payée à Google et à Anthropic).',
   basis: `${legitimate} (sécurité et lutte contre la fraude).`,
   keep: `l'empreinte des créations de compte : ${duration(SIGNUP_WINDOW_MS)}. L'empreinte des essais de code erronés : ${duration(LOGIN_FAILURE_WINDOW_MS)}.`,
 })}
@@ -118,7 +118,8 @@ ${item('Paiement et factures', {
 
 <h2>3. Qui reçoit vos données</h2>
 <ul>
-<li><strong>Google</strong> (Google Cloud : Vision pour la recherche d'image, Gemini pour l'avis de l'IA) reçoit ce qui est décrit plus haut pour chaque analyse. Fripon Cloud l'appelle avec la clé payante de l'éditeur : dans ce cadre, Google n'utilise pas ces données pour améliorer ses produits.</li>
+<li><strong>Google</strong> (Google Cloud Vision, pour la recherche d'image) reçoit la photo de chaque analyse. Fripon Cloud l'appelle avec la clé payante de l'éditeur : dans ce cadre, Google n'utilise pas ces données pour améliorer ses produits.</li>
+<li><strong>Anthropic</strong> (son modèle Claude, pour l'avis de l'IA) reçoit la photo, le titre, la description, le prix et les indices de chaque avis demandé. Fripon Cloud l'appelle par son API avec la clé payante de l'éditeur : dans ce cadre, Anthropic n'utilise pas ces données pour entraîner ses modèles. Il les traite et les conserve selon sa propre politique de confidentialité et ses conditions commerciales.</li>
 <li><strong>Stripe</strong> traite les paiements et les abonnements, selon sa propre politique de confidentialité. Il reçoit votre adresse e-mail et l'identifiant de votre compte Fripon.</li>
 <li><strong>Le prestataire d'envoi d'e-mails</strong> (${todo("nom du prestataire d'envoi d'e-mails")}) reçoit votre adresse e-mail et le code de connexion pour vous les envoyer.</li>
 <li><strong>L'hébergeur</strong> (${todo("nom de l'hébergeur")}) héberge le serveur et sa base de données.</li>
@@ -126,14 +127,14 @@ ${item('Paiement et factures', {
 <p>L'éditeur ne vend pas vos données et ne les utilise pas pour de la publicité.</p>
 
 <h2>4. Transferts hors de l'Union européenne</h2>
-<p>Google et Stripe peuvent traiter des données en dehors de l'Union européenne, notamment aux États-Unis. Ils encadrent ces transferts par les garanties que le RGPD prévoit et qu'ils décrivent dans leurs propres documents contractuels (décision d'adéquation de la Commission européenne ou clauses contractuelles types, selon le cas) : reportez-vous à leurs politiques pour le détail.</p>
+<p>Google, Anthropic et Stripe peuvent traiter des données en dehors de l'Union européenne, notamment aux États-Unis : Anthropic est une société américaine, et chaque avis de l'IA lui envoie donc des données hors de l'Union. Ils encadrent ces transferts par les garanties que le RGPD prévoit et qu'ils décrivent dans leurs propres documents contractuels (décision d'adéquation de la Commission européenne ou clauses contractuelles types, selon le cas) : reportez-vous à leurs politiques pour le détail.</p>
 <p>Pays de traitement du prestataire d'envoi d'e-mails et de l'hébergeur, et garanties le cas échéant : ${todo("pays de traitement et garanties du prestataire d'e-mails et de l'hébergeur")}.</p>
 
 <h2>5. Ce que l'extension garde sur votre appareil</h2>
 <p>L'extension garde dans son stockage, sur votre appareil : votre jeton de session et l'état de votre abonnement, vos réglages, des compteurs de crédits et les résultats de vos analyses (${duration(AI_CACHE_TTL_MS)} pour un résultat). Si vous utilisez vos propres clés Google, elles y restent aussi. L'éditeur n'y a pas accès. « Me déconnecter » efface la session et l'état de l'abonnement ; désinstaller l'extension efface tout.</p>
 
 <h2>6. Sécurité</h2>
-<p>Le service n'est accessible qu'en HTTPS. Dans la base de données, les codes de connexion et les jetons de session ne sont gardés que sous forme d'empreinte, et des adresses IP il ne reste que des empreintes. Les clés Google de l'éditeur restent sur le serveur : l'extension ne les reçoit jamais.</p>
+<p>Le service n'est accessible qu'en HTTPS. Dans la base de données, les codes de connexion et les jetons de session ne sont gardés que sous forme d'empreinte, et des adresses IP il ne reste que des empreintes. Les clés de l'éditeur (Google, Anthropic) restent sur le serveur : l'extension ne les reçoit jamais.</p>
 
 <h2>7. Vos droits</h2>
 <p>Vous avez le droit d'accéder à vos données, de les faire rectifier, de les faire effacer, de les recevoir dans un format réutilisable (portabilité), de vous opposer à un traitement fondé sur l'intérêt légitime et d'en demander la limitation.</p>

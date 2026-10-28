@@ -14,13 +14,14 @@ import { sendMessage } from '../../lib/messages';
 
 /**
  * What the Fripon server does with an analysis, said once for the section and the guide: what is
- * sent, to whom, what Google does with it, what is kept and for how long, who else is involved, and
- * that the account can be deleted. One paragraph each; keep the README in step.
+ * sent, to whom (Google for the image search, Anthropic for the AI review), what they do with it,
+ * what is kept and for how long, who else is involved, and that the account can be deleted. One
+ * paragraph each; keep the README and the legal pages (`server/src/legal/`) in step.
  */
 export const CLOUD_PRIVACY: readonly string[] = [
-  "Avec l'abonnement, l'adresse de la photo, le titre, la description, le prix et les indices calculés par Fripon sont envoyés au serveur de Fripon, qui appelle Google avec sa propre clé payante (Google ne les utilise pas pour améliorer ses produits).",
+  "Avec l'abonnement, l'adresse de la photo, le titre, la description, le prix et les indices calculés par Fripon sont envoyés au serveur de Fripon. Il appelle ensuite deux services avec ses propres clés payantes : Google (Cloud Vision) pour la recherche d'image, qui reçoit la photo, et Anthropic (Claude) pour l'avis de l'IA, qui reçoit la photo, le titre, la description, le prix et les indices. Google ne les utilise pas pour améliorer ses produits, et Anthropic ne s'en sert pas pour entraîner ses modèles. Anthropic est une société américaine : l'avis de l'IA est un transfert de données hors de l'Union européenne.",
   "Le serveur garde ton adresse e-mail, l'état de ton abonnement et la liste des photos analysées (2 mois au plus). Les résultats d'une recherche de photo sont gardés 35 jours, ceux d'un avis de l'IA 7 jours. Ton adresse IP, tronquée, reste 7 jours dans les journaux du serveur web, et l'application n'en garde qu'une empreinte (hash) pendant 24 h, pour limiter les abus. Une empreinte de ton adresse e-mail est gardée 12 mois, même si tu supprimes ton compte, pour qu'un essai gratuit ne serve qu'une fois.",
-  "Fripon s'appuie sur Google (l'analyse), Stripe (le paiement), un service d'envoi d'e-mails (les codes de connexion) et un hébergeur.",
+  "Fripon s'appuie sur Google (la recherche d'image), Anthropic (l'avis de l'IA), Stripe (le paiement), un service d'envoi d'e-mails (les codes de connexion) et un hébergeur.",
   'Tu peux supprimer ton compte et son historique depuis cette page.',
 ];
 

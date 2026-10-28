@@ -57,6 +57,27 @@ describe('aiBlockFor', () => {
     expect(aiBlockFor({ status: 'error', reason })).toEqual({ status: 'failed', message });
   });
 
+  it.each(['unavailable', 'network', 'photo', 'invalid_answer', 'review_limit'] as const)(
+    'names no provider and no key when the failure comes from the subscription: "%s"',
+    (reason) => {
+      const block = aiBlockFor({ status: 'error', reason, source: 'cloud' });
+      expect(block).toMatchObject({ status: 'failed' });
+      expect(block).not.toHaveProperty('action');
+      expect(JSON.stringify(block)).not.toMatch(/gemini|google|clé/i);
+    },
+  );
+
+  it('words an unavailable subscription without Gemini, and keeps the personal key line as it was', () => {
+    expect(aiBlockFor({ status: 'error', reason: 'unavailable', source: 'cloud' })).toEqual({
+      status: 'failed',
+      message: "L'IA est indisponible pour le moment.",
+    });
+    expect(aiBlockFor({ status: 'error', reason: 'unavailable' })).toEqual({
+      status: 'failed',
+      message: 'Gemini est indisponible pour le moment.',
+    });
+  });
+
   it('has a line for every failure there is', () => {
     const reasons: (GeminiFailure | 'review_limit')[] = [
       'invalid',

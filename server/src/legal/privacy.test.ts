@@ -56,6 +56,8 @@ describe('the privacy policy', () => {
       'obligation légale',
       "n'utilise pas ces données pour améliorer ses produits",
       'Google',
+      'Anthropic',
+      "n'utilise pas ces données pour entraîner ses modèles",
       'Stripe',
       "prestataire d'envoi d'e-mails",
       "L'hébergeur",

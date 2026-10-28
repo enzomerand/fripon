@@ -41,8 +41,8 @@ export function cgvBody(serviceUrl: string): string {
 ${publisherList(serviceUrl)}
 
 <h2>2. Le service</h2>
-<p>Fripon est une extension de navigateur libre (licence AGPL-3.0, code source public) qui signale, sur les pages de Vinted, les annonces qui paraissent revendues depuis Shein, Temu, AliExpress et consorts (dropshipping) ou affichées à un prix gonflé. Ses vérifications simples se font dans votre navigateur. Deux étapes demandent un service payant de Google : la recherche d'image (Google Cloud Vision) et l'avis de l'IA (Google Gemini).</p>
-<p>Fripon Cloud est l'abonnement qui fait fonctionner ces deux étapes avec les clés Google de l'éditeur, sans que vous ayez à créer les vôtres, dans la limite des analyses prévues par votre offre. (L'extension fonctionne aussi sans abonnement, avec vos propres clés Google : ces conditions ne s'appliquent alors pas.)</p>
+<p>Fripon est une extension de navigateur libre (licence AGPL-3.0, code source public) qui signale, sur les pages de Vinted, les annonces qui paraissent revendues depuis Shein, Temu, AliExpress et consorts (dropshipping) ou affichées à un prix gonflé. Ses vérifications simples se font dans votre navigateur. Deux étapes demandent un service payant : la recherche d'image (Google Cloud Vision) et l'avis de l'IA (Gemini de Google avec vos propres clés ; Claude d'Anthropic dans l'abonnement).</p>
+<p>Fripon Cloud est l'abonnement qui fait fonctionner ces deux étapes avec les clés de l'éditeur (Google pour la recherche d'image, Anthropic pour l'avis de l'IA), sans que vous ayez à créer les vôtres, dans la limite des analyses prévues par votre offre. (L'extension fonctionne aussi sans abonnement, avec vos propres clés Google : ces conditions ne s'appliquent alors pas.)</p>
 <p>Les résultats sont des indications fondées sur des recoupements automatiques : une photo retrouvée sur d'autres sites, des indices calculés, l'avis d'une intelligence artificielle. Ils ne garantissent ni qu'une annonce est honnête ou conforme, ni qu'elle ne l'est pas, ni la fiabilité d'un vendeur. Ils peuvent être faux dans un sens comme dans l'autre. Vous restez seul juge de ce que vous achetez ou vendez.</p>
 <p>Fripon n'est pas affilié à Vinted, ni approuvé ou soutenu par Vinted.</p>
 
@@ -85,7 +85,7 @@ ${offersTable()}
 <p>C'est pourquoi la page de paiement Stripe vous demande, avant de payer, de cocher la case suivante : « ${escapeHtml(TERMS_MESSAGE)} ». Sans cette case cochée, le paiement ne peut pas être fait. L'essai gratuit n'implique ni paiement ni renonciation.</p>
 
 <h2>9. Disponibilité du service</h2>
-<p>Fripon Cloud est fourni au mieux de ce que l'éditeur peut faire, sans garantie de disponibilité continue. Il dépend de prestataires (Google, Stripe, l'hébergeur, l'envoi d'e-mails) et des pages de Vinted, dont la structure peut changer sans préavis. Il peut être interrompu pour une maintenance ou un incident, ou limité par des plafonds de capacité, ceux de l'éditeur comme ceux de Google. Une analyse refusée pour l'une de ces raisons n'est en général pas décomptée.</p>
+<p>Fripon Cloud est fourni au mieux de ce que l'éditeur peut faire, sans garantie de disponibilité continue. Il dépend de prestataires (Google, Anthropic, Stripe, l'hébergeur, l'envoi d'e-mails) et des pages de Vinted, dont la structure peut changer sans préavis. Il peut être interrompu pour une maintenance ou un incident, ou limité par des plafonds de capacité, ceux de l'éditeur comme ceux de ses prestataires. Une analyse refusée pour l'une de ces raisons n'est en général pas décomptée.</p>
 <p>L'éditeur peut faire évoluer le service ou l'arrêter. S'il l'arrête, plus aucun renouvellement n'est prélevé. Cela ne limite pas les droits que la loi vous reconnaît.</p>
 
 <h2>10. Responsabilité</h2>

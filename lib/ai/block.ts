@@ -22,6 +22,12 @@ const CLOUD_QUOTA = "Tu n'as plus d'analyses disponibles.";
 
 const KEY_REFUSED = 'Google refuse ta clé Gemini : vérifie-la dans les réglages.';
 
+/**
+ * In subscriber mode the server picks the provider that writes the review (Claude or Gemini): the
+ * card never names one, and no line talks about a key the user does not have.
+ */
+const CLOUD_UNAVAILABLE = "L'IA est indisponible pour le moment.";
+
 const FAILURE_LINES: Record<GeminiFailure | 'review_limit', string> = {
   invalid: KEY_REFUSED,
   restricted: KEY_REFUSED,
@@ -56,7 +62,10 @@ export function aiBlockFor(response: AiReviewResponse): AiBlock | null {
             message: "Le plafond d'avis de l'IA est atteint pour aujourd'hui.",
           };
     case 'error': {
-      const message = FAILURE_LINES[response.reason];
+      const message =
+        response.source === 'cloud' && response.reason === 'unavailable'
+          ? CLOUD_UNAVAILABLE
+          : FAILURE_LINES[response.reason];
       return isKeyFailure(response.reason)
         ? { status: 'failed', message, action: 'open_keys' }
         : { status: 'failed', message };

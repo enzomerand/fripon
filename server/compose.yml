@@ -19,7 +19,7 @@ services:
         format: raw
     restart: unless-stopped
     # main.ts closes the server and the database on SIGTERM and waits up to 45 s for the requests in
-    # flight (a Vision call and a Gemini call may each take 30 s): Docker must wait longer.
+    # flight (a Vision call and an AI review call may each take 30 s): Docker must wait longer.
     stop_grace_period: 50s
     # Only /data (the volume) and /tmp (SQLite temporary files) are written to.
     read_only: true

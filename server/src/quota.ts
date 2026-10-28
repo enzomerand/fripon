@@ -27,7 +27,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The AI review only follows an image search served this recently. */
 export const REVIEW_WINDOW_MS = 7 * DAY_MS;
-/** Reviews of one photo that go to Gemini, per account and calendar month (Paris). */
+/** Reviews of one photo that go to the AI provider, per account and calendar month (Paris). */
 export const REVIEWS_PER_PHOTO = 3;
 
 /** Usage rows of an account in a month (`YYYY-MM`) or a day (`YYYY-MM-DD`), the plan's only or all. */
@@ -130,7 +130,7 @@ export function reserveAnalysis(
 /**
  * Whether the account may have a review of this photo at all: it was served to it in the last 7
  * days. Counts nothing (a cache hit costs nothing): `allowReview` counts, right before a call that
- * really goes to Gemini.
+ * really goes to the AI provider.
  */
 export function mayReview(db: Db, accountId: string, photoKey: string, now: Date): boolean {
   const served = db
@@ -142,7 +142,7 @@ export function mayReview(db: Db, accountId: string, photoKey: string, now: Date
 /**
  * Counts one review of this photo for the account in the month of `now` (Paris) when it may have
  * one: the photo was served to it in the last 7 days (`mayReview`) and fewer than 3 reviews were
- * counted for it this month. Call it only for a review that really goes to Gemini: an answer from
+ * counted for it this month. Call it only for a review that really goes to the AI provider: an answer from
  * the shared cache, or from a call somebody else is making, costs nothing and is not counted.
  * Call `releaseReview` if the call then fails without having cost anything.
  */

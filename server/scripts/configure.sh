@@ -3,6 +3,11 @@
 # webhook) and stores the webhook signing secret and the portal configuration by itself.
 #   ssh -t vps /opt/fripon-cloud/server/scripts/configure.sh
 # Secrets are typed hidden and never printed. Running it again keeps every value left empty.
+# The AI review is written by Claude (Anthropic key) or Gemini (Google key): the run asks which,
+# and then only the key of that provider.
+#   configure.sh --smtp           SMTP settings on stdin (host, port, login, password)
+#   configure.sh --google-keys    Vision key, then Gemini key, on stdin
+#   configure.sh --anthropic-key  the Anthropic key on stdin; also sets AI_PROVIDER=claude
 set -euo pipefail
 
 SERVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -122,6 +127,21 @@ ask_default() {
   set_value "$key" "${value:-$default}"
 }
 
+# ask_provider: who writes the AI review. Entrée keeps the current one, claude when there is none.
+ask_provider() {
+  local default value
+  default=$(current AI_PROVIDER)
+  default=${default:-claude}
+  while true; do
+    read -r -p "Fournisseur de l'avis IA, claude ou gemini [$default] : " value
+    value=$(tr '[:upper:]' '[:lower:]' <<<"${value:-$default}")
+    [[ $value == claude || $value == gemini ]] && break
+    echo "  claude ou gemini."
+  done
+  set_value AI_PROVIDER "$value"
+  provider=$value
+}
+
 # `--smtp`: host, port, login and password arrive on stdin, one per line (for instance read from
 # another app's .env on the same server); surrounding quotes are dropped. Nothing else is asked.
 if [[ ${1:-} == --smtp ]]; then
@@ -141,6 +161,23 @@ if [[ ${1:-} == --smtp ]]; then
   set_value SMTP_URL "$scheme://$(urlencode "${parts[2]}"):$(urlencode "${parts[3]}")@${parts[0]}:${parts[1]}"
   unset parts line
   echo "Envoi des e-mails enregistré dans $ENV_FILE."
+  exit 0
+fi
+
+# `--anthropic-key`: the Anthropic key arrives on stdin, one line (piped from the owner's machine,
+# so nobody copies it by hand). Giving a Claude key means using Claude: AI_PROVIDER is set too.
+# Nothing else is asked.
+anthropic_pattern='^sk-ant-[A-Za-z0-9_-]{20,}$'
+if [[ ${1:-} == --anthropic-key ]]; then
+  IFS= read -r anthropic || true
+  if [[ ! $anthropic =~ $anthropic_pattern ]]; then
+    echo "Une clé Anthropic (sk-ant-…) attendue sur l'entrée standard." >&2
+    exit 1
+  fi
+  set_value ANTHROPIC_API_KEY "$anthropic"
+  set_value AI_PROVIDER claude
+  unset anthropic
+  echo "Clé Anthropic enregistrée dans $ENV_FILE ; l'avis de l'IA passe par Claude (AI_PROVIDER=claude)."
   exit 0
 fi
 
@@ -172,7 +209,14 @@ public_host=${public_host%%/*}
 # fripon.example.com -> no-reply@example.com: the sender the SMTP provider already knows.
 ask_default MAIL_FROM "Expéditeur des codes" "Fripon <no-reply@${public_host#*.}>"
 ask GOOGLE_VISION_KEY "Clé Google Vision (AIza…)" 1 '^AIza[0-9A-Za-z_-]{30,}$'
-ask GEMINI_KEY "Clé Gemini (AIza…)" 1 '^AIza[0-9A-Za-z_-]{30,}$'
+ask_provider
+if [[ $provider == claude ]]; then
+  ask ANTHROPIC_API_KEY "Clé Anthropic (sk-ant-…)" 1 "$anthropic_pattern"
+  ai_key=ANTHROPIC_API_KEY
+else
+  ask GEMINI_KEY "Clé Gemini (AIza…)" 1 '^AIza[0-9A-Za-z_-]{30,}$'
+  ai_key=GEMINI_KEY
+fi
 ask STRIPE_SECRET_KEY "Clé secrète Stripe de TEST (sk_test_… ou rk_test_…)" 1 '^(sk|rk)_test_[0-9A-Za-z]+$'
 
 echo
@@ -206,7 +250,8 @@ unset webhook_secret
 
 echo
 echo "État de $ENV_FILE :"
-for key in OWNER_EMAIL SMTP_URL MAIL_FROM GOOGLE_VISION_KEY GEMINI_KEY STRIPE_SECRET_KEY \
+echo "  AI_PROVIDER : $provider"
+for key in OWNER_EMAIL SMTP_URL MAIL_FROM GOOGLE_VISION_KEY "$ai_key" STRIPE_SECRET_KEY \
   STRIPE_WEBHOOK_SECRET STRIPE_PORTAL_CONFIGURATION AUTH_SECRET PUBLIC_URL TRUST_PROXY; do
   if is_placeholder "$(current "$key")"; then echo "  $key : MANQUANT"; else echo "  $key : ok"; fi
 done
