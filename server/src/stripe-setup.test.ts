@@ -28,7 +28,12 @@ function fakeAccount() {
   let counter = 0;
   const id = (prefix: string) => `${prefix}_${++counter}`;
   const state = {
-    products: [] as Array<{ id: string; name: string; metadata: Record<string, string> }>,
+    products: [] as Array<{
+      id: string;
+      name: string;
+      metadata: Record<string, string>;
+      tax_code?: string | null;
+    }>,
     prices: [] as StoredPrice[],
     portals: [] as Array<{ id: string; metadata: Record<string, string> | null }>,
     webhooks: [] as Array<{ id: string; url: string; enabled_events: string[] }>,
@@ -64,6 +69,7 @@ function fakeAccount() {
           id: id('prod'),
           name: params.name,
           metadata: { ...(params.metadata as Record<string, string>) },
+          tax_code: params.tax_code ?? null,
         };
         state.products.push(product);
         return product;
@@ -74,6 +80,7 @@ function fakeAccount() {
           (candidate) => candidate.id === productId,
         ) as (typeof state.products)[number];
         Object.assign(product.metadata, params.metadata);
+        if (typeof params.tax_code === 'string') product.tax_code = params.tax_code;
         return product;
       },
     },
@@ -280,13 +287,16 @@ describe('runSetup', () => {
 
     const { summary } = await run(account);
 
-    // Found by its name, and given the plan it stands for (`metadata.plan`).
+    // Found by its name, and given the plan it stands for (`metadata.plan`) and the tax code.
     expect(summary.products).toEqual([
       { plan: 'essentiel', id: 'prod_ess', outcome: 'updated' },
       { plan: 'revendeur', id: expect.any(String), outcome: 'created' },
     ]);
     expect(account.calls.productUpdates).toEqual([
-      { id: 'prod_ess', params: { metadata: { plan: 'essentiel' } } },
+      {
+        id: 'prod_ess',
+        params: { metadata: { plan: 'essentiel' }, tax_code: 'txcd_10103000' },
+      },
     ]);
     expect(account.calls.productCreates).toHaveLength(1);
     expect(account.calls.priceCreates[0]).toMatchObject({ product: 'prod_ess' });
@@ -422,6 +432,30 @@ describe('runSetup', () => {
     });
     expect(summary.products.map((product) => product.outcome)).toEqual(['found', 'updated']);
     expect(price.metadata).toEqual({ plan: 'essentiel' });
+  });
+
+  it('gives every product the SaaS tax code that Managed Payments requires', async () => {
+    const account = fakeAccount();
+    await run(account);
+    expect(account.calls.productCreates.map((params) => params.tax_code)).toEqual([
+      'txcd_10103000',
+      'txcd_10103000',
+    ]);
+  });
+
+  it('adds the tax code to a product found without it, and only to that one', async () => {
+    const account = fakeAccount();
+    await run(account);
+    // Made by an earlier release of the script, which set no tax code.
+    (account.state.products[0] as { tax_code?: string | null }).tax_code = null;
+    account.calls.productUpdates.length = 0;
+
+    const { summary } = await run(account);
+
+    expect(account.calls.productUpdates).toEqual([
+      { id: account.state.products[0]?.id, params: { tax_code: 'txcd_10103000' } },
+    ]);
+    expect(summary.products.map((product) => product.outcome)).toEqual(['updated', 'found']);
   });
 
   it('tags the price whose lookup key it moves, so its subscribers keep their plan', async () => {

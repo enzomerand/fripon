@@ -29,6 +29,12 @@ export const PRODUCT_SPECS: Record<PlanName, { name: string; description: string
 };
 /** Marks what this script made, so a renamed product or portal is still found. */
 const PRODUCT_TAG = 'cloud';
+/**
+ * « Software as a service (SaaS) - personal use »: a cloud service for people, nothing to
+ * download. Stripe Managed Payments (on by default on new accounts) refuses a Checkout whose
+ * product has no tax code; Stripe Tax reads it too.
+ */
+const PRODUCT_TAX_CODE = 'txcd_10103000';
 const PORTAL_TAG = { fripon: 'portal' };
 
 const CURRENCY = 'eur';
@@ -43,6 +49,8 @@ interface SetupProduct {
   id: string;
   name: string;
   metadata: Record<string, string>;
+  /** An id, or the tax code object when expanded. */
+  tax_code?: string | { id: string } | null;
 }
 
 interface SetupPrice {
@@ -171,12 +179,21 @@ export async function runSetup(
       (await stripe.products.create({
         name: spec.name,
         description: spec.description,
+        tax_code: PRODUCT_TAX_CODE,
         metadata: { fripon: PRODUCT_TAG, plan },
       }));
     let outcome: 'created' | 'found' | 'updated' = existing ? 'found' : 'created';
-    if (existing && existing.metadata.plan !== plan) {
-      product = await stripe.products.update(existing.id, { metadata: { plan } });
-      outcome = 'updated';
+    if (existing) {
+      const taxCode =
+        typeof existing.tax_code === 'string' ? existing.tax_code : existing.tax_code?.id;
+      const missing: Stripe.ProductUpdateParams = {
+        ...(existing.metadata.plan !== plan && { metadata: { plan } }),
+        ...(taxCode !== PRODUCT_TAX_CODE && { tax_code: PRODUCT_TAX_CODE }),
+      };
+      if (Object.keys(missing).length > 0) {
+        product = await stripe.products.update(existing.id, missing);
+        outcome = 'updated';
+      }
     }
     products.set(plan, product);
     productSummaries.push({ plan, id: product.id, outcome });
