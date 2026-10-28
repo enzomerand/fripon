@@ -66,13 +66,13 @@ const imageTypeOf = (mimeType: string): ImageType | undefined =>
 const isLowCredit = (error: BadRequestError) => /credit balance is too low/i.test(error.message);
 
 /**
- * What a refused request says, for the log: Anthropic's error type and its message, which names a
- * field and a limit (the request carries the photo as base64, never its address, and no key).
+ * Anthropic's error type of a refused request, for the log. Only the type: its message may echo
+ * what was sent, and nothing the API said is ever logged.
  */
 function refusalOf(error: BadRequestError): string {
   const body = error.error as { error?: { type?: unknown } } | undefined;
-  const type = typeof body?.error?.type === 'string' ? body.error.type : 'error';
-  return `${type}: ${error.message.slice(0, 200)}`;
+  const type = body?.error?.type;
+  return typeof type === 'string' && /^[a-z_]{1,64}$/.test(type) ? type : 'error';
 }
 
 /**

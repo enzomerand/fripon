@@ -281,15 +281,14 @@ describe('reviewWithClaude errors', () => {
     expect(other).toMatchObject({ reason: 'unavailable', specific: true });
   });
 
-  it('logs a refused request (its type and message), never the key', async () => {
+  it('logs a refused request by its error type only, never the key nor the message', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await reviewWithClaude(INPUT, KEY, {
       fetch: fakeFetch(() => apiError(400, 'invalid_request_error', 'max_tokens: too large')),
     });
     expect(warn).toHaveBeenCalledOnce();
     const line = String(warn.mock.calls[0]?.[0]);
-    expect(line).toContain('invalid_request_error: max_tokens: too large');
-    expect(line).not.toContain(KEY);
+    expect(line).toBe('[claude] request refused (400 invalid_request_error)');
     warn.mockRestore();
   });
 
@@ -338,7 +337,12 @@ describe('reviewWithClaude errors', () => {
       expect(JSON.stringify(result)).not.toContain(text);
     }
     expect(log).not.toHaveBeenCalled();
-    expect(warn).not.toHaveBeenCalled();
+    // A refused 400 is logged by its error type only (no alert would say it otherwise).
+    for (const call of warn.mock.calls) {
+      const line = call.map(String).join(' ');
+      expect(line).not.toContain(KEY);
+      for (const [, , text] of cases) expect(line).not.toContain(text);
+    }
     vi.restoreAllMocks();
   });
 });
