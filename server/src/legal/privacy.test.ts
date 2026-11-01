@@ -42,11 +42,11 @@ describe('the privacy policy', () => {
   });
 
   it('keeps the proxy-log and backup periods in step with the files that set them', () => {
-    // Caddy and the backup cron are outside the code: only their files can be read.
+    // Caddy and the backup script are outside the code: only their files can be read.
     expect(read('../../caddy/fripon.caddy')).toContain(
       `roll_keep_for ${PROXY_LOG_KEEP_DAYS * 24}h`,
     );
-    expect(read('../../../docs/cloud.md')).toContain(`-mtime +${BACKUP_KEEP_DAYS} -delete`);
+    expect(read('../../scripts/backup.sh')).toContain(`-mtime +${BACKUP_KEEP_DAYS} -delete`);
   });
 
   it('names what is kept for which ground, who receives it, and the rights', () => {
