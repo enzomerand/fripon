@@ -1,3 +1,4 @@
+import { isLiveStripeKey } from '../config';
 import type { RouteModule } from '../context';
 import { cgvBody } from '../legal/cgv';
 import { TODO_MARK, legalPage } from '../legal/page';
@@ -32,6 +33,11 @@ export const registerLegalRoutes: RouteModule = (app, ctx) => {
     }),
   };
 
+  if (!final && isLiveStripeKey(ctx.config.stripeSecretKey)) {
+    console.warn(
+      '[legal] A live Stripe key with LEGAL_PAGES_FINAL=false: Checkout is refused until the legal pages are final.',
+    );
+  }
   if (final) {
     const left = Object.values(pages).reduce((n, html) => n + html.split(TODO_MARK).length - 1, 0);
     if (left > 0) {
