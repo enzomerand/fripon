@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createBackup, verifyBackup } from './backup';
-import { getAccount, openDb, type Db } from './db';
+import { MIGRATIONS, getAccount, openDb, type Db } from './db';
 import { insertAccount } from './test-helpers';
 
 describe('backups of the database, on real files', () => {
@@ -83,6 +83,24 @@ describe('backups of the database, on real files', () => {
     writeFileSync(backupPath, '');
 
     expect(() => verifyBackup(backupPath)).toThrow('no schema');
+  });
+
+  it('refuses a schema newer than this server', () => {
+    const newer = openDb(backupPath);
+    newer.pragma(`user_version = ${MIGRATIONS.length + 1}`);
+    newer.close();
+
+    expect(() => verifyBackup(backupPath)).toThrow('newer');
+  });
+
+  it('never replaces the database it backs up', async () => {
+    insertAccount(live);
+
+    await expect(createBackup(livePath, join(dir, '.', 'fripon.db'))).rejects.toThrow(
+      'own database',
+    );
+
+    expect(live.prepare('SELECT COUNT(*) AS n FROM accounts').get()).toEqual({ n: 1 });
   });
 
   it('refuses a missing file', () => {

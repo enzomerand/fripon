@@ -115,15 +115,17 @@ describe('server/scripts/backup.sh', () => {
       expect(at(calls, 'backup.js alert')).toBe(-1);
     });
 
-    it('drops the backups older than 30 days, and only those', () => {
+    it('drops the backups by their 30th day, the leftovers of a power cut too, and only those', () => {
       const t = install();
-      const old = t.existing('fripon-2026-01-01.db', 31);
-      const recent = t.existing('fripon-2026-02-01.db', 29);
+      const old = t.existing('fripon-2026-01-01.db', 30);
+      const part = t.existing('.fripon-2026-01-01.part', 30);
+      const recent = t.existing('fripon-2026-02-01.db', 28);
       const other = t.existing('notes.txt', 90);
 
       expect(t.run([]).status).toBe(0);
 
       expect(existsSync(old)).toBe(false);
+      expect(existsSync(part)).toBe(false);
       expect(existsSync(recent)).toBe(true);
       expect(existsSync(other)).toBe(true);
     });
@@ -203,13 +205,15 @@ describe('server/scripts/backup.sh', () => {
       const verify = at(calls, 'backup.js verify');
       const stop = at(calls, 'stop fripon-cloud');
       const swap = at(calls, 'mv /data/fripon.db.new /data/fripon.db');
-      const up = at(calls, 'up -d fripon-cloud');
+      const up = at(calls, 'up -d --wait fripon-cloud');
       expect(verify).toBeGreaterThanOrEqual(0);
       expect(stop).toBeGreaterThan(verify);
       expect(swap).toBeGreaterThan(stop);
       expect(up).toBeGreaterThan(swap);
       expect(t.stdin()).toBe('an older backup');
       expect(result.stdout).toContain('stripe-resync');
+      // The -wal holds the last writes of a database that was not closed cleanly.
+      expect(at(calls, 'cp /data/fripon.db-wal /data/before-restore/')).toBeGreaterThanOrEqual(0);
     });
 
     it.each(['', 'oui\n'])('touches nothing without the confirmation (%j)', (input) => {

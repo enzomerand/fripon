@@ -1,5 +1,7 @@
 import { rmSync } from 'node:fs';
+import { resolve } from 'node:path';
 import Database from 'better-sqlite3';
+import { MIGRATIONS } from './db';
 
 /** What a verified backup holds: enough to see at a glance that it is the right database. */
 export interface BackupSummary {
@@ -18,6 +20,8 @@ export function verifyBackup(path: string): BackupSummary {
     if (integrity !== 'ok') throw new Error(`integrity check failed: ${String(integrity)}`);
     const schemaVersion = db.pragma('user_version', { simple: true }) as number;
     if (schemaVersion < 1) throw new Error('no schema in this database');
+    // This server could not start on it: `openDb` refuses a schema it does not know.
+    if (schemaVersion > MIGRATIONS.length) throw new Error('schema newer than this server');
     const { n } = db.prepare('SELECT COUNT(*) AS n FROM accounts').get() as { n: number };
     return { schemaVersion, accounts: n };
   } finally {
@@ -28,10 +32,11 @@ export function verifyBackup(path: string): BackupSummary {
 /**
  * Copies the live database to `to` through SQLite's backup API, consistent even while the server
  * writes (copying a database in WAL mode file by file would not be), and verifies the copy. A
- * leftover of an interrupted run is replaced.
+ * leftover of an interrupted run is replaced, along with any -wal that would be replayed on the copy.
  */
 export async function createBackup(from: string, to: string): Promise<BackupSummary> {
-  rmSync(to, { force: true });
+  if (resolve(to) === resolve(from)) throw new Error('a backup cannot replace its own database');
+  for (const suffix of ['', '-wal', '-shm']) rmSync(`${to}${suffix}`, { force: true });
   const db = new Database(from, { readonly: true, fileMustExist: true });
   try {
     await db.backup(to);

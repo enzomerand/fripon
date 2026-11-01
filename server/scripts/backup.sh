@@ -30,7 +30,6 @@ need_file() {
 }
 
 backup() {
-  mkdir -p -m 700 "$BACKUP_DIR"
   # Not local: the trap runs after this function has returned.
   today=$(date +%F)
   target="$BACKUP_DIR/fripon-$today.db"
@@ -51,15 +50,17 @@ backup() {
   }
   trap finish EXIT
 
+  mkdir -p -m 700 "$BACKUP_DIR"
   "${COMPOSE[@]}" exec -T "$SERVICE" node dist/backup.js create "$IN_CONTAINER"
   "${COMPOSE[@]}" cp "$SERVICE:$IN_CONTAINER" "$part"
   chmod 600 "$part"
   verify_file "$part"
   mv "$part" "$target"
 
-  # The rotation only runs after a good backup. Kept 30 days, as the privacy policy says
-  # (BACKUP_KEEP_DAYS, a test compares).
-  find "$BACKUP_DIR" -name 'fripon-*.db' -mtime +30 -delete
+  # The rotation only runs after a good backup. The privacy policy says 30 days at most
+  # (BACKUP_KEEP_DAYS, a test compares): -mtime counts whole days and the cron's time drifts by a
+  # few seconds, so +28 is what removes a file by its 30th day. A .part is left by a power cut.
+  find "$BACKUP_DIR" \( -name 'fripon-*.db' -o -name '.fripon-*.part' \) -mtime +28 -delete
   echo "Sauvegarde vérifiée : $target"
 }
 
@@ -76,24 +77,30 @@ restore() {
     exit 1
   fi
 
+  # Whatever happens from here (a failure, Ctrl-C, a lost SSH session), the server comes back.
+  trap '"${COMPOSE[@]}" up -d "$SERVICE"' EXIT
   "${COMPOSE[@]}" stop "$SERVICE"
+  # The -wal goes with the old database: after a crash it holds its last writes. mkdir refuses a
+  # copy already there: restoring twice must not replace the original state by the first restore.
   # The new file only takes its place once it is complete. A -wal left behind would be replayed on it.
   if ! "${COMPOSE[@]}" run --rm --no-deps -T "$SERVICE" sh -c '
     set -e
     cat > /data/fripon.db.new
-    cp /data/fripon.db /data/fripon.db.before-restore
+    mkdir /data/before-restore
+    cp /data/fripon.db /data/before-restore/
+    if [ -e /data/fripon.db-wal ]; then cp /data/fripon.db-wal /data/before-restore/; fi
     rm -f /data/fripon.db-wal /data/fripon.db-shm
     mv /data/fripon.db.new /data/fripon.db
   ' < "$1"; then
-    echo "Échec de la restauration : le serveur repart sur la base actuelle." >&2
-    "${COMPOSE[@]}" up -d "$SERVICE"
+    echo "Échec de la restauration : le serveur repart sur la base actuelle. Si /data/before-restore existe déjà, c'est la copie d'une restauration précédente : supprime-la d'abord." >&2
     exit 1
   fi
-  "${COMPOSE[@]}" up -d "$SERVICE"
+  trap - EXIT
+  "${COMPOSE[@]}" up -d --wait "$SERVICE"
 
-  echo "Base restaurée, serveur relancé. L'ancienne base est dans le volume : /data/fripon.db.before-restore."
+  echo "Base restaurée, serveur relancé. L'ancienne base est dans le volume : /data/before-restore."
   echo "Reprends l'état de Stripe : docker compose -f server/compose.yml exec -T $SERVICE node dist/stripe-resync.js"
-  echo "Puis supprime l'ancienne base : docker compose -f server/compose.yml exec -T $SERVICE rm /data/fripon.db.before-restore"
+  echo "Puis supprime l'ancienne base : docker compose -f server/compose.yml exec -T $SERVICE rm -r /data/before-restore"
 }
 
 case "${1:-}" in
