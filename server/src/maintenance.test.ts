@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CODE_WINDOW_MS,
   LOGIN_FAILURE_WINDOW_MS,
@@ -7,7 +7,7 @@ import {
   TRIAL_CLAIM_KEEP_MS,
 } from './auth';
 import { openDb, type Db } from './db';
-import { previousMonth, purgeExpired } from './maintenance';
+import { previousMonth, purgeExpired, purgeSafely } from './maintenance';
 import { fakeClock, insertAccount, type Clock } from './test-helpers';
 
 let db: Db;
@@ -28,6 +28,33 @@ describe('previousMonth', () => {
     expect(previousMonth(new Date('2026-01-15T12:00:00Z'))).toBe('2025-12');
     // 00:30 on 1 November in Paris is still 31 October in UTC.
     expect(previousMonth(new Date('2026-10-31T23:30:00Z'))).toBe('2026-10');
+  });
+});
+
+describe('purgeSafely', () => {
+  it('survives a failing purge, and tells the owner', () => {
+    const closed = openDb(':memory:');
+    closed.close();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const alert = vi.fn();
+
+    expect(() => purgeSafely(closed, 0, alert)).not.toThrow();
+
+    expect(error).toHaveBeenCalledOnce();
+    expect(alert).toHaveBeenCalledWith('purge-failure', expect.stringContaining('failed'));
+    error.mockRestore();
+  });
+
+  it('purges, and stays silent, when all goes well', () => {
+    const fresh = openDb(':memory:');
+    fresh.prepare('INSERT INTO cache (key, value, expires_at) VALUES (?, ?, ?)').run('k', '{}', 1);
+    const alert = vi.fn();
+
+    purgeSafely(fresh, 2, alert);
+
+    expect(fresh.prepare('SELECT COUNT(*) AS n FROM cache').get()).toEqual({ n: 0 });
+    expect(alert).not.toHaveBeenCalled();
+    fresh.close();
   });
 });
 
