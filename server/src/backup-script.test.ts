@@ -33,7 +33,6 @@ esac
 `;
 
 const DAY_S = 24 * 60 * 60;
-const TODAY = /^fripon-\d{4}-\d{2}-\d{2}\.db$/;
 
 const roots: string[] = [];
 afterEach(() => {
@@ -98,7 +97,7 @@ describe('server/scripts/backup.sh', () => {
       expect(result.status).toBe(0);
       const [file, ...others] = t.inBackups();
       expect(others).toEqual([]);
-      expect(file).toMatch(TODAY);
+      expect(file).toMatch(/^fripon-\d{4}-\d{2}-\d{2}\.db$/);
       expect(statSync(join(t.backups, file as string)).mode & 0o777).toBe(0o600);
       expect(statSync(t.backups).mode & 0o777).toBe(0o700);
 

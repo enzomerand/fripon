@@ -1,5 +1,4 @@
-import { createServer, type Server } from 'node:net';
-import type { AddressInfo } from 'node:net';
+import { createServer, type AddressInfo, type Server } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSmtpMailer } from './mailer';
 

@@ -50,7 +50,7 @@ backup() {
   }
   trap finish EXIT
 
-  mkdir -p -m 700 "$BACKUP_DIR"
+  mkdir -p "$BACKUP_DIR"
   "${COMPOSE[@]}" exec -T "$SERVICE" node dist/backup.js create "$IN_CONTAINER"
   "${COMPOSE[@]}" cp "$SERVICE:$IN_CONTAINER" "$part"
   chmod 600 "$part"
