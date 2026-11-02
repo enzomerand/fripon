@@ -5,6 +5,10 @@
 # Secrets are typed hidden and never printed. Running it again keeps every value left empty.
 # The AI review is written by Claude (Anthropic key) or Gemini (Google key): the run asks which,
 # and then only the key of that provider.
+#   configure.sh --live           the interactive run in PRODUCTION: asks for the Stripe LIVE key (a
+#                                 test key is refused), then a typed confirmation, sets
+#                                 STRIPE_REQUIRE_TERMS=true and sets Stripe up with --live (the live
+#                                 webhook has its own whsec_). Without it, only a test key is accepted.
 #   configure.sh --smtp           SMTP settings on stdin (host, port, login, password)
 #   configure.sh --google-keys    Vision key, then Gemini key, on stdin
 #   configure.sh --anthropic-key  the Anthropic key on stdin; also sets AI_PROVIDER=claude
@@ -142,6 +146,51 @@ ask_provider() {
   provider=$value
 }
 
+# `--live`: the interactive run, for the live Stripe account (docs/cloud.md, "Passage en production").
+live=0
+[[ ${1:-} == --live ]] && live=1
+live_pattern='^(sk|rk)_live_[0-9A-Za-z]+$'
+
+# ask_live_stripe_key: the Stripe LIVE key, then a typed confirmation, and only then it is written
+# (with STRIPE_REQUIRE_TERMS=true: the 14-day withdrawal waiver must be ticked at Checkout). A test
+# key is refused; Entrée keeps the current key when it is already a live one.
+ask_live_stripe_key() {
+  local old value confirm prompt
+  old=$(current STRIPE_SECRET_KEY)
+  prompt="Clé secrète Stripe LIVE (sk_live_… ou rk_live_…)"
+  if [[ $old =~ $live_pattern ]]; then prompt="$prompt (Entrée = garder l'actuelle)"; fi
+  while true; do
+    read -r -s -p "$prompt : " value || {
+      echo >&2
+      echo "Saisie interrompue : rien n'a été écrit pour Stripe." >&2
+      exit 1
+    }
+    echo
+    if [[ -z $value ]]; then
+      if [[ $old =~ $live_pattern ]]; then
+        value=$old
+        break
+      fi
+      echo "  Valeur obligatoire."
+      continue
+    fi
+    if [[ ! $value =~ $live_pattern ]]; then
+      echo "  Une clé LIVE (sk_live_… ou rk_live_…) est attendue ; une clé de test est refusée. Recommence."
+      continue
+    fi
+    break
+  done
+  echo
+  echo "ATTENTION : Fripon Cloud va utiliser le compte Stripe en PRODUCTION (vrais paiements)."
+  read -r -p "Tape LIVE pour confirmer : " confirm || confirm=
+  if [[ $confirm != LIVE ]]; then
+    echo "Confirmation refusée : rien n'a été écrit pour Stripe." >&2
+    exit 1
+  fi
+  set_value STRIPE_SECRET_KEY "$value"
+  set_value STRIPE_REQUIRE_TERMS true
+}
+
 # `--smtp`: host, port, login and password arrive on stdin, one per line (for instance read from
 # another app's .env on the same server); surrounding quotes are dropped. Nothing else is asked.
 if [[ ${1:-} == --smtp ]]; then
@@ -228,16 +277,26 @@ else
   ask GEMINI_KEY "Clé Gemini (AIza…)" 1 '^AIza[0-9A-Za-z_-]{30,}$'
   ai_key=GEMINI_KEY
 fi
-ask STRIPE_SECRET_KEY "Clé secrète Stripe de TEST (sk_test_… ou rk_test_…)" 1 '^(sk|rk)_test_[0-9A-Za-z]+$'
+if [[ $live == 1 ]]; then
+  ask_live_stripe_key
+else
+  ask STRIPE_SECRET_KEY "Clé secrète Stripe de TEST (sk_test_… ou rk_test_…)" 1 '^(sk|rk)_test_[0-9A-Za-z]+$'
+fi
 
 echo
 echo "Construction de l'image (rapide si rien n'a changé)…"
 "${COMPOSE[@]}" build --quiet
 
 public_url=$(current PUBLIC_URL)
-echo "Configuration de Stripe (produits, prix, portail, webhook ${public_url}/v1/stripe/webhook)…"
+setup_args=(--webhook "${public_url}/v1/stripe/webhook")
+mode_label=
+if [[ $live == 1 ]]; then
+  setup_args=(--live "${setup_args[@]}")
+  mode_label="mode LIVE, "
+fi
+echo "Configuration de Stripe (${mode_label}produits, prix, portail, webhook ${public_url}/v1/stripe/webhook)…"
 if ! out=$("${COMPOSE[@]}" run --rm --no-deps fripon-cloud node dist/stripe-setup.js \
-  --webhook "${public_url}/v1/stripe/webhook" 2>&1); then
+  "${setup_args[@]}" 2>&1); then
   sed -E 's/whsec_[A-Za-z0-9]+/whsec_(masqué)/g' <<<"$out" >&2
   echo "La configuration de Stripe a échoué (voir ci-dessus). Rien d'autre n'a changé." >&2
   exit 1
@@ -252,9 +311,11 @@ unset out
 if [[ -n $webhook_secret ]]; then
   set_value STRIPE_WEBHOOK_SECRET "$webhook_secret"
   echo "Secret du webhook enregistré."
-elif is_placeholder "$(current STRIPE_WEBHOOK_SECRET)"; then
+elif [[ $live == 1 ]] || is_placeholder "$(current STRIPE_WEBHOOK_SECRET)"; then
   echo "Le webhook existait déjà : Stripe ne montre son secret qu'à la création."
   echo "Dashboard Stripe > Développeurs > Webhooks > l'endpoint > « Révéler » le secret de signature."
+  # A test secret never signs the live events: in live mode the one in the .env must be the live one.
+  [[ $live == 1 ]] && echo "Mode LIVE : le secret enregistré doit être celui de l'endpoint LIVE, pas celui du mode test."
   ask STRIPE_WEBHOOK_SECRET "Secret du webhook (whsec_…)" 1 '^whsec_[A-Za-z0-9]+$'
 fi
 unset webhook_secret
@@ -262,9 +323,13 @@ unset webhook_secret
 echo
 echo "État de $ENV_FILE :"
 echo "  AI_PROVIDER : $provider"
+[[ $live == 1 ]] && echo "  Stripe : mode LIVE (STRIPE_REQUIRE_TERMS=$(current STRIPE_REQUIRE_TERMS))"
 for key in OWNER_EMAIL SMTP_URL MAIL_FROM GOOGLE_VISION_KEY "$ai_key" STRIPE_SECRET_KEY \
   STRIPE_WEBHOOK_SECRET STRIPE_PORTAL_CONFIGURATION AUTH_SECRET PUBLIC_URL TRUST_PROXY; do
   if is_placeholder "$(current "$key")"; then echo "  $key : MANQUANT"; else echo "  $key : ok"; fi
 done
 echo
+if [[ $live == 1 ]]; then
+  echo "Mode LIVE : recrée le conteneur pour appliquer le .env (docker compose -f server/compose.yml up -d --force-recreate)."
+fi
 echo "Terminé. Tu peux dire à Claude que la configuration est faite."

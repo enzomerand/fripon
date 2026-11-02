@@ -20,6 +20,11 @@ function text(env: Env, name: string): string | undefined {
   return value === '' ? undefined : value;
 }
 
+/** Whether this Stripe key takes real money. */
+export function isLiveStripeKey(key: string): boolean {
+  return /^(sk|rk)_live_/.test(key);
+}
+
 /**
  * Reads the environment once into a typed, validated object. Each variable is one line of the
  * object below: adding one (`GOOGLE_VISION_KEY`, `STRIPE_SECRET_KEY`...) is one line there, using
@@ -161,6 +166,10 @@ export function loadConfig(env: Env = process.env) {
   }
   if (config.stripeSecretKey !== '' && !/^(sk|rk)_(test|live)_/.test(config.stripeSecretKey)) {
     problems.push('STRIPE_SECRET_KEY must be a Stripe secret or restricted key (sk_... or rk_...)');
+  }
+  // Without it, a buyer pays without waiving the 14-day withdrawal right.
+  if (isLiveStripeKey(config.stripeSecretKey) && !config.stripeRequireTerms) {
+    problems.push('STRIPE_REQUIRE_TERMS must be true with a live Stripe key');
   }
   if (config.stripeWebhookSecret !== '' && !config.stripeWebhookSecret.startsWith('whsec_')) {
     problems.push('STRIPE_WEBHOOK_SECRET must be a webhook signing secret (whsec_...)');

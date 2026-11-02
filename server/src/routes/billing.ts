@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { isLiveStripeKey } from '../config';
 import type { AppEnv, RouteModule } from '../context';
 import { getAccount, type Account } from '../db';
 import { limitBody, readJsonObject } from '../http';
@@ -317,6 +318,11 @@ export function registerBillingRoutes(stripe: StripeApi): RouteModule {
       const price = (await readJsonObject(c))?.price;
       if (typeof price !== 'string' || !Object.hasOwn(PLANS, price)) {
         return c.json({ error: 'invalid_request' }, 400);
+      }
+      // No real money against draft terms. Refused here and not at start: the server has to run to
+      // serve the pages being reviewed, and to receive Stripe's webhooks.
+      if (isLiveStripeKey(ctx.config.stripeSecretKey) && !ctx.config.legalPagesFinal) {
+        return c.json({ error: 'unavailable' }, 503);
       }
 
       try {
