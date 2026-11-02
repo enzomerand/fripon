@@ -24,6 +24,15 @@ describe('server/Dockerfile', () => {
     expect(scripts['build:resync']).toContain('scripts/stripe-resync.ts');
   });
 
+  it('builds and ships the backup command that scripts/backup.sh runs', () => {
+    expect(dockerfile).toContain('npm run build:backup');
+    expect(dockerfile).toMatch(/COPY --from=build \S+\/dist\/backup\.js/);
+    const scripts = (JSON.parse(read('package.json')) as { scripts: Record<string, string> })
+      .scripts;
+    expect(scripts['build:backup']).toContain('scripts/backup.ts');
+    expect(scripts['build:backup']).toContain('--outfile=dist/backup.js');
+  });
+
   it('is built from a context that holds the scripts it copies', () => {
     const ignore = readFileSync(new URL('../../.dockerignore', import.meta.url), 'utf8');
     expect(ignore.split('\n')).not.toContain('server/scripts');

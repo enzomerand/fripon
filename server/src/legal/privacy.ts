@@ -25,8 +25,8 @@ import {
 export const PROXY_LOG_KEEP_DAYS = 7;
 
 /**
- * How long a backup of the database is kept. It is the rotation of `docs/cloud.md`
- * (`find ... -mtime +30 -delete`), run by the owner's cron: a test reads that file and compares.
+ * How long a backup of the database is kept. It is the rotation of `scripts/backup.sh`
+ * (`find ... -mtime +28 -delete`, gone by the 30th day), run by the owner's cron: a test reads that file and compares.
  */
 export const BACKUP_KEEP_DAYS = 30;
 

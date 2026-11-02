@@ -11,6 +11,7 @@ const production = {
   GOOGLE_VISION_KEY: 'vision-key',
   GEMINI_KEY: 'gemini-key',
   STRIPE_SECRET_KEY: 'sk_live_abc',
+  STRIPE_REQUIRE_TERMS: 'true',
   STRIPE_WEBHOOK_SECRET: 'whsec_abc',
   // No default in production: the deployment says whether a reverse proxy is in front.
   TRUST_PROXY: 'true',
@@ -184,6 +185,36 @@ describe('loadConfig', () => {
         expect.stringContaining('TRUST_PROXY'),
       ]),
     );
+  });
+
+  describe('a live Stripe key', () => {
+    it.each(['sk_live_abc', 'rk_live_abc'])('%s needs STRIPE_REQUIRE_TERMS', (key) => {
+      const env = { ...production, STRIPE_SECRET_KEY: key, STRIPE_REQUIRE_TERMS: 'false' };
+
+      expect(catchConfigError(env).problems).toContain(
+        'STRIPE_REQUIRE_TERMS must be true with a live Stripe key',
+      );
+    });
+
+    it('is refused without it outside production too: the money would be just as real', () => {
+      expect(
+        catchConfigError({ NODE_ENV: 'development', STRIPE_SECRET_KEY: 'sk_live_abc' }).problems,
+      ).toContain('STRIPE_REQUIRE_TERMS must be true with a live Stripe key');
+    });
+
+    it('does not need the pages to be final to start: the server has to serve them', () => {
+      expect(loadConfig({ ...production, LEGAL_PAGES_FINAL: 'false' }).legalPagesFinal).toBe(false);
+    });
+
+    it('leaves a test key alone', () => {
+      const env = {
+        ...production,
+        STRIPE_SECRET_KEY: 'sk_test_abc',
+        STRIPE_REQUIRE_TERMS: 'false',
+      };
+
+      expect(loadConfig(env).stripeRequireTerms).toBe(false);
+    });
   });
 
   describe('the AI provider', () => {

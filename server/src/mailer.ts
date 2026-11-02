@@ -27,6 +27,9 @@ export function codeMessage(code: string): { subject: string; text: string } {
 export function createSmtpMailer(smtpUrl: string, from: string): Mailer {
   const transport = nodemailer.createTransport({
     url: smtpUrl,
+    // `smtp://` only upgrades when the server offers STARTTLS: whoever strips that offer on the way
+    // would read the password and the sign-in codes. Without TLS nothing is sent.
+    requireTLS: true,
     // A mail server that hangs must not hold the sign-in request for minutes.
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,

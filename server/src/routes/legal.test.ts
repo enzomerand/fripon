@@ -49,6 +49,18 @@ describe('GET /cgv and /confidentialite', () => {
     expect(html).not.toContain('noindex');
   });
 
+  it('warns at start when the key is live while the pages are drafts', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    createTestApp(
+      [registerLegalRoutes],
+      testConfig({ stripeSecretKey: 'sk_live_abc', legalPagesFinal: false }),
+    );
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0]?.[0])).toContain('Checkout is refused');
+  });
+
   it('warns at start when the pages are final while placeholders are left, and only then', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 

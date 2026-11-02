@@ -6,6 +6,7 @@ import {
   SIGNUP_WINDOW_MS,
   TRIAL_CLAIM_KEEP_MS,
 } from './auth';
+import type { Alert } from './alerts';
 import type { Db } from './db';
 import { periodIds } from './time';
 
@@ -45,4 +46,22 @@ export function purgeExpired(db: Db, now: number): void {
   const keepFrom = previousMonth(new Date(now));
   db.prepare('DELETE FROM usage WHERE month < ?').run(keepFrom);
   db.prepare('DELETE FROM reviews WHERE month < ?').run(keepFrom);
+}
+
+/**
+ * `purgeExpired` for the start and the timer of `main.ts`: nothing there catches an exception, and
+ * a busy database (SQLITE_BUSY during a maintenance command) must not take the server down. The
+ * owner is told, since personal data then stay longer than announced.
+ */
+export function purgeSafely(db: Db, now: number, alert: Alert): void {
+  try {
+    purgeExpired(db, now);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'unknown error';
+    console.error('[purge] failed:', reason);
+    alert(
+      'purge-failure',
+      `The purge of expired data failed: ${reason}. It runs again in an hour.`,
+    );
+  }
 }

@@ -315,6 +315,23 @@ describe('POST /v1/billing/checkout', () => {
     );
   });
 
+  it('refuses real money against draft terms, and takes it once the pages are final', async () => {
+    const buy = async (legalPagesFinal: boolean) => {
+      const t = setup({ stripeSecretKey: 'sk_live_abc', legalPagesFinal });
+      const buyer = await signedInAccount(t);
+      const response = await post(
+        t.app,
+        '/v1/billing/checkout',
+        { price: 'essentiel_monthly' },
+        bearer(buyer.token),
+      );
+      return { status: response.status, created: t.stripe.checkoutCreated.length };
+    };
+
+    expect(await buy(false)).toEqual({ status: 503, created: 0 });
+    expect(await buy(true)).toEqual({ status: 200, created: 1 });
+  });
+
   it('creates a Checkout Session for the account and the price, and answers its URL', async () => {
     const t = setup();
     const buyer = await signedInAccount(t);

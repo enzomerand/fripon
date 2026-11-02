@@ -35,7 +35,7 @@ type Migration = string | ((db: Db) => void);
  * The schema, one entry per version: `PRAGMA user_version` holds how many have run. Never edit an
  * entry that shipped, add a new one. Each entry runs in its own transaction.
  */
-const MIGRATIONS: Migration[] = [
+export const MIGRATIONS: Migration[] = [
   `
   CREATE TABLE accounts (
     id TEXT PRIMARY KEY,
